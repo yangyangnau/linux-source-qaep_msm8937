@@ -1,7 +1,8 @@
-# List of programs to build
-hostprogs-y := vrl4
+BIN := vrl4
 
-# Tell kbuild to always build the programs
-always := $(hostprogs-y)
+.PHONY: all
+all: $(BIN)
 
-HOSTCFLAGS_vrl4.o += -I$(objtree)/usr/include -I$(srctree)/tools/include
+.PHONY: clean
+clean:
+	rm -f *.o $(BIN)

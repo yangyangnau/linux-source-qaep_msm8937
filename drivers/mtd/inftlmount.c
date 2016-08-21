@@ -30,6 +30,7 @@
 #include <asm/uaccess.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
+#include <linux/init.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/nftl.h>
 #include <linux/mtd/inftl.h>

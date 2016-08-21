@@ -6,14 +6,34 @@
  * Authors: Felipe Balbi <balbi@ti.com>,
  *	    Sebastian Andrzej Siewior <bigeasy@linutronix.de>
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2  of
- * the License as published by the Free Software Foundation.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions, and the following disclaimer,
+ *    without modification.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. The names of the above-listed copyright holders may not be used
+ *    to endorse or promote products derived from this software without
+ *    specific prior written permission.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * ALTERNATIVELY, this software may be distributed under the terms of the
+ * GNU General Public License ("GPL") version 2, as published by the Free
+ * Software Foundation.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+ * IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include <linux/kernel.h>
@@ -23,14 +43,13 @@
 #include <linux/platform_device.h>
 
 #include <linux/usb/otg.h>
-#include <linux/usb/usb_phy_generic.h>
+#include <linux/usb/nop-usb-xceiv.h>
 
 /* FIXME define these in <linux/pci_ids.h> */
 #define PCI_VENDOR_ID_SYNOPSYS		0x16c3
 #define PCI_DEVICE_ID_SYNOPSYS_HAPSUSB3	0xabcd
 #define PCI_DEVICE_ID_INTEL_BYT		0x0f37
 #define PCI_DEVICE_ID_INTEL_MRFLD	0x119e
-#define PCI_DEVICE_ID_INTEL_BSW		0x22B7
 
 struct dwc3_pci {
 	struct device		*dev;
@@ -41,25 +60,24 @@ struct dwc3_pci {
 
 static int dwc3_pci_register_phys(struct dwc3_pci *glue)
 {
-	struct usb_phy_generic_platform_data pdata;
+	struct nop_usb_xceiv_platform_data pdata;
 	struct platform_device	*pdev;
 	int			ret;
 
 	memset(&pdata, 0x00, sizeof(pdata));
 
-	pdev = platform_device_alloc("usb_phy_generic", 0);
+	pdev = platform_device_alloc("nop_usb_xceiv", 0);
 	if (!pdev)
 		return -ENOMEM;
 
 	glue->usb2_phy = pdev;
 	pdata.type = USB_PHY_TYPE_USB2;
-	pdata.gpio_reset = -1;
 
 	ret = platform_device_add_data(glue->usb2_phy, &pdata, sizeof(pdata));
 	if (ret)
 		goto err1;
 
-	pdev = platform_device_alloc("usb_phy_generic", 1);
+	pdev = platform_device_alloc("nop_usb_xceiv", 1);
 	if (!pdev) {
 		ret = -ENOMEM;
 		goto err1;
@@ -100,21 +118,24 @@ static int dwc3_pci_probe(struct pci_dev *pci,
 	struct resource		res[2];
 	struct platform_device	*dwc3;
 	struct dwc3_pci		*glue;
-	int			ret;
+	int			ret = -ENOMEM;
 	struct device		*dev = &pci->dev;
 
 	glue = devm_kzalloc(dev, sizeof(*glue), GFP_KERNEL);
-	if (!glue)
+	if (!glue) {
+		dev_err(dev, "not enough memory\n");
 		return -ENOMEM;
+	}
 
 	glue->dev = dev;
 
-	ret = pcim_enable_device(pci);
+	ret = pci_enable_device(pci);
 	if (ret) {
 		dev_err(dev, "failed to enable pci device\n");
 		return -ENODEV;
 	}
 
+	pci_set_power_state(pci, PCI_D0);
 	pci_set_master(pci);
 
 	ret = dwc3_pci_register_phys(glue);
@@ -126,7 +147,8 @@ static int dwc3_pci_probe(struct pci_dev *pci,
 	dwc3 = platform_device_alloc("dwc3", PLATFORM_DEVID_AUTO);
 	if (!dwc3) {
 		dev_err(dev, "couldn't allocate dwc3 device\n");
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto err1;
 	}
 
 	memset(res, 0x00, sizeof(struct resource) * ARRAY_SIZE(res));
@@ -143,7 +165,7 @@ static int dwc3_pci_probe(struct pci_dev *pci,
 	ret = platform_device_add_resources(dwc3, res, ARRAY_SIZE(res));
 	if (ret) {
 		dev_err(dev, "couldn't add resources to dwc3 device\n");
-		return ret;
+		goto err1;
 	}
 
 	pci_set_drvdata(pci, glue);
@@ -164,7 +186,11 @@ static int dwc3_pci_probe(struct pci_dev *pci,
 	return 0;
 
 err3:
+	pci_set_drvdata(pci, NULL);
 	platform_device_put(dwc3);
+err1:
+	pci_disable_device(pci);
+
 	return ret;
 }
 
@@ -175,21 +201,22 @@ static void dwc3_pci_remove(struct pci_dev *pci)
 	platform_device_unregister(glue->dwc3);
 	platform_device_unregister(glue->usb2_phy);
 	platform_device_unregister(glue->usb3_phy);
+	pci_set_drvdata(pci, NULL);
+	pci_disable_device(pci);
 }
 
-static const struct pci_device_id dwc3_pci_id_table[] = {
+static DEFINE_PCI_DEVICE_TABLE(dwc3_pci_id_table) = {
 	{
 		PCI_DEVICE(PCI_VENDOR_ID_SYNOPSYS,
 				PCI_DEVICE_ID_SYNOPSYS_HAPSUSB3),
 	},
-	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_BSW), },
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_BYT), },
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_MRFLD), },
 	{  }	/* Terminating Entry */
 };
 MODULE_DEVICE_TABLE(pci, dwc3_pci_id_table);
 
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_PM
 static int dwc3_pci_suspend(struct device *dev)
 {
 	struct pci_dev	*pci = to_pci_dev(dev);
@@ -214,11 +241,15 @@ static int dwc3_pci_resume(struct device *dev)
 
 	return 0;
 }
-#endif /* CONFIG_PM_SLEEP */
 
 static const struct dev_pm_ops dwc3_pci_dev_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(dwc3_pci_suspend, dwc3_pci_resume)
 };
+
+#define DEV_PM_OPS	(&dwc3_pci_dev_pm_ops)
+#else
+#define DEV_PM_OPS	NULL
+#endif /* CONFIG_PM */
 
 static struct pci_driver dwc3_pci_driver = {
 	.name		= "dwc3-pci",
@@ -226,12 +257,12 @@ static struct pci_driver dwc3_pci_driver = {
 	.probe		= dwc3_pci_probe,
 	.remove		= dwc3_pci_remove,
 	.driver		= {
-		.pm	= &dwc3_pci_dev_pm_ops,
+		.pm	= DEV_PM_OPS,
 	},
 };
 
 MODULE_AUTHOR("Felipe Balbi <balbi@ti.com>");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("Dual BSD/GPL");
 MODULE_DESCRIPTION("DesignWare USB3 PCI Glue Layer");
 
 module_pci_driver(dwc3_pci_driver);

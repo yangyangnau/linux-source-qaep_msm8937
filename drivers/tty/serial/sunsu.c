@@ -522,7 +522,7 @@ static void receive_kbd_ms_chars(struct uart_sunsu_port *up, int is_break)
 				serio_interrupt(&up->serio, ch, 0);
 #endif
 				break;
-			}
+			};
 		}
 	} while (serial_in(up, UART_LSR) & UART_LSR_DR);
 }
@@ -834,7 +834,7 @@ sunsu_change_speed(struct uart_port *port, unsigned int cflag,
 	up->port.read_status_mask = UART_LSR_OE | UART_LSR_THRE | UART_LSR_DR;
 	if (iflag & INPCK)
 		up->port.read_status_mask |= UART_LSR_FE | UART_LSR_PE;
-	if (iflag & (IGNBRK | BRKINT | PARMRK))
+	if (iflag & (BRKINT | PARMRK))
 		up->port.read_status_mask |= UART_LSR_BI;
 
 	/*
@@ -1295,10 +1295,13 @@ static void sunsu_console_write(struct console *co, const char *s,
 	unsigned int ier;
 	int locked = 1;
 
-	if (up->port.sysrq || oops_in_progress)
-		locked = spin_trylock_irqsave(&up->port.lock, flags);
-	else
-		spin_lock_irqsave(&up->port.lock, flags);
+	local_irq_save(flags);
+	if (up->port.sysrq) {
+		locked = 0;
+	} else if (oops_in_progress) {
+		locked = spin_trylock(&up->port.lock);
+	} else
+		spin_lock(&up->port.lock);
 
 	/*
 	 *	First save the UER then disable the interrupts
@@ -1316,7 +1319,8 @@ static void sunsu_console_write(struct console *co, const char *s,
 	serial_out(up, UART_IER, ier);
 
 	if (locked)
-		spin_unlock_irqrestore(&up->port.lock, flags);
+		spin_unlock(&up->port.lock);
+	local_irq_restore(flags);
 }
 
 /*
@@ -1450,7 +1454,7 @@ static int su_probe(struct platform_device *op)
 			kfree(up);
 			return err;
 		}
-		platform_set_drvdata(op, up);
+		dev_set_drvdata(&op->dev, up);
 
 		nr_inst++;
 
@@ -1479,7 +1483,7 @@ static int su_probe(struct platform_device *op)
 	if (err)
 		goto out_unmap;
 
-	platform_set_drvdata(op, up);
+	dev_set_drvdata(&op->dev, up);
 
 	nr_inst++;
 
@@ -1492,7 +1496,7 @@ out_unmap:
 
 static int su_remove(struct platform_device *op)
 {
-	struct uart_sunsu_port *up = platform_get_drvdata(op);
+	struct uart_sunsu_port *up = dev_get_drvdata(&op->dev);
 	bool kbdms = false;
 
 	if (up->su_type == SU_PORT_MS ||
@@ -1511,6 +1515,8 @@ static int su_remove(struct platform_device *op)
 
 	if (kbdms)
 		kfree(up);
+
+	dev_set_drvdata(&op->dev, NULL);
 
 	return 0;
 }

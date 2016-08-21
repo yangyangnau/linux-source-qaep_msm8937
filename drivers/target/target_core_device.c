@@ -4,7 +4,7 @@
  * This file contains the TCM Virtual Device and Disk Transport
  * agnostic related functions.
  *
- * (c) Copyright 2003-2013 Datera, Inc.
+ * (c) Copyright 2003-2012 RisingTide Systems LLC.
  *
  * Nicholas A. Bellinger <nab@kernel.org>
  *
@@ -46,9 +46,6 @@
 #include "target_core_alua.h"
 #include "target_core_pr.h"
 #include "target_core_ua.h"
-
-DEFINE_MUTEX(g_device_mutex);
-LIST_HEAD(g_device_list);
 
 static struct se_hba *lun0_hba;
 /* not static, needed by tpg.c */
@@ -92,9 +89,6 @@ transport_lookup_cmd_lun(struct se_cmd *se_cmd, u32 unpacked_lun)
 		se_cmd->pr_res_key = deve->pr_res_key;
 		se_cmd->orig_fe_lun = unpacked_lun;
 		se_cmd->se_cmd_flags |= SCF_SE_LUN_CMD;
-
-		percpu_ref_get(&se_lun->lun_ref);
-		se_cmd->lun_ref_active = true;
 	}
 	spin_unlock_irqrestore(&se_sess->se_node_acl->device_list_lock, flags);
 
@@ -122,20 +116,24 @@ transport_lookup_cmd_lun(struct se_cmd *se_cmd, u32 unpacked_lun)
 		se_cmd->se_lun = &se_sess->se_tpg->tpg_virt_lun0;
 		se_cmd->orig_fe_lun = 0;
 		se_cmd->se_cmd_flags |= SCF_SE_LUN_CMD;
-
-		percpu_ref_get(&se_lun->lun_ref);
-		se_cmd->lun_ref_active = true;
 	}
 
 	/* Directly associate cmd with se_dev */
 	se_cmd->se_dev = se_lun->lun_se_dev;
 
+	/* TODO: get rid of this and use atomics for stats */
 	dev = se_lun->lun_se_dev;
-	atomic_long_inc(&dev->num_cmds);
+	spin_lock_irqsave(&dev->stats_lock, flags);
+	dev->num_cmds++;
 	if (se_cmd->data_direction == DMA_TO_DEVICE)
-		atomic_long_add(se_cmd->data_length, &dev->write_bytes);
+		dev->write_bytes += se_cmd->data_length;
 	else if (se_cmd->data_direction == DMA_FROM_DEVICE)
-		atomic_long_add(se_cmd->data_length, &dev->read_bytes);
+		dev->read_bytes += se_cmd->data_length;
+	spin_unlock_irqrestore(&dev->stats_lock, flags);
+
+	spin_lock_irqsave(&se_lun->lun_cmd_lock, flags);
+	list_add_tail(&se_cmd->se_lun_node, &se_lun->lun_cmd_list);
+	spin_unlock_irqrestore(&se_lun->lun_cmd_lock, flags);
 
 	return 0;
 }
@@ -224,7 +222,8 @@ struct se_dev_entry *core_get_se_deve_from_rtpi(
 		if (port->sep_rtpi != rtpi)
 			continue;
 
-		atomic_inc_mb(&deve->pr_ref_count);
+		atomic_inc(&deve->pr_ref_count);
+		smp_mb__after_atomic_inc();
 		spin_unlock_irq(&nacl->device_list_lock);
 
 		return deve;
@@ -312,14 +311,14 @@ int core_enable_device_list_for_node(
 	deve = nacl->device_list[mapped_lun];
 
 	/*
-	 * Check if the call is handling demo mode -> explicit LUN ACL
+	 * Check if the call is handling demo mode -> explict LUN ACL
 	 * transition.  This transition must be for the same struct se_lun
 	 * + mapped_lun that was setup in demo mode..
 	 */
 	if (deve->lun_flags & TRANSPORT_LUNFLAGS_INITIATOR_ACCESS) {
 		if (deve->se_lun_acl != NULL) {
 			pr_err("struct se_dev_entry->se_lun_acl"
-			       " already set for demo mode -> explicit"
+			       " already set for demo mode -> explict"
 			       " LUN ACL transition\n");
 			spin_unlock_irq(&nacl->device_list_lock);
 			return -EINVAL;
@@ -327,7 +326,7 @@ int core_enable_device_list_for_node(
 		if (deve->se_lun != lun) {
 			pr_err("struct se_dev_entry->se_lun does"
 			       " match passed struct se_lun for demo mode"
-			       " -> explicit LUN ACL transition\n");
+			       " -> explict LUN ACL transition\n");
 			spin_unlock_irq(&nacl->device_list_lock);
 			return -EINVAL;
 		}
@@ -892,120 +891,6 @@ int se_dev_set_emulate_tpws(struct se_device *dev, int flag)
 	return 0;
 }
 
-int se_dev_set_emulate_caw(struct se_device *dev, int flag)
-{
-	if (flag != 0 && flag != 1) {
-		pr_err("Illegal value %d\n", flag);
-		return -EINVAL;
-	}
-	dev->dev_attrib.emulate_caw = flag;
-	pr_debug("dev[%p]: SE Device CompareAndWrite (AtomicTestandSet): %d\n",
-		 dev, flag);
-
-	return 0;
-}
-
-int se_dev_set_emulate_3pc(struct se_device *dev, int flag)
-{
-	if (flag != 0 && flag != 1) {
-		pr_err("Illegal value %d\n", flag);
-		return -EINVAL;
-	}
-	dev->dev_attrib.emulate_3pc = flag;
-	pr_debug("dev[%p]: SE Device 3rd Party Copy (EXTENDED_COPY): %d\n",
-		dev, flag);
-
-	return 0;
-}
-
-int se_dev_set_pi_prot_type(struct se_device *dev, int flag)
-{
-	int rc, old_prot = dev->dev_attrib.pi_prot_type;
-
-	if (flag != 0 && flag != 1 && flag != 2 && flag != 3) {
-		pr_err("Illegal value %d for pi_prot_type\n", flag);
-		return -EINVAL;
-	}
-	if (flag == 2) {
-		pr_err("DIF TYPE2 protection currently not supported\n");
-		return -ENOSYS;
-	}
-	if (dev->dev_attrib.hw_pi_prot_type) {
-		pr_warn("DIF protection enabled on underlying hardware,"
-			" ignoring\n");
-		return 0;
-	}
-	if (!dev->transport->init_prot || !dev->transport->free_prot) {
-		/* 0 is only allowed value for non-supporting backends */
-		if (flag == 0)
-			return 0;
-
-		pr_err("DIF protection not supported by backend: %s\n",
-		       dev->transport->name);
-		return -ENOSYS;
-	}
-	if (!(dev->dev_flags & DF_CONFIGURED)) {
-		pr_err("DIF protection requires device to be configured\n");
-		return -ENODEV;
-	}
-	if (dev->export_count) {
-		pr_err("dev[%p]: Unable to change SE Device PROT type while"
-		       " export_count is %d\n", dev, dev->export_count);
-		return -EINVAL;
-	}
-
-	dev->dev_attrib.pi_prot_type = flag;
-
-	if (flag && !old_prot) {
-		rc = dev->transport->init_prot(dev);
-		if (rc) {
-			dev->dev_attrib.pi_prot_type = old_prot;
-			return rc;
-		}
-
-	} else if (!flag && old_prot) {
-		dev->transport->free_prot(dev);
-	}
-	pr_debug("dev[%p]: SE Device Protection Type: %d\n", dev, flag);
-
-	return 0;
-}
-
-int se_dev_set_pi_prot_format(struct se_device *dev, int flag)
-{
-	int rc;
-
-	if (!flag)
-		return 0;
-
-	if (flag != 1) {
-		pr_err("Illegal value %d for pi_prot_format\n", flag);
-		return -EINVAL;
-	}
-	if (!dev->transport->format_prot) {
-		pr_err("DIF protection format not supported by backend %s\n",
-		       dev->transport->name);
-		return -ENOSYS;
-	}
-	if (!(dev->dev_flags & DF_CONFIGURED)) {
-		pr_err("DIF protection format requires device to be configured\n");
-		return -ENODEV;
-	}
-	if (dev->export_count) {
-		pr_err("dev[%p]: Unable to format SE Device PROT type while"
-		       " export_count is %d\n", dev, dev->export_count);
-		return -EINVAL;
-	}
-
-	rc = dev->transport->format_prot(dev);
-	if (rc)
-		return rc;
-
-	pr_debug("dev[%p]: SE Device Protection Format complete\n", dev);
-
-	return 0;
-}
-
 int se_dev_set_enforce_pr_isids(struct se_device *dev, int flag)
 {
 	if ((flag != 0) && (flag != 1)) {
@@ -1015,23 +900,6 @@ int se_dev_set_enforce_pr_isids(struct se_device *dev, int flag)
 	dev->dev_attrib.enforce_pr_isids = flag;
 	pr_debug("dev[%p]: SE Device enforce_pr_isids bit: %s\n", dev,
 		(dev->dev_attrib.enforce_pr_isids) ? "Enabled" : "Disabled");
-	return 0;
-}
-
-int se_dev_set_force_pr_aptpl(struct se_device *dev, int flag)
-{
-	if ((flag != 0) && (flag != 1)) {
-		printk(KERN_ERR "Illegal value %d\n", flag);
-		return -EINVAL;
-	}
-	if (dev->export_count) {
-		pr_err("dev[%p]: Unable to set force_pr_aptpl while"
-		       " export_count is %d\n", dev, dev->export_count);
-		return -EINVAL;
-	}
-
-	dev->dev_attrib.force_pr_aptpl = flag;
-	pr_debug("dev[%p]: SE Device force_pr_aptpl: %d\n", dev, flag);
 	return 0;
 }
 
@@ -1169,10 +1037,10 @@ int se_dev_set_optimal_sectors(struct se_device *dev, u32 optimal_sectors)
 				" changed for TCM/pSCSI\n", dev);
 		return -EINVAL;
 	}
-	if (optimal_sectors > dev->dev_attrib.hw_max_sectors) {
+	if (optimal_sectors > dev->dev_attrib.fabric_max_sectors) {
 		pr_err("dev[%p]: Passed optimal_sectors %u cannot be"
-			" greater than hw_max_sectors: %u\n", dev,
-			optimal_sectors, dev->dev_attrib.hw_max_sectors);
+			" greater than fabric_max_sectors: %u\n", dev,
+			optimal_sectors, dev->dev_attrib.fabric_max_sectors);
 		return -EINVAL;
 	}
 
@@ -1222,23 +1090,23 @@ int se_dev_set_block_size(struct se_device *dev, u32 block_size)
 struct se_lun *core_dev_add_lun(
 	struct se_portal_group *tpg,
 	struct se_device *dev,
-	u32 unpacked_lun)
+	u32 lun)
 {
-	struct se_lun *lun;
+	struct se_lun *lun_p;
 	int rc;
 
-	lun = core_tpg_alloc_lun(tpg, unpacked_lun);
-	if (IS_ERR(lun))
-		return lun;
+	lun_p = core_tpg_pre_addlun(tpg, lun);
+	if (IS_ERR(lun_p))
+		return lun_p;
 
-	rc = core_tpg_add_lun(tpg, lun,
+	rc = core_tpg_post_addlun(tpg, lun_p,
 				TRANSPORT_LUNFLAGS_READ_WRITE, dev);
 	if (rc < 0)
 		return ERR_PTR(rc);
 
 	pr_debug("%s_TPG[%u]_LUN[%u] - Activated %s Logical Unit from"
 		" CORE HBA: %u\n", tpg->se_tpg_tfo->get_fabric_name(),
-		tpg->se_tpg_tfo->tpg_get_tag(tpg), lun->unpacked_lun,
+		tpg->se_tpg_tfo->tpg_get_tag(tpg), lun_p->unpacked_lun,
 		tpg->se_tpg_tfo->get_fabric_name(), dev->se_hba->hba_id);
 	/*
 	 * Update LUN maps for dynamically added initiators when
@@ -1259,23 +1127,31 @@ struct se_lun *core_dev_add_lun(
 		spin_unlock_irq(&tpg->acl_node_lock);
 	}
 
-	return lun;
+	return lun_p;
 }
 
 /*      core_dev_del_lun():
  *
  *
  */
-void core_dev_del_lun(
+int core_dev_del_lun(
 	struct se_portal_group *tpg,
-	struct se_lun *lun)
+	u32 unpacked_lun)
 {
-	pr_debug("%s_TPG[%u]_LUN[%u] - Deactivating %s Logical Unit from"
+	struct se_lun *lun;
+
+	lun = core_tpg_pre_dellun(tpg, unpacked_lun);
+	if (IS_ERR(lun))
+		return PTR_ERR(lun);
+
+	core_tpg_post_dellun(tpg, lun);
+
+	pr_debug("%s_TPG[%u]_LUN[%u] - Deactivated %s Logical Unit from"
 		" device object\n", tpg->se_tpg_tfo->get_fabric_name(),
-		tpg->se_tpg_tfo->tpg_get_tag(tpg), lun->unpacked_lun,
+		tpg->se_tpg_tfo->tpg_get_tag(tpg), unpacked_lun,
 		tpg->se_tpg_tfo->get_fabric_name());
 
-	core_tpg_remove_lun(tpg, lun);
+	return 0;
 }
 
 struct se_lun *core_get_lun_from_tpg(struct se_portal_group *tpg, u32 unpacked_lun)
@@ -1404,7 +1280,8 @@ int core_dev_add_initiator_node_lun_acl(
 
 	spin_lock(&lun->lun_acl_lock);
 	list_add_tail(&lacl->lacl_list, &lun->lun_acl_list);
-	atomic_inc_mb(&lun->lun_acl_count);
+	atomic_inc(&lun->lun_acl_count);
+	smp_mb__after_atomic_inc();
 	spin_unlock(&lun->lun_acl_lock);
 
 	pr_debug("%s_TPG[%hu]_LUN[%u->%u] - Added %s ACL for "
@@ -1416,8 +1293,7 @@ int core_dev_add_initiator_node_lun_acl(
 	 * Check to see if there are any existing persistent reservation APTPL
 	 * pre-registrations that need to be enabled for this LUN ACL..
 	 */
-	core_scsi3_check_aptpl_registration(lun->lun_se_dev, tpg, lun, nacl,
-					    lacl->mapped_lun);
+	core_scsi3_check_aptpl_registration(lun->lun_se_dev, tpg, lun, lacl);
 	return 0;
 }
 
@@ -1438,7 +1314,8 @@ int core_dev_del_initiator_node_lun_acl(
 
 	spin_lock(&lun->lun_acl_lock);
 	list_del(&lacl->lacl_list);
-	atomic_dec_mb(&lun->lun_acl_count);
+	atomic_dec(&lun->lun_acl_count);
+	smp_mb__after_atomic_dec();
 	spin_unlock(&lun->lun_acl_lock);
 
 	core_disable_device_list_for_node(lun, NULL, lacl->mapped_lun,
@@ -1507,7 +1384,6 @@ static void scsi_dump_inquiry(struct se_device *dev)
 struct se_device *target_alloc_device(struct se_hba *hba, const char *name)
 {
 	struct se_device *dev;
-	struct se_lun *xcopy_lun;
 
 	dev = hba->transport->alloc_device(hba, name);
 	if (!dev)
@@ -1516,7 +1392,6 @@ struct se_device *target_alloc_device(struct se_hba *hba, const char *name)
 	dev->dev_link_magic = SE_DEV_LINK_MAGIC;
 	dev->se_hba = hba;
 	dev->transport = hba->transport;
-	dev->prot_length = sizeof(struct se_dif_v1_tuple);
 
 	INIT_LIST_HEAD(&dev->dev_list);
 	INIT_LIST_HEAD(&dev->dev_sep_list);
@@ -1524,14 +1399,13 @@ struct se_device *target_alloc_device(struct se_hba *hba, const char *name)
 	INIT_LIST_HEAD(&dev->delayed_cmd_list);
 	INIT_LIST_HEAD(&dev->state_list);
 	INIT_LIST_HEAD(&dev->qf_cmd_list);
-	INIT_LIST_HEAD(&dev->g_dev_node);
+	spin_lock_init(&dev->stats_lock);
 	spin_lock_init(&dev->execute_task_lock);
 	spin_lock_init(&dev->delayed_cmd_lock);
 	spin_lock_init(&dev->dev_reservation_lock);
 	spin_lock_init(&dev->se_port_lock);
 	spin_lock_init(&dev->se_tmr_lock);
 	spin_lock_init(&dev->qf_cmd_lock);
-	sema_init(&dev->caw_sem, 1);
 	atomic_set(&dev->dev_ordered_id, 0);
 	INIT_LIST_HEAD(&dev->t10_wwn.t10_vpd_list);
 	spin_lock_init(&dev->t10_wwn.t10_vpd_lock);
@@ -1541,9 +1415,8 @@ struct se_device *target_alloc_device(struct se_hba *hba, const char *name)
 	spin_lock_init(&dev->t10_pr.aptpl_reg_lock);
 	INIT_LIST_HEAD(&dev->t10_alua.tg_pt_gps_list);
 	spin_lock_init(&dev->t10_alua.tg_pt_gps_lock);
-	INIT_LIST_HEAD(&dev->t10_alua.lba_map_list);
-	spin_lock_init(&dev->t10_alua.lba_map_lock);
 
+	dev->t10_pr.pr_aptpl_buf_len = PR_APTPL_BUF_LEN;
 	dev->t10_wwn.t10_dev = dev;
 	dev->t10_alua.t10_dev = dev;
 
@@ -1557,11 +1430,7 @@ struct se_device *target_alloc_device(struct se_hba *hba, const char *name)
 	dev->dev_attrib.emulate_tas = DA_EMULATE_TAS;
 	dev->dev_attrib.emulate_tpu = DA_EMULATE_TPU;
 	dev->dev_attrib.emulate_tpws = DA_EMULATE_TPWS;
-	dev->dev_attrib.emulate_caw = DA_EMULATE_CAW;
-	dev->dev_attrib.emulate_3pc = DA_EMULATE_3PC;
-	dev->dev_attrib.pi_prot_type = TARGET_DIF_TYPE0_PROT;
 	dev->dev_attrib.enforce_pr_isids = DA_ENFORCE_PR_ISIDS;
-	dev->dev_attrib.force_pr_aptpl = DA_FORCE_PR_APTPL;
 	dev->dev_attrib.is_nonrot = DA_IS_NONROT;
 	dev->dev_attrib.emulate_rest_reord = DA_EMULATE_REST_REORD;
 	dev->dev_attrib.max_unmap_lba_count = DA_MAX_UNMAP_LBA_COUNT;
@@ -1572,14 +1441,7 @@ struct se_device *target_alloc_device(struct se_hba *hba, const char *name)
 				DA_UNMAP_GRANULARITY_ALIGNMENT_DEFAULT;
 	dev->dev_attrib.max_write_same_len = DA_MAX_WRITE_SAME_LEN;
 	dev->dev_attrib.fabric_max_sectors = DA_FABRIC_MAX_SECTORS;
-
-	xcopy_lun = &dev->xcopy_lun;
-	xcopy_lun->lun_se_dev = dev;
-	init_completion(&xcopy_lun->lun_shutdown_comp);
-	INIT_LIST_HEAD(&xcopy_lun->lun_acl_list);
-	spin_lock_init(&xcopy_lun->lun_acl_lock);
-	spin_lock_init(&xcopy_lun->lun_sep_lock);
-	init_completion(&xcopy_lun->lun_ref_comp);
+	dev->dev_attrib.optimal_sectors = DA_FABRIC_MAX_SECTORS;
 
 	return dev;
 }
@@ -1598,6 +1460,8 @@ int target_configure_device(struct se_device *dev)
 	ret = dev->transport->configure_device(dev);
 	if (ret)
 		goto out;
+	dev->dev_flags |= DF_CONFIGURED;
+
 	/*
 	 * XXX: there is not much point to have two different values here..
 	 */
@@ -1610,7 +1474,6 @@ int target_configure_device(struct se_device *dev)
 	dev->dev_attrib.hw_max_sectors =
 		se_dev_align_max_sectors(dev->dev_attrib.hw_max_sectors,
 					 dev->dev_attrib.hw_block_size);
-	dev->dev_attrib.optimal_sectors = dev->dev_attrib.hw_max_sectors;
 
 	dev->dev_index = scsi_get_new_index(SCSI_DEVICE_INDEX);
 	dev->creation_time = get_jiffies_64();
@@ -1654,13 +1517,6 @@ int target_configure_device(struct se_device *dev)
 	spin_lock(&hba->device_lock);
 	hba->dev_count++;
 	spin_unlock(&hba->device_lock);
-
-	mutex_lock(&g_device_mutex);
-	list_add_tail(&dev->g_dev_node, &g_device_list);
-	mutex_unlock(&g_device_mutex);
-
-	dev->dev_flags |= DF_CONFIGURED;
-
 	return 0;
 
 out_free_alua:
@@ -1679,22 +1535,14 @@ void target_free_device(struct se_device *dev)
 	if (dev->dev_flags & DF_CONFIGURED) {
 		destroy_workqueue(dev->tmr_wq);
 
-		mutex_lock(&g_device_mutex);
-		list_del(&dev->g_dev_node);
-		mutex_unlock(&g_device_mutex);
-
 		spin_lock(&hba->device_lock);
 		hba->dev_count--;
 		spin_unlock(&hba->device_lock);
 	}
 
 	core_alua_free_lu_gp_mem(dev);
-	core_alua_set_lba_map(dev, NULL, 0, 0);
 	core_scsi3_free_all_registrations(dev);
 	se_release_vpd_for_dev(dev);
-
-	if (dev->transport->free_prot)
-		dev->transport->free_prot(dev);
 
 	dev->transport->free_device(dev);
 }
@@ -1703,7 +1551,7 @@ int core_dev_setup_virtual_lun0(void)
 {
 	struct se_hba *hba;
 	struct se_device *dev;
-	char buf[] = "rd_pages=8,rd_nullio=1";
+	char buf[16];
 	int ret;
 
 	hba = core_alloc_hba("rd_mcp", 0, HBA_FLAGS_INTERNAL_USE);
@@ -1716,6 +1564,8 @@ int core_dev_setup_virtual_lun0(void)
 		goto out_free_hba;
 	}
 
+	memset(buf, 0, 16);
+	sprintf(buf, "rd_pages=8");
 	hba->transport->set_configfs_dev_params(dev, buf, sizeof(buf));
 
 	ret = target_configure_device(dev);

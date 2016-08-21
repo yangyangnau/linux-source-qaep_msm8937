@@ -19,6 +19,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/jiffies.h>
 #include <linux/i2c.h>
@@ -81,13 +82,15 @@ static int max517_read_raw(struct iio_dev *indio_dev,
 			   long m)
 {
 	struct max517_data *data = iio_priv(indio_dev);
+	unsigned int scale_uv;
 
 	switch (m) {
 	case IIO_CHAN_INFO_SCALE:
 		/* Corresponds to Vref / 2^(bits) */
-		*val = data->vref_mv[chan->channel];
-		*val2 = 8;
-		return IIO_VAL_FRACTIONAL_LOG2;
+		scale_uv = (data->vref_mv[chan->channel] * 1000) >> 8;
+		*val =  scale_uv / 1000000;
+		*val2 = scale_uv % 1000000;
+		return IIO_VAL_INT_PLUS_MICRO;
 	default:
 		break;
 	}
@@ -145,6 +148,7 @@ static const struct iio_info max517_info = {
 	.channel = (chan),				\
 	.info_mask_separate = BIT(IIO_CHAN_INFO_RAW) |	\
 	BIT(IIO_CHAN_INFO_SCALE),			\
+	.scan_type = IIO_ST('u', 8, 8, 0),		\
 }
 
 static const struct iio_chan_spec max517_channels[] = {
@@ -158,10 +162,13 @@ static int max517_probe(struct i2c_client *client,
 	struct max517_data *data;
 	struct iio_dev *indio_dev;
 	struct max517_platform_data *platform_data = client->dev.platform_data;
+	int err;
 
-	indio_dev = devm_iio_device_alloc(&client->dev, sizeof(*data));
-	if (!indio_dev)
-		return -ENOMEM;
+	indio_dev = iio_device_alloc(sizeof(*data));
+	if (indio_dev == NULL) {
+		err = -ENOMEM;
+		goto exit;
+	}
 	data = iio_priv(indio_dev);
 	i2c_set_clientdata(client, indio_dev);
 	data->client = client;
@@ -189,12 +196,25 @@ static int max517_probe(struct i2c_client *client,
 		data->vref_mv[1] = platform_data->vref_mv[1];
 	}
 
-	return iio_device_register(indio_dev);
+	err = iio_device_register(indio_dev);
+	if (err)
+		goto exit_free_device;
+
+	dev_info(&client->dev, "DAC registered\n");
+
+	return 0;
+
+exit_free_device:
+	iio_device_free(indio_dev);
+exit:
+	return err;
 }
 
 static int max517_remove(struct i2c_client *client)
 {
 	iio_device_unregister(i2c_get_clientdata(client));
+	iio_device_free(i2c_get_clientdata(client));
+
 	return 0;
 }
 

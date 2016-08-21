@@ -39,9 +39,11 @@
 #include <linux/pci.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
-#include <linux/acpi.h>
 
-#include "internal.h"
+#include <acpi/acpi_bus.h>
+#include <acpi/acpi_drivers.h>
+
+#define PREFIX "ACPI: "
 
 #define _COMPONENT			ACPI_PCI_COMPONENT
 ACPI_MODULE_NAME("pci_link");

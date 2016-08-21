@@ -509,8 +509,7 @@ out:
 static int kxtj9_probe(struct i2c_client *client,
 				 const struct i2c_device_id *id)
 {
-	const struct kxtj9_platform_data *pdata =
-			dev_get_platdata(&client->dev);
+	const struct kxtj9_platform_data *pdata = client->dev.platform_data;
 	struct kxtj9_data *tj9;
 	int err;
 

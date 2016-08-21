@@ -31,6 +31,12 @@
 
 #include "ttype.h"
 
+/*---------------------  Export Definitions -------------------------*/
+
+//typedef uint32_t u32;
+//typedef uint16_t u16;
+//typedef uint8_t u8;
+
 // ioctl Command code
 #define MAGIC_CODE	                 0x3142
 #define IOCTL_CMD_TEST	            (SIOCDEVPRIVATE + 0)
@@ -94,7 +100,7 @@ typedef enum tagWZONETYPE {
 #pragma pack(1)
 typedef struct tagSCmdRequest {
 	u8	    name[16];
-	void __user *data;
+	void	*data;
 	u16	    wResult;
 	u16     wCmdCode;
 } SCmdRequest, *PSCmdRequest;
@@ -161,6 +167,10 @@ typedef struct tagSBSSIDItem {
 	u32	    uChannel;
 	u8      abyBSSID[BSSID_LEN];
 	u8      abySSID[SSID_MAXLEN + 1];
+	//2006-1116-01,<Modify> by NomadZhao
+	//u16	    wBeaconInterval;
+	//u16	    wCapInfo;
+	//u8      byNetType;
 	u8      byNetType;
 	u16	    wBeaconInterval;
 	u16	    wCapInfo;        // for address of byNetType at align 4
@@ -218,8 +228,9 @@ typedef struct tagSStatMIBCount {
 	u32   dwIsrUnrecoverableError;
 	u32   dwIsrSoftInterrupt;
 	u32   dwIsrRxNoBuf;
+	/////////////////////////////////////
 
-	u32   dwIsrUnknown;
+	u32   dwIsrUnknown;               // unknown interrupt count
 
 	// RSR status count
 	//
@@ -338,6 +349,7 @@ typedef struct tagSCmdValue {
 // hostapd & viawget ioctl related
 //
 
+// VIAGWET_IOCTL_HOSTAPD ioctl() cmd:
 enum {
 	VIAWGET_HOSTAPD_FLUSH = 1,
 	VIAWGET_HOSTAPD_ADD_STA = 2,
@@ -403,6 +415,15 @@ struct viawget_hostapd_param {
 	} u;
 };
 
+//2006-1116-01,<Add> by NomadZhao
 #pragma pack()
+
+/*---------------------  Export Classes  ----------------------------*/
+
+/*---------------------  Export Variables  --------------------------*/
+
+/*---------------------  Export Types  ------------------------------*/
+
+/*---------------------  Export Functions  --------------------------*/
 
 #endif //__IOCMD_H__

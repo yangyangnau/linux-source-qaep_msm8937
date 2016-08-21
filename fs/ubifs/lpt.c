@@ -1464,6 +1464,7 @@ struct ubifs_lprops *ubifs_lpt_lookup(struct ubifs_info *c, int lnum)
 			return ERR_CAST(nnode);
 	}
 	iip = ((i >> shft) & (UBIFS_LPT_FANOUT - 1));
+	shft -= UBIFS_LPT_FANOUT_SHIFT;
 	pnode = ubifs_get_pnode(c, nnode, iip);
 	if (IS_ERR(pnode))
 		return ERR_CAST(pnode);
@@ -1603,6 +1604,7 @@ struct ubifs_lprops *ubifs_lpt_lookup_dirty(struct ubifs_info *c, int lnum)
 			return ERR_CAST(nnode);
 	}
 	iip = ((i >> shft) & (UBIFS_LPT_FANOUT - 1));
+	shft -= UBIFS_LPT_FANOUT_SHIFT;
 	pnode = ubifs_get_pnode(c, nnode, iip);
 	if (IS_ERR(pnode))
 		return ERR_CAST(pnode);
@@ -1962,6 +1964,7 @@ again:
 		}
 	}
 	iip = ((i >> shft) & (UBIFS_LPT_FANOUT - 1));
+	shft -= UBIFS_LPT_FANOUT_SHIFT;
 	pnode = scan_get_pnode(c, path + h, nnode, iip);
 	if (IS_ERR(pnode)) {
 		err = PTR_ERR(pnode);
@@ -2195,7 +2198,6 @@ static int dbg_chk_pnode(struct ubifs_info *c, struct ubifs_pnode *pnode,
 					  lprops->dirty);
 				return -EINVAL;
 			}
-			break;
 		case LPROPS_FREEABLE:
 		case LPROPS_FRDI_IDX:
 			if (lprops->free + lprops->dirty != c->leb_size) {
@@ -2204,7 +2206,6 @@ static int dbg_chk_pnode(struct ubifs_info *c, struct ubifs_pnode *pnode,
 					  lprops->dirty);
 				return -EINVAL;
 			}
-			break;
 		}
 	}
 	return 0;

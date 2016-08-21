@@ -19,6 +19,7 @@
 
 #ifdef __KERNEL__
 
+#include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/uaccess.h>
 #include <asm/kmap_types.h>

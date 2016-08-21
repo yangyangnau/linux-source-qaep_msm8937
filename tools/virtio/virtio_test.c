@@ -41,14 +41,13 @@ struct vdev_info {
 	struct vhost_memory *mem;
 };
 
-bool vq_notify(struct virtqueue *vq)
+void vq_notify(struct virtqueue *vq)
 {
 	struct vq_info *info = vq->priv;
 	unsigned long long v = 1;
 	int r;
 	r = write(info->kick, &v, sizeof v);
 	assert(r == sizeof v);
-	return true;
 }
 
 void vq_callback(struct virtqueue *vq)
@@ -172,8 +171,7 @@ static void run_test(struct vdev_info *dev, struct vq_info *vq,
 							 GFP_ATOMIC);
 				if (likely(r == 0)) {
 					++started;
-					if (unlikely(!virtqueue_kick(vq->vq)))
-						r = -1;
+					virtqueue_kick(vq->vq);
 				}
 			} else
 				r = -1;

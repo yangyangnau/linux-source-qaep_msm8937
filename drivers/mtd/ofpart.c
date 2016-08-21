@@ -20,11 +20,6 @@
 #include <linux/slab.h>
 #include <linux/mtd/partitions.h>
 
-static bool node_has_compatible(struct device_node *pp)
-{
-	return of_get_property(pp, "compatible", NULL);
-}
-
 static int parse_ofpart_partitions(struct mtd_info *master,
 				   struct mtd_partition **pparts,
 				   struct mtd_part_parser_data *data)
@@ -43,13 +38,10 @@ static int parse_ofpart_partitions(struct mtd_info *master,
 		return 0;
 
 	/* First count the subnodes */
+	pp = NULL;
 	nr_parts = 0;
-	for_each_child_of_node(node,  pp) {
-		if (node_has_compatible(pp))
-			continue;
-
+	while ((pp = of_get_next_child(node, pp)))
 		nr_parts++;
-	}
 
 	if (nr_parts == 0)
 		return 0;
@@ -58,14 +50,12 @@ static int parse_ofpart_partitions(struct mtd_info *master,
 	if (!*pparts)
 		return -ENOMEM;
 
+	pp = NULL;
 	i = 0;
-	for_each_child_of_node(node,  pp) {
+	while ((pp = of_get_next_child(node, pp))) {
 		const __be32 *reg;
 		int len;
 		int a_cells, s_cells;
-
-		if (node_has_compatible(pp))
-			continue;
 
 		reg = of_get_property(pp, "reg", &len);
 		if (!reg) {
@@ -81,7 +71,7 @@ static int parse_ofpart_partitions(struct mtd_info *master,
 		partname = of_get_property(pp, "label", &len);
 		if (!partname)
 			partname = of_get_property(pp, "name", &len);
-		(*pparts)[i].name = partname;
+		(*pparts)[i].name = (char *)partname;
 
 		if (of_get_property(pp, "read-only", &len))
 			(*pparts)[i].mask_flags |= MTD_WRITEABLE;
@@ -152,7 +142,7 @@ static int parse_ofoldpart_partitions(struct mtd_info *master,
 		if (names && (plen > 0)) {
 			int len = strlen(names) + 1;
 
-			(*pparts)[i].name = names;
+			(*pparts)[i].name = (char *)names;
 			plen -= len;
 			names += len;
 		} else {
@@ -173,9 +163,18 @@ static struct mtd_part_parser ofoldpart_parser = {
 
 static int __init ofpart_parser_init(void)
 {
-	register_mtd_parser(&ofpart_parser);
-	register_mtd_parser(&ofoldpart_parser);
-	return 0;
+	int rc;
+	rc = register_mtd_parser(&ofpart_parser);
+	if (rc)
+		goto out;
+
+	rc = register_mtd_parser(&ofoldpart_parser);
+	if (!rc)
+		return 0;
+
+	deregister_mtd_parser(&ofoldpart_parser);
+out:
+	return rc;
 }
 
 static void __exit ofpart_parser_exit(void)

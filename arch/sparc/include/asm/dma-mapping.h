@@ -7,18 +7,10 @@
 
 #define DMA_ERROR_CODE	(~(dma_addr_t)0x0)
 
-int dma_supported(struct device *dev, u64 mask);
+extern int dma_supported(struct device *dev, u64 mask);
 
 #define dma_alloc_noncoherent(d, s, h, f) dma_alloc_coherent(d, s, h, f)
 #define dma_free_noncoherent(d, s, v, h) dma_free_coherent(d, s, v, h)
-
-static inline void dma_cache_sync(struct device *dev, void *vaddr, size_t size,
-				  enum dma_data_direction dir)
-{
-	/* Since dma_{alloc,free}_noncoherent() allocated coherent memory, this
-	 * routine can be a nop.
-	 */
-}
 
 extern struct dma_map_ops *dma_ops;
 extern struct dma_map_ops *leon_dma_ops;
@@ -28,12 +20,10 @@ extern struct bus_type pci_bus_type;
 
 static inline struct dma_map_ops *get_dma_ops(struct device *dev)
 {
-#ifdef CONFIG_SPARC_LEON
+#if defined(CONFIG_SPARC32) && defined(CONFIG_PCI)
 	if (sparc_cpu_model == sparc_leon)
 		return leon_dma_ops;
-#endif
-#if defined(CONFIG_SPARC32) && defined(CONFIG_PCI)
-	if (dev->bus == &pci_bus_type)
+	else if (dev->bus == &pci_bus_type)
 		return &pci32_dma_ops;
 #endif
 	return dma_ops;

@@ -58,10 +58,6 @@ struct vnic_wq_buf {
 	unsigned int index;
 	int sop;
 	void *desc;
-	uint64_t wr_id; /* Cookie */
-	uint8_t cq_entry; /* Gets completion event from hw */
-	uint8_t desc_skip_cnt; /* Num descs to occupy */
-	uint8_t compressed_send; /* Both hdr and payload in one desc */
 };
 
 /* Break the vnic_wq_buf allocations into blocks of 32/64 entries */
@@ -106,20 +102,14 @@ static inline void *vnic_wq_next_desc(struct vnic_wq *wq)
 
 static inline void vnic_wq_post(struct vnic_wq *wq,
 	void *os_buf, dma_addr_t dma_addr,
-	unsigned int len, int sop, int eop,
-	uint8_t desc_skip_cnt, uint8_t cq_entry,
-	uint8_t compressed_send, uint64_t wrid)
+	unsigned int len, int sop, int eop)
 {
 	struct vnic_wq_buf *buf = wq->to_use;
 
 	buf->sop = sop;
-	buf->cq_entry = cq_entry;
-	buf->compressed_send = compressed_send;
-	buf->desc_skip_cnt = desc_skip_cnt;
 	buf->os_buf = eop ? os_buf : NULL;
 	buf->dma_addr = dma_addr;
 	buf->len = len;
-	buf->wr_id = wrid;
 
 	buf = buf->next;
 	if (eop) {
@@ -133,7 +123,7 @@ static inline void vnic_wq_post(struct vnic_wq *wq,
 	}
 	wq->to_use = buf;
 
-	wq->ring.desc_avail -= desc_skip_cnt;
+	wq->ring.desc_avail--;
 }
 
 static inline void vnic_wq_service(struct vnic_wq *wq,

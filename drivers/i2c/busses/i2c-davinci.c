@@ -17,6 +17,10 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  * ----------------------------------------------------------------------------
  *
  */
@@ -34,7 +38,10 @@
 #include <linux/slab.h>
 #include <linux/cpufreq.h>
 #include <linux/gpio.h>
+#include <linux/of_i2c.h>
 #include <linux/of_device.h>
+
+#include <mach/hardware.h>
 #include <linux/platform_data/i2c-davinci.h>
 
 /* ----- global defines ----------------------------------------------- */
@@ -121,12 +128,12 @@ static struct davinci_i2c_platform_data davinci_i2c_platform_data_default = {
 static inline void davinci_i2c_write_reg(struct davinci_i2c_dev *i2c_dev,
 					 int reg, u16 val)
 {
-	writew_relaxed(val, i2c_dev->base + reg);
+	__raw_writew(val, i2c_dev->base + reg);
 }
 
 static inline u16 davinci_i2c_read_reg(struct davinci_i2c_dev *i2c_dev, int reg)
 {
-	return readw_relaxed(i2c_dev->base + reg);
+	return __raw_readw(i2c_dev->base + reg);
 }
 
 /* Generate a pulse on the i2c clock pin. */
@@ -319,7 +326,7 @@ i2c_davinci_xfer_msg(struct i2c_adapter *adap, struct i2c_msg *msg, int stop)
 
 	davinci_i2c_write_reg(dev, DAVINCI_I2C_CNT_REG, dev->buf_len);
 
-	reinit_completion(&dev->cmd_complete);
+	INIT_COMPLETION(dev->cmd_complete);
 	dev->cmd_err = 0;
 
 	/* Take I2C out of reset and configure it as master */
@@ -407,9 +414,11 @@ i2c_davinci_xfer_msg(struct i2c_adapter *adap, struct i2c_msg *msg, int stop)
 	if (dev->cmd_err & DAVINCI_I2C_STR_NACK) {
 		if (msg->flags & I2C_M_IGNORE_NAK)
 			return msg->len;
-		w = davinci_i2c_read_reg(dev, DAVINCI_I2C_MDR_REG);
-		w |= DAVINCI_I2C_MDR_STP;
-		davinci_i2c_write_reg(dev, DAVINCI_I2C_MDR_REG, w);
+		if (stop) {
+			w = davinci_i2c_read_reg(dev, DAVINCI_I2C_MDR_REG);
+			w |= DAVINCI_I2C_MDR_STP;
+			davinci_i2c_write_reg(dev, DAVINCI_I2C_MDR_REG, w);
+		}
 		return -EREMOTEIO;
 	}
 	return -EIO;
@@ -637,6 +646,13 @@ static int davinci_i2c_probe(struct platform_device *pdev)
 	struct resource *mem, *irq;
 	int r;
 
+	/* NOTE: driver uses the static register mapping */
+	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!mem) {
+		dev_err(&pdev->dev, "no mem resource?\n");
+		return -ENODEV;
+	}
+
 	irq = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
 	if (!irq) {
 		dev_err(&pdev->dev, "no irq resource?\n");
@@ -656,7 +672,7 @@ static int davinci_i2c_probe(struct platform_device *pdev)
 #endif
 	dev->dev = &pdev->dev;
 	dev->irq = irq->start;
-	dev->pdata = dev_get_platdata(&pdev->dev);
+	dev->pdata = dev->dev->platform_data;
 	platform_set_drvdata(pdev, dev);
 
 	if (!dev->pdata && pdev->dev.of_node) {
@@ -681,7 +697,6 @@ static int davinci_i2c_probe(struct platform_device *pdev)
 		return -ENODEV;
 	clk_prepare_enable(dev->clk);
 
-	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	dev->base = devm_ioremap_resource(&pdev->dev, mem);
 	if (IS_ERR(dev->base)) {
 		r = PTR_ERR(dev->base);
@@ -706,7 +721,7 @@ static int davinci_i2c_probe(struct platform_device *pdev)
 	adap = &dev->adapter;
 	i2c_set_adapdata(adap, dev);
 	adap->owner = THIS_MODULE;
-	adap->class = I2C_CLASS_DEPRECATED;
+	adap->class = I2C_CLASS_HWMON;
 	strlcpy(adap->name, "DaVinci I2C adapter", sizeof(adap->name));
 	adap->algo = &i2c_davinci_algo;
 	adap->dev.parent = &pdev->dev;
@@ -719,6 +734,7 @@ static int davinci_i2c_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "failure adding adapter\n");
 		goto err_unuse_clocks;
 	}
+	of_i2c_register_devices(adap);
 
 	return 0;
 
@@ -789,7 +805,7 @@ static struct platform_driver davinci_i2c_driver = {
 		.name	= "i2c_davinci",
 		.owner	= THIS_MODULE,
 		.pm	= davinci_i2c_pm_ops,
-		.of_match_table = davinci_i2c_of_match,
+		.of_match_table = of_match_ptr(davinci_i2c_of_match),
 	},
 };
 

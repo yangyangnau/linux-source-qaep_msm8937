@@ -1078,8 +1078,7 @@ static void ldc_iommu_release(struct ldc_channel *lp)
 
 struct ldc_channel *ldc_alloc(unsigned long id,
 			      const struct ldc_channel_config *cfgp,
-			      void *event_arg,
-			      const char *name)
+			      void *event_arg)
 {
 	struct ldc_channel *lp;
 	const struct ldc_mode_ops *mops;
@@ -1093,8 +1092,6 @@ struct ldc_channel *ldc_alloc(unsigned long id,
 
 	err = -EINVAL;
 	if (!cfgp)
-		goto out_err;
-	if (!name)
 		goto out_err;
 
 	switch (cfgp->mode) {
@@ -1188,21 +1185,6 @@ struct ldc_channel *ldc_alloc(unsigned long id,
 
 	INIT_HLIST_HEAD(&lp->mh_list);
 
-	snprintf(lp->rx_irq_name, LDC_IRQ_NAME_MAX, "%s RX", name);
-	snprintf(lp->tx_irq_name, LDC_IRQ_NAME_MAX, "%s TX", name);
-
-	err = request_irq(lp->cfg.rx_irq, ldc_rx, 0,
-			  lp->rx_irq_name, lp);
-	if (err)
-		goto out_free_txq;
-
-	err = request_irq(lp->cfg.tx_irq, ldc_tx, 0,
-			  lp->tx_irq_name, lp);
-	if (err) {
-		free_irq(lp->cfg.rx_irq, lp);
-		goto out_free_txq;
-	}
-
 	return lp;
 
 out_free_txq:
@@ -1255,13 +1237,30 @@ EXPORT_SYMBOL(ldc_free);
  * state.  This does not initiate a handshake, ldc_connect() does
  * that.
  */
-int ldc_bind(struct ldc_channel *lp)
+int ldc_bind(struct ldc_channel *lp, const char *name)
 {
 	unsigned long hv_err, flags;
 	int err = -EINVAL;
 
-	if (lp->state != LDC_STATE_INIT)
+	if (!name ||
+	    (lp->state != LDC_STATE_INIT))
 		return -EINVAL;
+
+	snprintf(lp->rx_irq_name, LDC_IRQ_NAME_MAX, "%s RX", name);
+	snprintf(lp->tx_irq_name, LDC_IRQ_NAME_MAX, "%s TX", name);
+
+	err = request_irq(lp->cfg.rx_irq, ldc_rx, IRQF_DISABLED,
+			  lp->rx_irq_name, lp);
+	if (err)
+		return err;
+
+	err = request_irq(lp->cfg.tx_irq, ldc_tx, IRQF_DISABLED,
+			  lp->tx_irq_name, lp);
+	if (err) {
+		free_irq(lp->cfg.rx_irq, lp);
+		return err;
+	}
+
 
 	spin_lock_irqsave(&lp->lock, flags);
 
@@ -1337,7 +1336,7 @@ int ldc_connect(struct ldc_channel *lp)
 	if (!(lp->flags & LDC_FLAG_ALLOCED_QUEUES) ||
 	    !(lp->flags & LDC_FLAG_REGISTERED_QUEUES) ||
 	    lp->hs_state != LDC_HS_OPEN)
-		err = ((lp->hs_state > LDC_HS_OPEN) ? 0 : -EINVAL);
+		err = -EINVAL;
 	else
 		err = start_handshake(lp);
 
@@ -2160,7 +2159,7 @@ int ldc_map_single(struct ldc_channel *lp,
 	state.pte_idx = (base - iommu->page_table);
 	state.nc = 0;
 	fill_cookies(&state, (pa & PAGE_MASK), (pa & ~PAGE_MASK), len);
-	BUG_ON(state.nc > ncookies);
+	BUG_ON(state.nc != 1);
 
 	return state.nc;
 }
@@ -2307,7 +2306,7 @@ void *ldc_alloc_exp_dring(struct ldc_channel *lp, unsigned int len,
 	if (len & (8UL - 1))
 		return ERR_PTR(-EINVAL);
 
-	buf = kzalloc(len, GFP_ATOMIC);
+	buf = kzalloc(len, GFP_KERNEL);
 	if (!buf)
 		return ERR_PTR(-ENOMEM);
 

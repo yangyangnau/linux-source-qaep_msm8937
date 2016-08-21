@@ -32,7 +32,16 @@ int st_accel_trig_set_state(struct iio_trigger *trig, bool state)
 
 static int st_accel_buffer_preenable(struct iio_dev *indio_dev)
 {
-	return st_sensors_set_enable(indio_dev, true);
+	int err;
+
+	err = st_sensors_set_enable(indio_dev, true);
+	if (err < 0)
+		goto st_accel_set_enable_error;
+
+	err = iio_sw_buffer_preenable(indio_dev);
+
+st_accel_set_enable_error:
+	return err;
 }
 
 static int st_accel_buffer_postenable(struct iio_dev *indio_dev)

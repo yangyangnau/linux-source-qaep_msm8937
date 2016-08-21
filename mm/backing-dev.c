@@ -40,7 +40,7 @@ LIST_HEAD(bdi_list);
 /* bdi_wq serves all asynchronous writeback tasks */
 struct workqueue_struct *bdi_wq;
 
-static void bdi_lock_two(struct bdi_writeback *wb1, struct bdi_writeback *wb2)
+void bdi_lock_two(struct bdi_writeback *wb1, struct bdi_writeback *wb2)
 {
 	if (wb1 < wb2) {
 		spin_lock(&wb1->list_lock);
@@ -180,8 +180,7 @@ static ssize_t name##_show(struct device *dev,				\
 	struct backing_dev_info *bdi = dev_get_drvdata(dev);		\
 									\
 	return snprintf(page, PAGE_SIZE-1, "%lld\n", (long long)expr);	\
-}									\
-static DEVICE_ATTR_RW(name);
+}
 
 BDI_SHOW(read_ahead_kb, K(bdi->ra_pages))
 
@@ -232,16 +231,16 @@ static ssize_t stable_pages_required_show(struct device *dev,
 	return snprintf(page, PAGE_SIZE-1, "%d\n",
 			bdi_cap_stable_pages_required(bdi) ? 1 : 0);
 }
-static DEVICE_ATTR_RO(stable_pages_required);
 
-static struct attribute *bdi_dev_attrs[] = {
-	&dev_attr_read_ahead_kb.attr,
-	&dev_attr_min_ratio.attr,
-	&dev_attr_max_ratio.attr,
-	&dev_attr_stable_pages_required.attr,
-	NULL,
+#define __ATTR_RW(attr) __ATTR(attr, 0644, attr##_show, attr##_store)
+
+static struct device_attribute bdi_dev_attrs[] = {
+	__ATTR_RW(read_ahead_kb),
+	__ATTR_RW(min_ratio),
+	__ATTR_RW(max_ratio),
+	__ATTR_RO(stable_pages_required),
+	__ATTR_NULL,
 };
-ATTRIBUTE_GROUPS(bdi_dev);
 
 static __init int bdi_class_init(void)
 {
@@ -249,7 +248,7 @@ static __init int bdi_class_init(void)
 	if (IS_ERR(bdi_class))
 		return PTR_ERR(bdi_class);
 
-	bdi_class->dev_groups = bdi_dev_groups;
+	bdi_class->dev_attrs = bdi_dev_attrs;
 	bdi_debug_init();
 	return 0;
 }
@@ -376,7 +375,13 @@ static void bdi_wb_shutdown(struct backing_dev_info *bdi)
 	mod_delayed_work(bdi_wq, &bdi->wb.dwork, 0);
 	flush_delayed_work(&bdi->wb.dwork);
 	WARN_ON(!list_empty(&bdi->work_list));
-	WARN_ON(delayed_work_pending(&bdi->wb.dwork));
+
+	/*
+	 * This shouldn't be necessary unless @bdi for some reason has
+	 * unflushed dirty IO after work_list is drained.  Do it anyway
+	 * just in case.
+	 */
+	cancel_delayed_work_sync(&bdi->wb.dwork);
 }
 
 /*
@@ -396,15 +401,21 @@ static void bdi_prune_sb(struct backing_dev_info *bdi)
 
 void bdi_unregister(struct backing_dev_info *bdi)
 {
-	if (bdi->dev) {
+	struct device *dev = bdi->dev;
+
+	if (dev) {
 		bdi_set_min_ratio(bdi, 0);
 		trace_writeback_bdi_unregister(bdi);
 		bdi_prune_sb(bdi);
 
 		bdi_wb_shutdown(bdi);
 		bdi_debug_unregister(bdi);
-		device_unregister(bdi->dev);
+
+		spin_lock_bh(&bdi->wb_lock);
 		bdi->dev = NULL;
+		spin_unlock_bh(&bdi->wb_lock);
+
+		device_unregister(dev);
 	}
 }
 EXPORT_SYMBOL(bdi_unregister);
@@ -443,7 +454,7 @@ int bdi_init(struct backing_dev_info *bdi)
 	bdi_wb_init(&bdi->wb, bdi);
 
 	for (i = 0; i < NR_BDI_STAT_ITEMS; i++) {
-		err = percpu_counter_init(&bdi->bdi_stat[i], 0, GFP_KERNEL);
+		err = percpu_counter_init(&bdi->bdi_stat[i], 0);
 		if (err)
 			goto err;
 	}
@@ -458,7 +469,7 @@ int bdi_init(struct backing_dev_info *bdi)
 	bdi->write_bandwidth = INIT_BW;
 	bdi->avg_write_bandwidth = INIT_BW;
 
-	err = fprop_local_init_percpu(&bdi->completions, GFP_KERNEL);
+	err = fprop_local_init_percpu(&bdi->completions);
 
 	if (err) {
 err:
@@ -475,17 +486,8 @@ void bdi_destroy(struct backing_dev_info *bdi)
 	int i;
 
 	/*
-	 * Splice our entries to the default_backing_dev_info.  This
-	 * condition shouldn't happen.  @wb must be empty at this point and
-	 * dirty inodes on it might cause other issues.  This workaround is
-	 * added by ce5f8e779519 ("writeback: splice dirty inode entries to
-	 * default bdi on bdi_destroy()") without root-causing the issue.
-	 *
-	 * http://lkml.kernel.org/g/1253038617-30204-11-git-send-email-jens.axboe@oracle.com
-	 * http://thread.gmane.org/gmane.linux.file-systems/35341/focus=35350
-	 *
-	 * We should probably add WARN_ON() to find out whether it still
-	 * happens and track it down if so.
+	 * Splice our entries to the default_backing_dev_info, if this
+	 * bdi disappears
 	 */
 	if (bdi_has_dirty_io(bdi)) {
 		struct bdi_writeback *dst = &default_backing_dev_info.wb;
@@ -500,7 +502,12 @@ void bdi_destroy(struct backing_dev_info *bdi)
 
 	bdi_unregister(bdi);
 
-	WARN_ON(delayed_work_pending(&bdi->wb.dwork));
+	/*
+	 * If bdi_unregister() had already been called earlier, the dwork
+	 * could still be pending because bdi_prune_sb() can race with the
+	 * bdi_wakeup_thread_delayed() calls from __mark_inode_dirty().
+	 */
+	cancel_delayed_work_sync(&bdi->wb.dwork);
 
 	for (i = 0; i < NR_BDI_STAT_ITEMS; i++)
 		percpu_counter_destroy(&bdi->bdi_stat[i]);
@@ -516,6 +523,7 @@ EXPORT_SYMBOL(bdi_destroy);
 int bdi_setup_and_register(struct backing_dev_info *bdi, char *name,
 			   unsigned int cap)
 {
+	char tmp[32];
 	int err;
 
 	bdi->name = name;
@@ -524,8 +532,8 @@ int bdi_setup_and_register(struct backing_dev_info *bdi, char *name,
 	if (err)
 		return err;
 
-	err = bdi_register(bdi, NULL, "%.28s-%ld", name,
-			   atomic_long_inc_return(&bdi_seq));
+	sprintf(tmp, "%.28s%s", name, "-%d");
+	err = bdi_register(bdi, NULL, tmp, atomic_long_inc_return(&bdi_seq));
 	if (err) {
 		bdi_destroy(bdi);
 		return err;
@@ -549,7 +557,7 @@ void clear_bdi_congested(struct backing_dev_info *bdi, int sync)
 	bit = sync ? BDI_sync_congested : BDI_async_congested;
 	if (test_and_clear_bit(bit, &bdi->state))
 		atomic_dec(&nr_bdi_congested[sync]);
-	smp_mb__after_atomic();
+	smp_mb__after_clear_bit();
 	if (waitqueue_active(wqh))
 		wake_up(wqh);
 }
@@ -623,7 +631,7 @@ long wait_iff_congested(struct zone *zone, int sync, long timeout)
 	 * of sleeping on the congestion queue
 	 */
 	if (atomic_read(&nr_bdi_congested[sync]) == 0 ||
-	    !test_bit(ZONE_CONGESTED, &zone->flags)) {
+			!zone_is_reclaim_congested(zone)) {
 		cond_resched();
 
 		/* In case we scheduled, work out time remaining */
@@ -652,7 +660,7 @@ int pdflush_proc_obsolete(struct ctl_table *table, int write,
 {
 	char kbuf[] = "0\n";
 
-	if (*ppos || *lenp < sizeof(kbuf)) {
+	if (*ppos) {
 		*lenp = 0;
 		return 0;
 	}

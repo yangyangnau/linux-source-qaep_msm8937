@@ -34,7 +34,6 @@
 #include <sound/initval.h>
 #include <sound/soc.h>
 #include <sound/dmaengine_pcm.h>
-#include <sound/omap-pcm.h>
 
 #include <linux/platform_data/asoc-ti-mcbsp.h>
 #include "mcbsp.h"
@@ -149,6 +148,9 @@ static int omap_mcbsp_dai_startup(struct snd_pcm_substream *substream,
 		snd_pcm_hw_constraint_step(substream->runtime, 0,
 					   SNDRV_PCM_HW_PARAM_PERIOD_SIZE, 2);
 	}
+
+	snd_soc_dai_set_dma_data(cpu_dai, substream,
+				 &mcbsp->dma_data[substream->stream]);
 
 	return err;
 }
@@ -431,11 +433,6 @@ static int omap_mcbsp_dai_set_dai_fmt(struct snd_soc_dai *cpu_dai,
 		/* Sample rate generator drives the FS */
 		regs->srgr2	|= FSGM;
 		break;
-	case SND_SOC_DAIFMT_CBM_CFS:
-		/* McBSP slave. FS clock as output */
-		regs->srgr2	|= FSGM;
-		regs->pcr0	|= FSXM | FSRM;
-		break;
 	case SND_SOC_DAIFMT_CBM_CFM:
 		/* McBSP slave */
 		break;
@@ -556,10 +553,6 @@ static int omap_mcbsp_probe(struct snd_soc_dai *dai)
 	struct omap_mcbsp *mcbsp = snd_soc_dai_get_drvdata(dai);
 
 	pm_runtime_enable(mcbsp->dev);
-
-	snd_soc_dai_init_dma_data(dai,
-				  &mcbsp->dma_data[SNDRV_PCM_STREAM_PLAYBACK],
-				  &mcbsp->dma_data[SNDRV_PCM_STREAM_CAPTURE]);
 
 	return 0;
 }
@@ -693,7 +686,7 @@ OMAP_MCBSP_SOC_SINGLE_S16_EXT("McBSP" #port " Sidetone Channel 1 Volume", \
 OMAP_MCBSP_ST_CONTROLS(2);
 OMAP_MCBSP_ST_CONTROLS(3);
 
-int omap_mcbsp_st_add_controls(struct snd_soc_pcm_runtime *rtd, int port_id)
+int omap_mcbsp_st_add_controls(struct snd_soc_pcm_runtime *rtd)
 {
 	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
 	struct omap_mcbsp *mcbsp = snd_soc_dai_get_drvdata(cpu_dai);
@@ -703,7 +696,7 @@ int omap_mcbsp_st_add_controls(struct snd_soc_pcm_runtime *rtd, int port_id)
 		return 0;
 	}
 
-	switch (port_id) {
+	switch (mcbsp->id) {
 	case 2: /* McBSP 2 */
 		return snd_soc_add_dai_controls(cpu_dai,
 					omap_mcbsp2_st_controls,
@@ -713,7 +706,6 @@ int omap_mcbsp_st_add_controls(struct snd_soc_pcm_runtime *rtd, int port_id)
 					omap_mcbsp3_st_controls,
 					ARRAY_SIZE(omap_mcbsp3_st_controls));
 	default:
-		dev_err(mcbsp->dev, "Port %d not supported\n", port_id);
 		break;
 	}
 
@@ -802,21 +794,18 @@ static int asoc_mcbsp_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, mcbsp);
 
 	ret = omap_mcbsp_init(pdev);
-	if (ret)
-		return ret;
+	if (!ret)
+		return snd_soc_register_component(&pdev->dev, &omap_mcbsp_component,
+						  &omap_mcbsp_dai, 1);
 
-	ret = devm_snd_soc_register_component(&pdev->dev,
-					      &omap_mcbsp_component,
-					      &omap_mcbsp_dai, 1);
-	if (ret)
-		return ret;
-
-	return omap_pcm_platform_register(&pdev->dev);
+	return ret;
 }
 
 static int asoc_mcbsp_remove(struct platform_device *pdev)
 {
 	struct omap_mcbsp *mcbsp = platform_get_drvdata(pdev);
+
+	snd_soc_unregister_component(&pdev->dev);
 
 	if (mcbsp->pdata->ops && mcbsp->pdata->ops->free)
 		mcbsp->pdata->ops->free(mcbsp->id);
@@ -824,6 +813,8 @@ static int asoc_mcbsp_remove(struct platform_device *pdev)
 	omap_mcbsp_sysfs_remove(mcbsp);
 
 	clk_put(mcbsp->fclk);
+
+	platform_set_drvdata(pdev, NULL);
 
 	return 0;
 }

@@ -148,7 +148,7 @@ static noinline void pci_wait_cfg(struct pci_dev *dev)
 int pci_user_read_config_##size						\
 	(struct pci_dev *dev, int pos, type *val)			\
 {									\
-	int ret = PCIBIOS_SUCCESSFUL;					\
+	int ret = 0;							\
 	u32 data = -1;							\
 	if (PCI_##size##_BAD)						\
 		return -EINVAL;						\
@@ -159,7 +159,9 @@ int pci_user_read_config_##size						\
 					pos, sizeof(type), &data);	\
 	raw_spin_unlock_irq(&pci_lock);				\
 	*val = (type)data;						\
-	return pcibios_err_to_errno(ret);				\
+	if (ret > 0)							\
+		ret = -EINVAL;						\
+	return ret;							\
 }									\
 EXPORT_SYMBOL_GPL(pci_user_read_config_##size);
 
@@ -168,7 +170,7 @@ EXPORT_SYMBOL_GPL(pci_user_read_config_##size);
 int pci_user_write_config_##size					\
 	(struct pci_dev *dev, int pos, type val)			\
 {									\
-	int ret = PCIBIOS_SUCCESSFUL;					\
+	int ret = -EIO;							\
 	if (PCI_##size##_BAD)						\
 		return -EINVAL;						\
 	raw_spin_lock_irq(&pci_lock);				\
@@ -177,7 +179,9 @@ int pci_user_write_config_##size					\
 	ret = dev->bus->ops->write(dev->bus, dev->devfn,		\
 					pos, sizeof(type), val);	\
 	raw_spin_unlock_irq(&pci_lock);				\
-	return pcibios_err_to_errno(ret);				\
+	if (ret > 0)							\
+		ret = -EINVAL;						\
+	return ret;							\
 }									\
 EXPORT_SYMBOL_GPL(pci_user_write_config_##size);
 
@@ -231,7 +235,10 @@ static int pci_vpd_pci22_wait(struct pci_dev *dev)
 		}
 
 		if (time_after(jiffies, timeout)) {
-			dev_printk(KERN_DEBUG, &dev->dev, "vpd r/w failed.  This is likely a firmware bug on this device.  Contact the card vendor for a firmware update\n");
+			dev_printk(KERN_DEBUG, &dev->dev,
+				   "vpd r/w failed.  This is likely a firmware "
+				   "bug on this device.  Contact the card "
+				   "vendor for a firmware update.");
 			return -ETIMEDOUT;
 		}
 		if (fatal_signal_pending(current))
@@ -374,6 +381,30 @@ int pci_vpd_pci22_init(struct pci_dev *dev)
 }
 
 /**
+ * pci_vpd_truncate - Set available Vital Product Data size
+ * @dev:	pci device struct
+ * @size:	available memory in bytes
+ *
+ * Adjust size of available VPD area.
+ */
+int pci_vpd_truncate(struct pci_dev *dev, size_t size)
+{
+	if (!dev->vpd)
+		return -EINVAL;
+
+	/* limited by the access method */
+	if (size > dev->vpd->len)
+		return -EINVAL;
+
+	dev->vpd->len = size;
+	if (dev->vpd->attr)
+		dev->vpd->attr->size = size;
+
+	return 0;
+}
+EXPORT_SYMBOL(pci_vpd_truncate);
+
+/**
  * pci_cfg_access_lock - Lock PCI config reads/writes
  * @dev:	pci device struct
  *
@@ -444,7 +475,12 @@ static inline int pcie_cap_version(const struct pci_dev *dev)
 	return pcie_caps_reg(dev) & PCI_EXP_FLAGS_VERS;
 }
 
-bool pcie_cap_has_lnkctl(const struct pci_dev *dev)
+static inline bool pcie_cap_has_devctl(const struct pci_dev *dev)
+{
+	return true;
+}
+
+static inline bool pcie_cap_has_lnkctl(const struct pci_dev *dev)
 {
 	int type = pci_pcie_type(dev);
 
@@ -485,7 +521,7 @@ static bool pcie_capability_reg_implemented(struct pci_dev *dev, int pos)
 	case PCI_EXP_DEVCAP:
 	case PCI_EXP_DEVCTL:
 	case PCI_EXP_DEVSTA:
-		return true;
+		return pcie_cap_has_devctl(dev);
 	case PCI_EXP_LNKCAP:
 	case PCI_EXP_LNKCTL:
 	case PCI_EXP_LNKSTA:

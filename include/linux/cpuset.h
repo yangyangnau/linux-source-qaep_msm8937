@@ -12,31 +12,10 @@
 #include <linux/cpumask.h>
 #include <linux/nodemask.h>
 #include <linux/mm.h>
-#include <linux/jump_label.h>
 
 #ifdef CONFIG_CPUSETS
 
-extern struct static_key cpusets_enabled_key;
-static inline bool cpusets_enabled(void)
-{
-	return static_key_false(&cpusets_enabled_key);
-}
-
-static inline int nr_cpusets(void)
-{
-	/* jump label reference count + the top-level cpuset */
-	return static_key_count(&cpusets_enabled_key) + 1;
-}
-
-static inline void cpuset_inc(void)
-{
-	static_key_slow_inc(&cpusets_enabled_key);
-}
-
-static inline void cpuset_dec(void)
-{
-	static_key_slow_dec(&cpusets_enabled_key);
-}
+extern int number_of_cpusets;	/* How many cpusets are defined in system? */
 
 extern int cpuset_init(void);
 extern void cpuset_init_smp(void);
@@ -53,13 +32,13 @@ extern int __cpuset_node_allowed_hardwall(int node, gfp_t gfp_mask);
 
 static inline int cpuset_node_allowed_softwall(int node, gfp_t gfp_mask)
 {
-	return nr_cpusets() <= 1 ||
+	return number_of_cpusets <= 1 ||
 		__cpuset_node_allowed_softwall(node, gfp_mask);
 }
 
 static inline int cpuset_node_allowed_hardwall(int node, gfp_t gfp_mask)
 {
-	return nr_cpusets() <= 1 ||
+	return number_of_cpusets <= 1 ||
 		__cpuset_node_allowed_hardwall(node, gfp_mask);
 }
 
@@ -86,20 +65,19 @@ extern void __cpuset_memory_pressure_bump(void);
 
 extern void cpuset_task_status_allowed(struct seq_file *m,
 					struct task_struct *task);
-extern int proc_cpuset_show(struct seq_file *m, struct pid_namespace *ns,
-			    struct pid *pid, struct task_struct *tsk);
+extern int proc_cpuset_show(struct seq_file *, void *);
 
 extern int cpuset_mem_spread_node(void);
 extern int cpuset_slab_spread_node(void);
 
 static inline int cpuset_do_page_mem_spread(void)
 {
-	return task_spread_page(current);
+	return current->flags & PF_SPREAD_PAGE;
 }
 
 static inline int cpuset_do_slab_mem_spread(void)
 {
-	return task_spread_slab(current);
+	return current->flags & PF_SPREAD_SLAB;
 }
 
 extern int current_cpuset_is_being_rebound(void);
@@ -109,44 +87,37 @@ extern void rebuild_sched_domains(void);
 extern void cpuset_print_task_mems_allowed(struct task_struct *p);
 
 /*
- * read_mems_allowed_begin is required when making decisions involving
- * mems_allowed such as during page allocation. mems_allowed can be updated in
- * parallel and depending on the new value an operation can fail potentially
- * causing process failure. A retry loop with read_mems_allowed_begin and
- * read_mems_allowed_retry prevents these artificial failures.
+ * get_mems_allowed is required when making decisions involving mems_allowed
+ * such as during page allocation. mems_allowed can be updated in parallel
+ * and depending on the new value an operation can fail potentially causing
+ * process failure. A retry loop with get_mems_allowed and put_mems_allowed
+ * prevents these artificial failures.
  */
-static inline unsigned int read_mems_allowed_begin(void)
+static inline unsigned int get_mems_allowed(void)
 {
 	return read_seqcount_begin(&current->mems_allowed_seq);
 }
 
 /*
- * If this returns true, the operation that took place after
- * read_mems_allowed_begin may have failed artificially due to a concurrent
- * update of mems_allowed. It is up to the caller to retry the operation if
+ * If this returns false, the operation that took place after get_mems_allowed
+ * may have failed. It is up to the caller to retry the operation if
  * appropriate.
  */
-static inline bool read_mems_allowed_retry(unsigned int seq)
+static inline bool put_mems_allowed(unsigned int seq)
 {
-	return read_seqcount_retry(&current->mems_allowed_seq, seq);
+	return !read_seqcount_retry(&current->mems_allowed_seq, seq);
 }
 
 static inline void set_mems_allowed(nodemask_t nodemask)
 {
-	unsigned long flags;
-
 	task_lock(current);
-	local_irq_save(flags);
 	write_seqcount_begin(&current->mems_allowed_seq);
 	current->mems_allowed = nodemask;
 	write_seqcount_end(&current->mems_allowed_seq);
-	local_irq_restore(flags);
 	task_unlock(current);
 }
 
 #else /* !CONFIG_CPUSETS */
-
-static inline bool cpusets_enabled(void) { return false; }
 
 static inline int cpuset_init(void) { return 0; }
 static inline void cpuset_init_smp(void) {}
@@ -250,14 +221,14 @@ static inline void set_mems_allowed(nodemask_t nodemask)
 {
 }
 
-static inline unsigned int read_mems_allowed_begin(void)
+static inline unsigned int get_mems_allowed(void)
 {
 	return 0;
 }
 
-static inline bool read_mems_allowed_retry(unsigned int seq)
+static inline bool put_mems_allowed(unsigned int seq)
 {
-	return false;
+	return true;
 }
 
 #endif /* !CONFIG_CPUSETS */

@@ -26,6 +26,9 @@
 #ifndef __ACPI_DRIVERS_H__
 #define __ACPI_DRIVERS_H__
 
+#include <linux/acpi.h>
+#include <acpi/acpi_bus.h>
+
 #define ACPI_MAX_STRING			80
 
 /*
@@ -96,12 +99,7 @@ struct pci_dev *acpi_get_pci_dev(acpi_handle);
 /* Arch-defined function to add a bus to the system */
 
 struct pci_bus *pci_acpi_scan_root(struct acpi_pci_root *root);
-
-#ifdef CONFIG_X86
 void pci_acpi_crs_quirks(void);
-#else
-static inline void pci_acpi_crs_quirks(void) { }
-#endif
 
 /* --------------------------------------------------------------------------
                                     Processor
@@ -114,14 +112,44 @@ static inline void pci_acpi_crs_quirks(void) { }
 /*--------------------------------------------------------------------------
                                   Dock Station
   -------------------------------------------------------------------------- */
+struct acpi_dock_ops {
+	acpi_notify_handler handler;
+	acpi_notify_handler uevent;
+};
 
-#ifdef CONFIG_ACPI_DOCK
-extern int is_dock_device(struct acpi_device *adev);
+#if defined(CONFIG_ACPI_DOCK) || defined(CONFIG_ACPI_DOCK_MODULE)
+extern int is_dock_device(acpi_handle handle);
+extern int register_dock_notifier(struct notifier_block *nb);
+extern void unregister_dock_notifier(struct notifier_block *nb);
+extern int register_hotplug_dock_device(acpi_handle handle,
+					const struct acpi_dock_ops *ops,
+					void *context,
+					void (*init)(void *),
+					void (*release)(void *));
+extern void unregister_hotplug_dock_device(acpi_handle handle);
 #else
-static inline int is_dock_device(struct acpi_device *adev)
+static inline int is_dock_device(acpi_handle handle)
 {
 	return 0;
 }
-#endif /* CONFIG_ACPI_DOCK */
+static inline int register_dock_notifier(struct notifier_block *nb)
+{
+	return -ENODEV;
+}
+static inline void unregister_dock_notifier(struct notifier_block *nb)
+{
+}
+static inline int register_hotplug_dock_device(acpi_handle handle,
+					       const struct acpi_dock_ops *ops,
+					       void *context,
+					       void (*init)(void *),
+					       void (*release)(void *))
+{
+	return -ENODEV;
+}
+static inline void unregister_hotplug_dock_device(acpi_handle handle)
+{
+}
+#endif
 
 #endif /*__ACPI_DRIVERS_H__*/

@@ -332,6 +332,31 @@ static void serial_pxa_break_ctl(struct uart_port *port, int break_state)
 	spin_unlock_irqrestore(&up->port.lock, flags);
 }
 
+#if 0
+static void serial_pxa_dma_init(struct pxa_uart *up)
+{
+	up->rxdma =
+		pxa_request_dma(up->name, DMA_PRIO_LOW, pxa_receive_dma, up);
+	if (up->rxdma < 0)
+		goto out;
+	up->txdma =
+		pxa_request_dma(up->name, DMA_PRIO_LOW, pxa_transmit_dma, up);
+	if (up->txdma < 0)
+		goto err_txdma;
+	up->dmadesc = kmalloc(4 * sizeof(pxa_dma_desc), GFP_KERNEL);
+	if (!up->dmadesc)
+		goto err_alloc;
+
+	/* ... */
+err_alloc:
+	pxa_free_dma(up->txdma);
+err_rxdma:
+	pxa_free_dma(up->rxdma);
+out:
+	return;
+}
+#endif
+
 static int serial_pxa_startup(struct uart_port *port)
 {
 	struct uart_pxa_port *up = (struct uart_pxa_port *)port;
@@ -492,7 +517,7 @@ serial_pxa_set_termios(struct uart_port *port, struct ktermios *termios,
 	up->port.read_status_mask = UART_LSR_OE | UART_LSR_THRE | UART_LSR_DR;
 	if (termios->c_iflag & INPCK)
 		up->port.read_status_mask |= UART_LSR_FE | UART_LSR_PE;
-	if (termios->c_iflag & (IGNBRK | BRKINT | PARMRK))
+	if (termios->c_iflag & (BRKINT | PARMRK))
 		up->port.read_status_mask |= UART_LSR_BI;
 
 	/*
@@ -711,8 +736,13 @@ static void serial_pxa_put_poll_char(struct uart_port *port,
 	wait_for_xmitr(up);
 	/*
 	 *	Send the character out.
+	 *	If a LF, also do CR...
 	 */
 	serial_out(up, UART_TX, c);
+	if (c == 10) {
+		wait_for_xmitr(up);
+		serial_out(up, UART_TX, 13);
+	}
 
 	/*
 	 *	Finally, wait for transmitter to become empty
@@ -760,7 +790,7 @@ static struct console serial_pxa_console = {
 #define PXA_CONSOLE	NULL
 #endif
 
-static struct uart_ops serial_pxa_pops = {
+struct uart_ops serial_pxa_pops = {
 	.tx_empty	= serial_pxa_tx_empty,
 	.set_mctrl	= serial_pxa_set_mctrl,
 	.get_mctrl	= serial_pxa_get_mctrl,
@@ -778,7 +808,7 @@ static struct uart_ops serial_pxa_pops = {
 	.request_port	= serial_pxa_request_port,
 	.config_port	= serial_pxa_config_port,
 	.verify_port	= serial_pxa_verify_port,
-#if defined(CONFIG_CONSOLE_POLL) && defined(CONFIG_SERIAL_PXA_CONSOLE)
+#ifdef CONFIG_CONSOLE_POLL
 	.poll_get_char = serial_pxa_get_poll_char,
 	.poll_put_char = serial_pxa_put_poll_char,
 #endif
@@ -915,6 +945,8 @@ static int serial_pxa_remove(struct platform_device *dev)
 {
 	struct uart_pxa_port *sport = platform_get_drvdata(dev);
 
+	platform_set_drvdata(dev, NULL);
+
 	uart_remove_one_port(&serial_pxa_reg, &sport->port);
 
 	clk_unprepare(sport->clk);
@@ -938,7 +970,7 @@ static struct platform_driver serial_pxa_driver = {
 	},
 };
 
-static int __init serial_pxa_init(void)
+int __init serial_pxa_init(void)
 {
 	int ret;
 
@@ -953,7 +985,7 @@ static int __init serial_pxa_init(void)
 	return ret;
 }
 
-static void __exit serial_pxa_exit(void)
+void __exit serial_pxa_exit(void)
 {
 	platform_driver_unregister(&serial_pxa_driver);
 	uart_unregister_driver(&serial_pxa_reg);

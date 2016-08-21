@@ -47,10 +47,7 @@ static inline pgtable_t pte_alloc_one(struct mm_struct *mm,
 	if (!pg)
 		return NULL;
 	page = virt_to_page(pg);
-	if (!pgtable_page_ctor(page)) {
-		quicklist_free(QUICK_PT, NULL, pg);
-		return NULL;
-	}
+	pgtable_page_ctor(page);
 	return page;
 }
 

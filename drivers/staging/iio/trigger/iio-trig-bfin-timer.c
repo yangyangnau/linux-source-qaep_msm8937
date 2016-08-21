@@ -83,28 +83,32 @@ static ssize_t iio_bfin_tmr_frequency_store(struct device *dev,
 {
 	struct iio_trigger *trig = to_iio_trigger(dev);
 	struct bfin_tmr_state *st = iio_trigger_get_drvdata(trig);
-	unsigned int val;
+	unsigned long val;
 	bool enabled;
 	int ret;
 
-	ret = kstrtouint(buf, 10, &val);
+	ret = strict_strtoul(buf, 10, &val);
 	if (ret)
-		return ret;
+		goto error_ret;
 
-	if (val > 100000)
-		return -EINVAL;
+	if (val > 100000) {
+		ret = -EINVAL;
+		goto error_ret;
+	}
 
 	enabled = get_enabled_gptimers() & st->t->bit;
 
 	if (enabled)
 		disable_gptimers(st->t->bit);
 
-	if (val == 0)
-		return count;
+	if (!val)
+		goto error_ret;
 
 	val = get_sclk() / val;
-	if (val <= 4 || val <= st->duty)
-		return -EINVAL;
+	if (val <= 4 || val <= st->duty) {
+		ret = -EINVAL;
+		goto error_ret;
+	}
 
 	set_gptimer_period(st->t->id, val);
 	set_gptimer_pwidth(st->t->id, val - st->duty);
@@ -112,7 +116,8 @@ static ssize_t iio_bfin_tmr_frequency_store(struct device *dev,
 	if (enabled)
 		enable_gptimers(st->t->bit);
 
-	return count;
+error_ret:
+	return ret ? ret : count;
 }
 
 static ssize_t iio_bfin_tmr_frequency_show(struct device *dev,
@@ -154,7 +159,7 @@ static irqreturn_t iio_bfin_tmr_trigger_isr(int irq, void *devid)
 	struct bfin_tmr_state *st = devid;
 
 	clear_gptimer_intr(st->t->id);
-	iio_trigger_poll(st->trig);
+	iio_trigger_poll(st->trig, 0);
 
 	return IRQ_HANDLED;
 }
@@ -182,40 +187,45 @@ static int iio_bfin_tmr_trigger_probe(struct platform_device *pdev)
 	unsigned int config;
 	int ret;
 
-	st = devm_kzalloc(&pdev->dev, sizeof(*st), GFP_KERNEL);
-	if (st == NULL)
-		return -ENOMEM;
+	st = kzalloc(sizeof(*st), GFP_KERNEL);
+	if (st == NULL) {
+		ret = -ENOMEM;
+		goto out;
+	}
 
 	st->irq = platform_get_irq(pdev, 0);
 	if (!st->irq) {
 		dev_err(&pdev->dev, "No IRQs specified");
-		return -ENODEV;
+		ret = -ENODEV;
+		goto out1;
 	}
 
 	ret = iio_bfin_tmr_get_number(st->irq);
 	if (ret < 0)
-		return ret;
+		goto out1;
 
 	st->timer_num = ret;
 	st->t = &iio_bfin_timer_code[st->timer_num];
 
 	st->trig = iio_trigger_alloc("bfintmr%d", st->timer_num);
-	if (!st->trig)
-		return -ENOMEM;
+	if (!st->trig) {
+		ret = -ENOMEM;
+		goto out1;
+	}
 
 	st->trig->ops = &iio_bfin_tmr_trigger_ops;
 	st->trig->dev.groups = iio_bfin_tmr_trigger_attr_groups;
 	iio_trigger_set_drvdata(st->trig, st);
 	ret = iio_trigger_register(st->trig);
 	if (ret)
-		goto out;
+		goto out2;
 
 	ret = request_irq(st->irq, iio_bfin_tmr_trigger_isr,
 			  0, st->trig->name, st);
 	if (ret) {
 		dev_err(&pdev->dev,
 			"request IRQ-%d failed", st->irq);
-		goto out1;
+		goto out4;
 	}
 
 	config = PWM_OUT | PERIOD_CNT | IRQ_ENA;
@@ -255,10 +265,13 @@ static int iio_bfin_tmr_trigger_probe(struct platform_device *pdev)
 	return 0;
 out_free_irq:
 	free_irq(st->irq, st);
-out1:
+out4:
 	iio_trigger_unregister(st->trig);
-out:
+out2:
 	iio_trigger_put(st->trig);
+out1:
+	kfree(st);
+out:
 	return ret;
 }
 
@@ -272,6 +285,7 @@ static int iio_bfin_tmr_trigger_remove(struct platform_device *pdev)
 	free_irq(st->irq, st);
 	iio_trigger_unregister(st->trig);
 	iio_trigger_put(st->trig);
+	kfree(st);
 
 	return 0;
 }

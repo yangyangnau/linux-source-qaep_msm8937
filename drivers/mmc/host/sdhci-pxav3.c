@@ -34,7 +34,6 @@
 #include <linux/of_gpio.h>
 #include <linux/pm.h>
 #include <linux/pm_runtime.h>
-#include <linux/mbus.h>
 
 #include "sdhci.h"
 #include "sdhci-pltfm.h"
@@ -58,98 +57,10 @@
 #define SDCE_MISC_INT		(1<<2)
 #define SDCE_MISC_INT_EN	(1<<1)
 
-/*
- * These registers are relative to the second register region, for the
- * MBus bridge.
- */
-#define SDHCI_WINDOW_CTRL(i)	(0x80 + ((i) << 3))
-#define SDHCI_WINDOW_BASE(i)	(0x84 + ((i) << 3))
-#define SDHCI_MAX_WIN_NUM	8
-
-static int mv_conf_mbus_windows(struct platform_device *pdev,
-				const struct mbus_dram_target_info *dram)
-{
-	int i;
-	void __iomem *regs;
-	struct resource *res;
-
-	if (!dram) {
-		dev_err(&pdev->dev, "no mbus dram info\n");
-		return -EINVAL;
-	}
-
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
-	if (!res) {
-		dev_err(&pdev->dev, "cannot get mbus registers\n");
-		return -EINVAL;
-	}
-
-	regs = ioremap(res->start, resource_size(res));
-	if (!regs) {
-		dev_err(&pdev->dev, "cannot map mbus registers\n");
-		return -ENOMEM;
-	}
-
-	for (i = 0; i < SDHCI_MAX_WIN_NUM; i++) {
-		writel(0, regs + SDHCI_WINDOW_CTRL(i));
-		writel(0, regs + SDHCI_WINDOW_BASE(i));
-	}
-
-	for (i = 0; i < dram->num_cs; i++) {
-		const struct mbus_dram_window *cs = dram->cs + i;
-
-		/* Write size, attributes and target id to control register */
-		writel(((cs->size - 1) & 0xffff0000) |
-			(cs->mbus_attr << 8) |
-			(dram->mbus_dram_target_id << 4) | 1,
-			regs + SDHCI_WINDOW_CTRL(i));
-		/* Write base address to base register */
-		writel(cs->base, regs + SDHCI_WINDOW_BASE(i));
-	}
-
-	iounmap(regs);
-
-	return 0;
-}
-
-static int armada_38x_quirks(struct platform_device *pdev,
-			     struct sdhci_host *host)
-{
-	struct device_node *np = pdev->dev.of_node;
-
-	host->quirks |= SDHCI_QUIRK_MISSING_CAPS;
-	/*
-	 * According to erratum 'FE-2946959' both SDR50 and DDR50
-	 * modes require specific clock adjustments in SDIO3
-	 * Configuration register, if the adjustment is not done,
-	 * remove them from the capabilities.
-	 */
-	host->caps1 = sdhci_readl(host, SDHCI_CAPABILITIES_1);
-	host->caps1 &= ~(SDHCI_SUPPORT_SDR50 | SDHCI_SUPPORT_DDR50);
-
-	/*
-	 * According to erratum 'ERR-7878951' Armada 38x SDHCI
-	 * controller has different capabilities than the ones shown
-	 * in its registers
-	 */
-	host->caps = sdhci_readl(host, SDHCI_CAPABILITIES);
-	if (of_property_read_bool(np, "no-1-8-v")) {
-		host->caps &= ~SDHCI_CAN_VDD_180;
-		host->mmc->caps &= ~MMC_CAP_1_8V_DDR;
-	} else {
-		host->caps &= ~SDHCI_CAN_VDD_330;
-	}
-	host->caps1 &= ~(SDHCI_SUPPORT_SDR104 | SDHCI_USE_SDR50_TUNING);
-
-	return 0;
-}
-
-static void pxav3_reset(struct sdhci_host *host, u8 mask)
+static void pxav3_set_private_registers(struct sdhci_host *host, u8 mask)
 {
 	struct platform_device *pdev = to_platform_device(mmc_dev(host->mmc));
 	struct sdhci_pxa_platdata *pdata = pdev->dev.platform_data;
-
-	sdhci_reset(host, mask);
 
 	if (mask == SDHCI_RESET_ALL) {
 		/*
@@ -218,7 +129,7 @@ static void pxav3_gen_init_74_clocks(struct sdhci_host *host, u8 power_mode)
 	pxa->power_mode = power_mode;
 }
 
-static void pxav3_set_uhs_signaling(struct sdhci_host *host, unsigned int uhs)
+static int pxav3_set_uhs_signaling(struct sdhci_host *host, unsigned int uhs)
 {
 	u16 ctrl_2;
 
@@ -252,15 +163,15 @@ static void pxav3_set_uhs_signaling(struct sdhci_host *host, unsigned int uhs)
 	dev_dbg(mmc_dev(host->mmc),
 		"%s uhs = %d, ctrl_2 = %04X\n",
 		__func__, uhs, ctrl_2);
+
+	return 0;
 }
 
 static const struct sdhci_ops pxav3_sdhci_ops = {
-	.set_clock = sdhci_set_clock,
+	.platform_reset_exit = pxav3_set_private_registers,
+	.set_uhs_signaling = pxav3_set_uhs_signaling,
 	.platform_send_init_74_clocks = pxav3_gen_init_74_clocks,
 	.get_max_clock = sdhci_pltfm_clk_get_max_clock,
-	.set_bus_width = sdhci_set_bus_width,
-	.reset = pxav3_reset,
-	.set_uhs_signaling = pxav3_set_uhs_signaling,
 };
 
 static struct sdhci_pltfm_data sdhci_pxav3_pdata = {
@@ -276,9 +187,6 @@ static const struct of_device_id sdhci_pxav3_of_match[] = {
 	{
 		.compatible = "mrvl,pxav3-mmc",
 	},
-	{
-		.compatible = "marvell,armada-380-sdhci",
-	},
 	{},
 };
 MODULE_DEVICE_TABLE(of, sdhci_pxav3_of_match);
@@ -293,8 +201,8 @@ static struct sdhci_pxa_platdata *pxav3_get_mmc_pdata(struct device *dev)
 	if (!pdata)
 		return NULL;
 
-	if (!of_property_read_u32(np, "mrvl,clk-delay-cycles",
-				  &clk_delay_cycles))
+	of_property_read_u32(np, "mrvl,clk-delay-cycles", &clk_delay_cycles);
+	if (clk_delay_cycles > 0)
 		pdata->clk_delay_cycles = clk_delay_cycles;
 
 	return pdata;
@@ -311,7 +219,6 @@ static int sdhci_pxav3_probe(struct platform_device *pdev)
 	struct sdhci_pltfm_host *pltfm_host;
 	struct sdhci_pxa_platdata *pdata = pdev->dev.platform_data;
 	struct device *dev = &pdev->dev;
-	struct device_node *np = pdev->dev.of_node;
 	struct sdhci_host *host = NULL;
 	struct sdhci_pxa *pxa = NULL;
 	const struct of_device_id *match;
@@ -319,21 +226,19 @@ static int sdhci_pxav3_probe(struct platform_device *pdev)
 	int ret;
 	struct clk *clk;
 
-	pxa = devm_kzalloc(&pdev->dev, sizeof(struct sdhci_pxa), GFP_KERNEL);
+	pxa = kzalloc(sizeof(struct sdhci_pxa), GFP_KERNEL);
 	if (!pxa)
 		return -ENOMEM;
 
-	host = sdhci_pltfm_init(pdev, &sdhci_pxav3_pdata, 0);
-	if (IS_ERR(host))
+	host = sdhci_pltfm_init(pdev, &sdhci_pxav3_pdata);
+	if (IS_ERR(host)) {
+		kfree(pxa);
 		return PTR_ERR(host);
-
-	/* enable 1/8V DDR capable */
-	host->mmc->caps |= MMC_CAP_1_8V_DDR;
-
+	}
 	pltfm_host = sdhci_priv(host);
 	pltfm_host->priv = pxa;
 
-	clk = devm_clk_get(dev, NULL);
+	clk = clk_get(dev, NULL);
 	if (IS_ERR(clk)) {
 		dev_err(dev, "failed to get io clock\n");
 		ret = PTR_ERR(clk);
@@ -342,20 +247,12 @@ static int sdhci_pxav3_probe(struct platform_device *pdev)
 	pltfm_host->clk = clk;
 	clk_prepare_enable(clk);
 
-	if (of_device_is_compatible(np, "marvell,armada-380-sdhci")) {
-		ret = armada_38x_quirks(pdev, host);
-		if (ret < 0)
-			goto err_clk_get;
-		ret = mv_conf_mbus_windows(pdev, mv_mbus_dram_info());
-		if (ret < 0)
-			goto err_mbus_win;
-	}
+	/* enable 1/8V DDR capable */
+	host->mmc->caps |= MMC_CAP_1_8V_DDR;
 
 	match = of_match_device(of_match_ptr(sdhci_pxav3_of_match), &pdev->dev);
 	if (match) {
-		ret = mmc_of_parse(host->mmc);
-		if (ret)
-			goto err_of_parse;
+		mmc_of_parse(host->mmc);
 		sdhci_get_of_property(pdev);
 		pdata = pxav3_get_mmc_pdata(dev);
 	} else if (pdata) {
@@ -379,8 +276,7 @@ static int sdhci_pxav3_probe(struct platform_device *pdev)
 			host->mmc->pm_caps |= pdata->pm_caps;
 
 		if (gpio_is_valid(pdata->ext_cd_gpio)) {
-			ret = mmc_gpio_request_cd(host->mmc, pdata->ext_cd_gpio,
-						  0);
+			ret = mmc_gpio_request_cd(host->mmc, pdata->ext_cd_gpio);
 			if (ret) {
 				dev_err(mmc_dev(host->mmc),
 					"failed to allocate card detect gpio\n");
@@ -389,16 +285,18 @@ static int sdhci_pxav3_probe(struct platform_device *pdev)
 		}
 	}
 
-	pm_runtime_get_noresume(&pdev->dev);
 	pm_runtime_set_active(&pdev->dev);
+	pm_runtime_enable(&pdev->dev);
 	pm_runtime_set_autosuspend_delay(&pdev->dev, PXAV3_RPM_DELAY_MS);
 	pm_runtime_use_autosuspend(&pdev->dev);
-	pm_runtime_enable(&pdev->dev);
 	pm_suspend_ignore_children(&pdev->dev, 1);
+	pm_runtime_get_noresume(&pdev->dev);
 
 	ret = sdhci_add_host(host);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to add host\n");
+		pm_runtime_forbid(&pdev->dev);
+		pm_runtime_disable(&pdev->dev);
 		goto err_add_host;
 	}
 
@@ -416,14 +314,12 @@ static int sdhci_pxav3_probe(struct platform_device *pdev)
 	return 0;
 
 err_add_host:
-	pm_runtime_disable(&pdev->dev);
-	pm_runtime_put_noidle(&pdev->dev);
-err_of_parse:
-err_cd_req:
-err_mbus_win:
 	clk_disable_unprepare(clk);
+	clk_put(clk);
+err_cd_req:
 err_clk_get:
 	sdhci_pltfm_free(pdev);
+	kfree(pxa);
 	return ret;
 }
 
@@ -431,14 +327,19 @@ static int sdhci_pxav3_remove(struct platform_device *pdev)
 {
 	struct sdhci_host *host = platform_get_drvdata(pdev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_pxa *pxa = pltfm_host->priv;
 
 	pm_runtime_get_sync(&pdev->dev);
 	sdhci_remove_host(host, 1);
 	pm_runtime_disable(&pdev->dev);
 
 	clk_disable_unprepare(pltfm_host->clk);
+	clk_put(pltfm_host->clk);
 
 	sdhci_pltfm_free(pdev);
+	kfree(pxa);
+
+	platform_set_drvdata(pdev, NULL);
 
 	return 0;
 }
@@ -526,6 +427,7 @@ static struct platform_driver sdhci_pxav3_driver = {
 #ifdef CONFIG_OF
 		.of_match_table = sdhci_pxav3_of_match,
 #endif
+		.owner	= THIS_MODULE,
 		.pm	= SDHCI_PXAV3_PMOPS,
 	},
 	.probe		= sdhci_pxav3_probe,

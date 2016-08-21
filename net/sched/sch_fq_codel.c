@@ -52,7 +52,7 @@ struct fq_codel_flow {
 }; /* please try to keep this structure <= 64 bytes */
 
 struct fq_codel_sched_data {
-	struct tcf_proto __rcu *filter_list; /* optional external classifier */
+	struct tcf_proto *filter_list;	/* optional external classifier */
 	struct fq_codel_flow *flows;	/* Flows table [flows_cnt] */
 	u32		*backlogs;	/* backlog table [flows_cnt] */
 	u32		flows_cnt;	/* number of flows */
@@ -77,15 +77,13 @@ static unsigned int fq_codel_hash(const struct fq_codel_sched_data *q,
 	hash = jhash_3words((__force u32)keys.dst,
 			    (__force u32)keys.src ^ keys.ip_proto,
 			    (__force u32)keys.ports, q->perturbation);
-
-	return reciprocal_scale(hash, q->flows_cnt);
+	return ((u64)hash * q->flows_cnt) >> 32;
 }
 
 static unsigned int fq_codel_classify(struct sk_buff *skb, struct Qdisc *sch,
 				      int *qerr)
 {
 	struct fq_codel_sched_data *q = qdisc_priv(sch);
-	struct tcf_proto *filter;
 	struct tcf_result res;
 	int result;
 
@@ -94,12 +92,11 @@ static unsigned int fq_codel_classify(struct sk_buff *skb, struct Qdisc *sch,
 	    TC_H_MIN(skb->priority) <= q->flows_cnt)
 		return TC_H_MIN(skb->priority);
 
-	filter = rcu_dereference_bh(q->filter_list);
-	if (!filter)
+	if (!q->filter_list)
 		return fq_codel_hash(q, skb) + 1;
 
 	*qerr = NET_XMIT_SUCCESS | __NET_XMIT_BYPASS;
-	result = tc_classify(skb, filter, &res);
+	result = tc_classify(skb, q->filter_list, &res);
 	if (result >= 0) {
 #ifdef CONFIG_NET_CLS_ACT
 		switch (result) {
@@ -164,8 +161,8 @@ static unsigned int fq_codel_drop(struct Qdisc *sch)
 	q->backlogs[idx] -= len;
 	kfree_skb(skb);
 	sch->q.qlen--;
-	qdisc_qstats_drop(sch);
-	qdisc_qstats_backlog_dec(sch, skb);
+	sch->qstats.drops++;
+	sch->qstats.backlog -= len;
 	flow->dropped++;
 	return idx;
 }
@@ -180,7 +177,7 @@ static int fq_codel_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 	idx = fq_codel_classify(skb, sch, &ret);
 	if (idx == 0) {
 		if (ret & __NET_XMIT_BYPASS)
-			qdisc_qstats_drop(sch);
+			sch->qstats.drops++;
 		kfree_skb(skb);
 		return ret;
 	}
@@ -190,7 +187,7 @@ static int fq_codel_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 	flow = &q->flows[idx];
 	flow_queue_add(flow, skb);
 	q->backlogs[idx] += qdisc_pkt_len(skb);
-	qdisc_qstats_backlog_inc(sch, skb);
+	sch->qstats.backlog += qdisc_pkt_len(skb);
 
 	if (list_empty(&flow->flowchain)) {
 		list_add_tail(&flow->flowchain, &q->new_flows);
@@ -368,7 +365,12 @@ static void *fq_codel_zalloc(size_t sz)
 
 static void fq_codel_free(void *addr)
 {
-	kvfree(addr);
+	if (addr) {
+		if (is_vmalloc_addr(addr))
+			vfree(addr);
+		else
+			kfree(addr);
+	}
 }
 
 static void fq_codel_destroy(struct Qdisc *sch)
@@ -388,7 +390,7 @@ static int fq_codel_init(struct Qdisc *sch, struct nlattr *opt)
 	sch->limit = 10*1024;
 	q->flows_cnt = 1024;
 	q->quantum = psched_mtu(qdisc_dev(sch));
-	q->perturbation = prandom_u32();
+	q->perturbation = net_random();
 	INIT_LIST_HEAD(&q->new_flows);
 	INIT_LIST_HEAD(&q->old_flows);
 	codel_params_init(&q->cparams);
@@ -448,7 +450,8 @@ static int fq_codel_dump(struct Qdisc *sch, struct sk_buff *skb)
 			q->flows_cnt))
 		goto nla_put_failure;
 
-	return nla_nest_end(skb, opts);
+	nla_nest_end(skb, opts);
+	return skb->len;
 
 nla_put_failure:
 	return -1;
@@ -498,8 +501,7 @@ static void fq_codel_put(struct Qdisc *q, unsigned long cl)
 {
 }
 
-static struct tcf_proto __rcu **fq_codel_find_tcf(struct Qdisc *sch,
-						  unsigned long cl)
+static struct tcf_proto **fq_codel_find_tcf(struct Qdisc *sch, unsigned long cl)
 {
 	struct fq_codel_sched_data *q = qdisc_priv(sch);
 
@@ -550,7 +552,7 @@ static int fq_codel_dump_class_stats(struct Qdisc *sch, unsigned long cl,
 		qs.backlog = q->backlogs[idx];
 		qs.drops = flow->dropped;
 	}
-	if (gnet_stats_copy_queue(d, NULL, &qs, 0) < 0)
+	if (gnet_stats_copy_queue(d, &qs) < 0)
 		return -1;
 	if (idx < q->flows_cnt)
 		return gnet_stats_copy_app(d, &xstats, sizeof(xstats));

@@ -28,7 +28,7 @@
 #define __cacheline_aligned	__aligned(L1_CACHE_BYTES)
 #define ____cacheline_aligned	__aligned(L1_CACHE_BYTES)
 
-/* See http://lwn.net/Articles/262554/ */
+/* See http://kerneltrap.org/node/15100  */
 #define __read_mostly
 
 #endif

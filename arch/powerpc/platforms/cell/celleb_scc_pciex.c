@@ -486,6 +486,7 @@ static __init int celleb_setup_pciex(struct device_node *node,
 				     struct pci_controller *phb)
 {
 	struct resource	r;
+	struct of_irq oirq;
 	int virq;
 
 	/* SMMIO registers; used inside this file */
@@ -506,11 +507,12 @@ static __init int celleb_setup_pciex(struct device_node *node,
 	phb->ops = &scc_pciex_pci_ops;
 
 	/* internal interrupt handler */
-	virq = irq_of_parse_and_map(node, 1);
-	if (!virq) {
+	if (of_irq_map_one(node, 1, &oirq)) {
 		pr_err("PCIEXC:Failed to map irq\n");
 		goto error;
 	}
+	virq = irq_create_of_mapping(oirq.controller, oirq.specifier,
+				     oirq.size);
 	if (request_irq(virq, pciex_handle_internal_irq,
 			0, "pciex", (void *)phb)) {
 		pr_err("PCIEXC:Failed to request irq\n");

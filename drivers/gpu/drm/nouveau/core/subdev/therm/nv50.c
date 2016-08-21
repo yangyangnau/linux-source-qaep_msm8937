@@ -93,7 +93,7 @@ nv50_fan_pwm_set(struct nouveau_therm *therm, int line, u32 divs, u32 duty)
 }
 
 int
-nv50_fan_pwm_clock(struct nouveau_therm *therm, int line)
+nv50_fan_pwm_clock(struct nouveau_therm *therm)
 {
 	int chipset = nv_device(therm)->chipset;
 	int crystal = nv_device(therm)->crystal;

@@ -20,9 +20,15 @@
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
  * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
  * more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+ *
+ * You should also find the complete GPL in the COPYING file accompanying
+ * this source code.
  */
 
-#include <linux/module.h>
 #include <linux/pci.h>
 
 #include "../comedidev.h"
@@ -60,22 +66,36 @@ static int apci16xx_insn_config(struct comedi_device *dev,
 				struct comedi_insn *insn,
 				unsigned int *data)
 {
-	unsigned int chan = CR_CHAN(insn->chanspec);
-	unsigned int mask;
-	int ret;
+	unsigned int chan_mask = 1 << CR_CHAN(insn->chanspec);
+	unsigned int bits;
 
-	if (chan < 8)
-		mask = 0x000000ff;
-	else if (chan < 16)
-		mask = 0x0000ff00;
-	else if (chan < 24)
-		mask = 0x00ff0000;
+	/*
+	 * Each 8-bit "port" is configurable as either input or
+	 * output. Changing the configuration of any channel in
+	 * a port changes the entire port.
+	 */
+	if (chan_mask & 0x000000ff)
+		bits = 0x000000ff;
+	else if (chan_mask & 0x0000ff00)
+		bits = 0x0000ff00;
+	else if (chan_mask & 0x00ff0000)
+		bits = 0x00ff0000;
 	else
-		mask = 0xff000000;
+		bits = 0xff000000;
 
-	ret = comedi_dio_insn_config(dev, s, insn, data, mask);
-	if (ret)
-		return ret;
+	switch (data[0]) {
+	case INSN_CONFIG_DIO_INPUT:
+		s->io_bits &= ~bits;
+		break;
+	case INSN_CONFIG_DIO_OUTPUT:
+		s->io_bits |= bits;
+		break;
+	case INSN_CONFIG_DIO_QUERY:
+		data[1] = (s->io_bits & bits) ? COMEDI_INPUT : COMEDI_OUTPUT;
+		return insn->n;
+	default:
+		return -EINVAL;
+	}
 
 	outl(s->io_bits, dev->iobase + APCI16XX_DIR_REG(s->index));
 
@@ -87,8 +107,17 @@ static int apci16xx_dio_insn_bits(struct comedi_device *dev,
 				  struct comedi_insn *insn,
 				  unsigned int *data)
 {
-	if (comedi_dio_update_state(s, data))
+	unsigned int mask = data[0];
+	unsigned int bits = data[1];
+
+	/* Only update the channels configured as outputs */
+	mask &= s->io_bits;
+	if (mask) {
+		s->state &= ~mask;
+		s->state |= (bits & mask);
+
 		outl(s->state, dev->iobase + APCI16XX_OUT_REG(s->index));
+	}
 
 	data[1] = inl(dev->iobase + APCI16XX_IN_REG(s->index));
 
@@ -159,7 +188,7 @@ static struct comedi_driver apci16xx_driver = {
 	.driver_name	= "addi_apci_16xx",
 	.module		= THIS_MODULE,
 	.auto_attach	= apci16xx_auto_attach,
-	.detach		= comedi_pci_detach,
+	.detach		= comedi_pci_disable,
 };
 
 static int apci16xx_pci_probe(struct pci_dev *dev,
@@ -168,7 +197,7 @@ static int apci16xx_pci_probe(struct pci_dev *dev,
 	return comedi_pci_auto_config(dev, &apci16xx_driver, id->driver_data);
 }
 
-static const struct pci_device_id apci16xx_pci_table[] = {
+static DEFINE_PCI_DEVICE_TABLE(apci16xx_pci_table) = {
 	{ PCI_VDEVICE(ADDIDATA, 0x1009), BOARD_APCI1648 },
 	{ PCI_VDEVICE(ADDIDATA, 0x100a), BOARD_APCI1696 },
 	{ 0 }

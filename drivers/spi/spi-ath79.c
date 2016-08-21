@@ -14,8 +14,10 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/spinlock.h>
+#include <linux/workqueue.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
 #include <linux/spi/spi.h>
@@ -153,6 +155,9 @@ static int ath79_spi_setup(struct spi_device *spi)
 {
 	int status = 0;
 
+	if (spi->bits_per_word > 32)
+		return -EINVAL;
+
 	if (!spi->controller_state) {
 		status = ath79_spi_setup_cs(spi);
 		if (status)
@@ -219,9 +224,8 @@ static int ath79_spi_probe(struct platform_device *pdev)
 	sp = spi_master_get_devdata(master);
 	platform_set_drvdata(pdev, sp);
 
-	pdata = dev_get_platdata(&pdev->dev);
+	pdata = pdev->dev.platform_data;
 
-	master->bits_per_word_mask = SPI_BPW_RANGE_MASK(1, 32);
 	master->setup = ath79_spi_setup;
 	master->cleanup = ath79_spi_cleanup;
 	if (pdata) {
@@ -229,7 +233,7 @@ static int ath79_spi_probe(struct platform_device *pdev)
 		master->num_chipselect = pdata->num_chipselect;
 	}
 
-	sp->bitbang.master = master;
+	sp->bitbang.master = spi_master_get(master);
 	sp->bitbang.chipselect = ath79_spi_chipselect;
 	sp->bitbang.txrx_word[SPI_MODE_0] = ath79_spi_txrx_mode0;
 	sp->bitbang.setup_transfer = spi_bitbang_setup_transfer;
@@ -241,21 +245,21 @@ static int ath79_spi_probe(struct platform_device *pdev)
 		goto err_put_master;
 	}
 
-	sp->base = devm_ioremap(&pdev->dev, r->start, resource_size(r));
+	sp->base = ioremap(r->start, resource_size(r));
 	if (!sp->base) {
 		ret = -ENXIO;
 		goto err_put_master;
 	}
 
-	sp->clk = devm_clk_get(&pdev->dev, "ahb");
+	sp->clk = clk_get(&pdev->dev, "ahb");
 	if (IS_ERR(sp->clk)) {
 		ret = PTR_ERR(sp->clk);
-		goto err_put_master;
+		goto err_unmap;
 	}
 
 	ret = clk_enable(sp->clk);
 	if (ret)
-		goto err_put_master;
+		goto err_clk_put;
 
 	rate = DIV_ROUND_UP(clk_get_rate(sp->clk), MHZ);
 	if (!rate) {
@@ -278,7 +282,12 @@ err_disable:
 	ath79_spi_disable(sp);
 err_clk_disable:
 	clk_disable(sp->clk);
+err_clk_put:
+	clk_put(sp->clk);
+err_unmap:
+	iounmap(sp->base);
 err_put_master:
+	platform_set_drvdata(pdev, NULL);
 	spi_master_put(sp->bitbang.master);
 
 	return ret;
@@ -291,6 +300,9 @@ static int ath79_spi_remove(struct platform_device *pdev)
 	spi_bitbang_stop(&sp->bitbang);
 	ath79_spi_disable(sp);
 	clk_disable(sp->clk);
+	clk_put(sp->clk);
+	iounmap(sp->base);
+	platform_set_drvdata(pdev, NULL);
 	spi_master_put(sp->bitbang.master);
 
 	return 0;

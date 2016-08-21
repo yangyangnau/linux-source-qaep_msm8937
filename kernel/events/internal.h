@@ -82,16 +82,16 @@ static inline unsigned long perf_data_size(struct ring_buffer *rb)
 }
 
 #define DEFINE_OUTPUT_COPY(func_name, memcpy_func)			\
-static inline unsigned long						\
+static inline unsigned int						\
 func_name(struct perf_output_handle *handle,				\
-	  const void *buf, unsigned long len)				\
+	  const void *buf, unsigned int len)				\
 {									\
 	unsigned long size, written;					\
 									\
 	do {								\
-		size    = min(handle->size, len);			\
+		size = min_t(unsigned long, handle->size, len);		\
+									\
 		written = memcpy_func(handle->addr, buf, size);		\
-		written = size - written;				\
 									\
 		len -= written;						\
 		handle->addr += written;				\
@@ -110,37 +110,20 @@ func_name(struct perf_output_handle *handle,				\
 	return len;							\
 }
 
-static inline unsigned long
-memcpy_common(void *dst, const void *src, unsigned long n)
+static inline int memcpy_common(void *dst, const void *src, size_t n)
 {
 	memcpy(dst, src, n);
-	return 0;
+	return n;
 }
 
 DEFINE_OUTPUT_COPY(__output_copy, memcpy_common)
 
-static inline unsigned long
-memcpy_skip(void *dst, const void *src, unsigned long n)
-{
-	return 0;
-}
+#define MEMCPY_SKIP(dst, src, n) (n)
 
-DEFINE_OUTPUT_COPY(__output_skip, memcpy_skip)
+DEFINE_OUTPUT_COPY(__output_skip, MEMCPY_SKIP)
 
 #ifndef arch_perf_out_copy_user
-#define arch_perf_out_copy_user arch_perf_out_copy_user
-
-static inline unsigned long
-arch_perf_out_copy_user(void *dst, const void *src, unsigned long n)
-{
-	unsigned long ret;
-
-	pagefault_disable();
-	ret = __copy_from_user_inatomic(dst, src, n);
-	pagefault_enable();
-
-	return ret;
-}
+#define arch_perf_out_copy_user __copy_from_user_inatomic
 #endif
 
 DEFINE_OUTPUT_COPY(__output_copy_user, arch_perf_out_copy_user)

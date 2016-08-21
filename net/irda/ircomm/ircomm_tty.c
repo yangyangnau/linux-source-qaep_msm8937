@@ -24,7 +24,9 @@
  *     GNU General Public License for more details.
  *
  *     You should have received a copy of the GNU General Public License
- *     along with this program; if not, see <http://www.gnu.org/licenses/>.
+ *     along with this program; if not, write to the Free Software
+ *     Foundation, Inc., 59 Temple Place, Suite 330, Boston,
+ *     MA 02111-1307 USA
  *
  ********************************************************************/
 
@@ -320,7 +322,8 @@ static int ircomm_tty_block_til_ready(struct ircomm_tty_cb *self,
 	      __FILE__, __LINE__, tty->driver->name, port->count);
 
 	spin_lock_irqsave(&port->lock, flags);
-	port->count--;
+	if (!tty_hung_up_p(filp))
+		port->count--;
 	port->blocked_open++;
 	spin_unlock_irqrestore(&port->lock, flags);
 
@@ -457,7 +460,8 @@ static int ircomm_tty_open(struct tty_struct *tty, struct file *filp)
 	/*
 	 * If the port is the middle of closing, bail out now
 	 */
-	if (test_bit(ASYNCB_CLOSING, &self->port.flags)) {
+	if (tty_hung_up_p(filp) ||
+	    test_bit(ASYNCB_CLOSING, &self->port.flags)) {
 
 		/* Hm, why are we blocking on ASYNC_CLOSING if we
 		 * do return -EAGAIN/-ERESTARTSYS below anyway?
@@ -816,9 +820,7 @@ static void ircomm_tty_wait_until_sent(struct tty_struct *tty, int timeout)
 	orig_jiffies = jiffies;
 
 	/* Set poll time to 200 ms */
-	poll_time = msecs_to_jiffies(200);
-	if (timeout)
-		poll_time = min_t(unsigned long, timeout, poll_time);
+	poll_time = IRDA_MIN(timeout, msecs_to_jiffies(200));
 
 	spin_lock_irqsave(&self->spinlock, flags);
 	while (self->tx_skb && self->tx_skb->len) {

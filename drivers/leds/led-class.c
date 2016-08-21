@@ -9,22 +9,27 @@
  * published by the Free Software Foundation.
  */
 
-#include <linux/ctype.h>
-#include <linux/device.h>
-#include <linux/err.h>
-#include <linux/init.h>
-#include <linux/kernel.h>
-#include <linux/leds.h>
-#include <linux/list.h>
 #include <linux/module.h>
-#include <linux/slab.h>
+#include <linux/kernel.h>
+#include <linux/init.h>
+#include <linux/list.h>
 #include <linux/spinlock.h>
+#include <linux/device.h>
 #include <linux/timer.h>
+#include <linux/err.h>
+#include <linux/ctype.h>
+#include <linux/leds.h>
 #include "leds.h"
 
 static struct class *leds_class;
 
-static ssize_t brightness_show(struct device *dev,
+static void led_update_brightness(struct led_classdev *led_cdev)
+{
+	if (led_cdev->brightness_get)
+		led_cdev->brightness = led_cdev->brightness_get(led_cdev);
+}
+
+static ssize_t led_brightness_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
@@ -35,7 +40,7 @@ static ssize_t brightness_show(struct device *dev,
 	return sprintf(buf, "%u\n", led_cdev->brightness);
 }
 
-static ssize_t brightness_store(struct device *dev,
+static ssize_t led_brightness_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t size)
 {
 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
@@ -52,44 +57,22 @@ static ssize_t brightness_store(struct device *dev,
 
 	return size;
 }
-static DEVICE_ATTR_RW(brightness);
 
-static ssize_t max_brightness_show(struct device *dev,
+static ssize_t led_max_brightness_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
 
 	return sprintf(buf, "%u\n", led_cdev->max_brightness);
 }
-static DEVICE_ATTR_RO(max_brightness);
 
+static struct device_attribute led_class_attrs[] = {
+	__ATTR(brightness, 0644, led_brightness_show, led_brightness_store),
+	__ATTR(max_brightness, 0444, led_max_brightness_show, NULL),
 #ifdef CONFIG_LEDS_TRIGGERS
-static DEVICE_ATTR(trigger, 0644, led_trigger_show, led_trigger_store);
-static struct attribute *led_trigger_attrs[] = {
-	&dev_attr_trigger.attr,
-	NULL,
-};
-static const struct attribute_group led_trigger_group = {
-	.attrs = led_trigger_attrs,
-};
+	__ATTR(trigger, 0644, led_trigger_show, led_trigger_store),
 #endif
-
-static struct attribute *led_class_attrs[] = {
-	&dev_attr_brightness.attr,
-	&dev_attr_max_brightness.attr,
-	NULL,
-};
-
-static const struct attribute_group led_group = {
-	.attrs = led_class_attrs,
-};
-
-static const struct attribute_group *led_groups[] = {
-	&led_group,
-#ifdef CONFIG_LEDS_TRIGGERS
-	&led_trigger_group,
-#endif
-	NULL,
+	__ATTR_NULL,
 };
 
 static void led_timer_function(unsigned long data)
@@ -173,8 +156,7 @@ void led_classdev_resume(struct led_classdev *led_cdev)
 }
 EXPORT_SYMBOL_GPL(led_classdev_resume);
 
-#ifdef CONFIG_PM_SLEEP
-static int led_suspend(struct device *dev)
+static int led_suspend(struct device *dev, pm_message_t state)
 {
 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
 
@@ -193,9 +175,6 @@ static int led_resume(struct device *dev)
 
 	return 0;
 }
-#endif
-
-static SIMPLE_DEV_PM_OPS(leds_class_dev_pm_ops, led_suspend, led_resume);
 
 /**
  * led_classdev_register - register a new object of led_classdev class.
@@ -204,9 +183,8 @@ static SIMPLE_DEV_PM_OPS(leds_class_dev_pm_ops, led_suspend, led_resume);
  */
 int led_classdev_register(struct device *parent, struct led_classdev *led_cdev)
 {
-	led_cdev->dev = device_create_with_groups(leds_class, parent, 0,
-					led_cdev, led_cdev->groups,
-					"%s", led_cdev->name);
+	led_cdev->dev = device_create(leds_class, parent, 0, led_cdev,
+				      "%s", led_cdev->name);
 	if (IS_ERR(led_cdev->dev))
 		return PTR_ERR(led_cdev->dev);
 
@@ -274,8 +252,9 @@ static int __init leds_init(void)
 	leds_class = class_create(THIS_MODULE, "leds");
 	if (IS_ERR(leds_class))
 		return PTR_ERR(leds_class);
-	leds_class->pm = &leds_class_dev_pm_ops;
-	leds_class->dev_groups = led_groups;
+	leds_class->suspend = led_suspend;
+	leds_class->resume = led_resume;
+	leds_class->dev_attrs = led_class_attrs;
 	return 0;
 }
 

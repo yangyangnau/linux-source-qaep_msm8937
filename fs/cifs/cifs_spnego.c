@@ -62,6 +62,7 @@ cifs_spnego_key_destroy(struct key *key)
 struct key_type cifs_spnego_key_type = {
 	.name		= "cifs.spnego",
 	.instantiate	= cifs_spnego_key_instantiate,
+	.match		= user_match,
 	.destroy	= cifs_spnego_key_destroy,
 	.describe	= user_describe,
 };

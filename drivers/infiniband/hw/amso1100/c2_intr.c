@@ -169,8 +169,7 @@ static void handle_vq(struct c2_dev *c2dev, u32 mq_index)
 		 * We should never get here, as the adapter should
 		 * never send us a reply that we're not expecting.
 		 */
-		if (reply_msg != NULL)
-			vq_repbuf_free(c2dev, host_msg);
+		vq_repbuf_free(c2dev, host_msg);
 		pr_debug("handle_vq: UNEXPECTEDLY got NULL req\n");
 		return;
 	}

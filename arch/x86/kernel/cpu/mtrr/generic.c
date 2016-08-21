@@ -678,12 +678,11 @@ static void prepare_set(void) __acquires(set_atomicity_lock)
 
 	/* Save value of CR4 and clear Page Global Enable (bit 7) */
 	if (cpu_has_pge) {
-		cr4 = __read_cr4();
-		__write_cr4(cr4 & ~X86_CR4_PGE);
+		cr4 = read_cr4();
+		write_cr4(cr4 & ~X86_CR4_PGE);
 	}
 
 	/* Flush all TLBs via a mov %cr3, %reg; mov %reg, %cr3 */
-	count_vm_tlb_event(NR_TLB_LOCAL_FLUSH_ALL);
 	__flush_tlb();
 
 	/* Save MTRR state */
@@ -697,18 +696,17 @@ static void prepare_set(void) __acquires(set_atomicity_lock)
 static void post_set(void) __releases(set_atomicity_lock)
 {
 	/* Flush TLBs (no need to flush caches - they are disabled) */
-	count_vm_tlb_event(NR_TLB_LOCAL_FLUSH_ALL);
 	__flush_tlb();
 
 	/* Intel (P6) standard MTRRs */
 	mtrr_wrmsr(MSR_MTRRdefType, deftype_lo, deftype_hi);
 
 	/* Enable caches */
-	write_cr0(read_cr0() & ~X86_CR0_CD);
+	write_cr0(read_cr0() & 0xbfffffff);
 
 	/* Restore value of CR4 */
 	if (cpu_has_pge)
-		__write_cr4(cr4);
+		write_cr4(cr4);
 	raw_spin_unlock(&set_atomicity_lock);
 }
 

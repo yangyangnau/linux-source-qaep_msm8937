@@ -5,7 +5,6 @@
  */
 
 #include "strlist.h"
-#include "util.h"
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,7 +38,7 @@ out_delete:
 static void str_node__delete(struct str_node *snode, bool dupstr)
 {
 	if (dupstr)
-		zfree((char **)&snode->s);
+		free((void *)snode->s);
 	free(snode);
 }
 

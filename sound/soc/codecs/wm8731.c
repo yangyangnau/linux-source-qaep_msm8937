@@ -45,7 +45,6 @@ static const char *wm8731_supply_names[WM8731_NUM_SUPPLIES] = {
 struct wm8731_priv {
 	struct regmap *regmap;
 	struct regulator_bulk_data supplies[WM8731_NUM_SUPPLIES];
-	const struct snd_pcm_hw_constraint_list *constraints;
 	unsigned int sysclk;
 	int sysclk_type;
 	int playback_fs;
@@ -83,8 +82,8 @@ static bool wm8731_writeable(struct device *dev, unsigned int reg)
 
 static const char *wm8731_input_select[] = {"Line In", "Mic"};
 
-static SOC_ENUM_SINGLE_DECL(wm8731_insel_enum,
-			    WM8731_APANA, 2, wm8731_input_select);
+static const struct soc_enum wm8731_insel_enum =
+	SOC_ENUM_SINGLE(WM8731_APANA, 2, 2, wm8731_input_select);
 
 static int wm8731_deemph[] = { 0, 32000, 44100, 48000 };
 
@@ -119,10 +118,10 @@ static int wm8731_set_deemph(struct snd_soc_codec *codec)
 static int wm8731_get_deemph(struct snd_kcontrol *kcontrol,
 			     struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
 	struct wm8731_priv *wm8731 = snd_soc_codec_get_drvdata(codec);
 
-	ucontrol->value.integer.value[0] = wm8731->deemph;
+	ucontrol->value.enumerated.item[0] = wm8731->deemph;
 
 	return 0;
 }
@@ -130,9 +129,9 @@ static int wm8731_get_deemph(struct snd_kcontrol *kcontrol,
 static int wm8731_put_deemph(struct snd_kcontrol *kcontrol,
 			     struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
 	struct wm8731_priv *wm8731 = snd_soc_codec_get_drvdata(codec);
-	int deemph = ucontrol->value.integer.value[0];
+	int deemph = ucontrol->value.enumerated.item[0];
 	int ret = 0;
 
 	if (deemph > 1)
@@ -291,36 +290,6 @@ static const struct _coeff_div coeff_div[] = {
 	{12000000, 88200, 136, 0xf, 0x1, 0x1},
 };
 
-/* rates constraints */
-static const unsigned int wm8731_rates_12000000[] = {
-	8000, 32000, 44100, 48000, 96000, 88200,
-};
-
-static const unsigned int wm8731_rates_12288000_18432000[] = {
-	8000, 32000, 48000, 96000,
-};
-
-static const unsigned int wm8731_rates_11289600_16934400[] = {
-	8000, 44100, 88200,
-};
-
-static const struct snd_pcm_hw_constraint_list wm8731_constraints_12000000 = {
-	.list = wm8731_rates_12000000,
-	.count = ARRAY_SIZE(wm8731_rates_12000000),
-};
-
-static const
-struct snd_pcm_hw_constraint_list wm8731_constraints_12288000_18432000 = {
-	.list = wm8731_rates_12288000_18432000,
-	.count = ARRAY_SIZE(wm8731_rates_12288000_18432000),
-};
-
-static const
-struct snd_pcm_hw_constraint_list wm8731_constraints_11289600_16934400 = {
-	.list = wm8731_rates_11289600_16934400,
-	.count = ARRAY_SIZE(wm8731_rates_11289600_16934400),
-};
-
 static inline int get_coeff(int mclk, int rate)
 {
 	int i;
@@ -348,13 +317,13 @@ static int wm8731_hw_params(struct snd_pcm_substream *substream,
 	snd_soc_write(codec, WM8731_SRATE, srate);
 
 	/* bit size */
-	switch (params_width(params)) {
-	case 16:
+	switch (params_format(params)) {
+	case SNDRV_PCM_FORMAT_S16_LE:
 		break;
-	case 20:
+	case SNDRV_PCM_FORMAT_S20_3LE:
 		iface |= 0x0004;
 		break;
-	case 24:
+	case SNDRV_PCM_FORMAT_S24_LE:
 		iface |= 0x0008;
 		break;
 	}
@@ -393,25 +362,16 @@ static int wm8731_set_dai_sysclk(struct snd_soc_dai *codec_dai,
 	}
 
 	switch (freq) {
-	case 0:
-		wm8731->constraints = NULL;
-		break;
-	case 12000000:
-		wm8731->constraints = &wm8731_constraints_12000000;
-		break;
-	case 12288000:
-	case 18432000:
-		wm8731->constraints = &wm8731_constraints_12288000_18432000;
-		break;
-	case 16934400:
 	case 11289600:
-		wm8731->constraints = &wm8731_constraints_11289600_16934400;
+	case 12000000:
+	case 12288000:
+	case 16934400:
+	case 18432000:
+		wm8731->sysclk = freq;
 		break;
 	default:
 		return -EINVAL;
 	}
-
-	wm8731->sysclk = freq;
 
 	snd_soc_dapm_sync(&codec->dapm);
 
@@ -515,26 +475,12 @@ static int wm8731_set_bias_level(struct snd_soc_codec *codec,
 	return 0;
 }
 
-static int wm8731_startup(struct snd_pcm_substream *substream,
-	struct snd_soc_dai *dai)
-{
-	struct wm8731_priv *wm8731 = snd_soc_codec_get_drvdata(dai->codec);
-
-	if (wm8731->constraints)
-		snd_pcm_hw_constraint_list(substream->runtime, 0,
-					   SNDRV_PCM_HW_PARAM_RATE,
-					   wm8731->constraints);
-
-	return 0;
-}
-
 #define WM8731_RATES SNDRV_PCM_RATE_8000_96000
 
 #define WM8731_FORMATS (SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S20_3LE |\
 	SNDRV_PCM_FMTBIT_S24_LE)
 
 static const struct snd_soc_dai_ops wm8731_dai_ops = {
-	.startup	= wm8731_startup,
 	.hw_params	= wm8731_hw_params,
 	.digital_mute	= wm8731_mute,
 	.set_sysclk	= wm8731_set_dai_sysclk,
@@ -583,10 +529,17 @@ static int wm8731_probe(struct snd_soc_codec *codec)
 	struct wm8731_priv *wm8731 = snd_soc_codec_get_drvdata(codec);
 	int ret = 0, i;
 
+	codec->control_data = wm8731->regmap;
+	ret = snd_soc_codec_set_cache_io(codec, 7, 9, SND_SOC_REGMAP);
+	if (ret < 0) {
+		dev_err(codec->dev, "Failed to set cache I/O: %d\n", ret);
+		return ret;
+	}
+
 	for (i = 0; i < ARRAY_SIZE(wm8731->supplies); i++)
 		wm8731->supplies[i].supply = wm8731_supply_names[i];
 
-	ret = devm_regulator_bulk_get(codec->dev, ARRAY_SIZE(wm8731->supplies),
+	ret = regulator_bulk_get(codec->dev, ARRAY_SIZE(wm8731->supplies),
 				 wm8731->supplies);
 	if (ret != 0) {
 		dev_err(codec->dev, "Failed to request supplies: %d\n", ret);
@@ -597,7 +550,7 @@ static int wm8731_probe(struct snd_soc_codec *codec)
 				    wm8731->supplies);
 	if (ret != 0) {
 		dev_err(codec->dev, "Failed to enable supplies: %d\n", ret);
-		return ret;
+		goto err_regulator_get;
 	}
 
 	ret = wm8731_reset(codec);
@@ -624,6 +577,8 @@ static int wm8731_probe(struct snd_soc_codec *codec)
 
 err_regulator_enable:
 	regulator_bulk_disable(ARRAY_SIZE(wm8731->supplies), wm8731->supplies);
+err_regulator_get:
+	regulator_bulk_free(ARRAY_SIZE(wm8731->supplies), wm8731->supplies);
 
 	return ret;
 }
@@ -636,6 +591,7 @@ static int wm8731_remove(struct snd_soc_codec *codec)
 	wm8731_set_bias_level(codec, SND_SOC_BIAS_OFF);
 
 	regulator_bulk_disable(ARRAY_SIZE(wm8731->supplies), wm8731->supplies);
+	regulator_bulk_free(ARRAY_SIZE(wm8731->supplies), wm8731->supplies);
 
 	return 0;
 }
@@ -722,7 +678,7 @@ static struct spi_driver wm8731_spi_driver = {
 };
 #endif /* CONFIG_SPI_MASTER */
 
-#if IS_ENABLED(CONFIG_I2C)
+#if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
 static int wm8731_i2c_probe(struct i2c_client *i2c,
 			    const struct i2c_device_id *id)
 {
@@ -781,7 +737,7 @@ static struct i2c_driver wm8731_i2c_driver = {
 static int __init wm8731_modinit(void)
 {
 	int ret = 0;
-#if IS_ENABLED(CONFIG_I2C)
+#if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
 	ret = i2c_add_driver(&wm8731_i2c_driver);
 	if (ret != 0) {
 		printk(KERN_ERR "Failed to register WM8731 I2C driver: %d\n",
@@ -801,7 +757,7 @@ module_init(wm8731_modinit);
 
 static void __exit wm8731_exit(void)
 {
-#if IS_ENABLED(CONFIG_I2C)
+#if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
 	i2c_del_driver(&wm8731_i2c_driver);
 #endif
 #if defined(CONFIG_SPI_MASTER)

@@ -22,10 +22,8 @@ struct module;
 
 #define show_module_flags(flags) __print_flags(flags, "",	\
 	{ (1UL << TAINT_PROPRIETARY_MODULE),	"P" },		\
-	{ (1UL << TAINT_OOT_MODULE),		"O" },		\
 	{ (1UL << TAINT_FORCED_MODULE),		"F" },		\
-	{ (1UL << TAINT_CRAP),			"C" },		\
-	{ (1UL << TAINT_UNSIGNED_MODULE),	"E" })
+	{ (1UL << TAINT_CRAP),			"C" })
 
 TRACE_EVENT(module_load,
 

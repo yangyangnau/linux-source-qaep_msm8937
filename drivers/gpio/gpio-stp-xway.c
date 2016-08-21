@@ -292,7 +292,7 @@ static struct platform_driver xway_stp_driver = {
 	},
 };
 
-static int __init xway_stp_init(void)
+int __init xway_stp_init(void)
 {
 	return platform_driver_register(&xway_stp_driver);
 }

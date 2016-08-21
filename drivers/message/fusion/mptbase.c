@@ -346,7 +346,7 @@ static int mpt_remove_dead_ioc_func(void *arg)
 	if ((pdev == NULL))
 		return -1;
 
-	pci_stop_and_remove_bus_device_locked(pdev);
+	pci_stop_and_remove_bus_device(pdev);
 	return 0;
 }
 
@@ -649,10 +649,12 @@ mptbase_reply(MPT_ADAPTER *ioc, MPT_FRAME_HDR *req, MPT_FRAME_HDR *reply)
 	case MPI_FUNCTION_CONFIG:
 	case MPI_FUNCTION_SAS_IO_UNIT_CONTROL:
 		ioc->mptbase_cmds.status |= MPT_MGMT_STATUS_COMMAND_GOOD;
-		ioc->mptbase_cmds.status |= MPT_MGMT_STATUS_RF_VALID;
-		memcpy(ioc->mptbase_cmds.reply, reply,
-		    min(MPT_DEFAULT_FRAME_SIZE,
-			4 * reply->u.reply.MsgLength));
+		if (reply) {
+			ioc->mptbase_cmds.status |= MPT_MGMT_STATUS_RF_VALID;
+			memcpy(ioc->mptbase_cmds.reply, reply,
+			    min(MPT_DEFAULT_FRAME_SIZE,
+				4 * reply->u.reply.MsgLength));
+		}
 		if (ioc->mptbase_cmds.status & MPT_MGMT_STATUS_PENDING) {
 			ioc->mptbase_cmds.status &= ~MPT_MGMT_STATUS_PENDING;
 			complete(&ioc->mptbase_cmds.done);
@@ -1035,7 +1037,7 @@ mpt_free_msg_frame(MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf)
 		goto out;
 	/* signature to know if this mf is freed */
 	mf->u.frame.linkage.arg1 = cpu_to_le32(0xdeadbeaf);
-	list_add(&mf->u.frame.linkage.list, &ioc->FreeQ);
+	list_add_tail(&mf->u.frame.linkage.list, &ioc->FreeQ);
 #ifdef MFCNT
 	ioc->mfcnt--;
 #endif
@@ -1400,13 +1402,14 @@ mpt_verify_adapter(int iocid, MPT_ADAPTER **iocpp)
  *	@vendor: pci vendor id
  *	@device: pci device id
  *	@revision: pci revision id
+ *	@prod_name: string returned
  *
  *	Returns product string displayed when driver loads,
  *	in /proc/mpt/summary and /sysfs/class/scsi_host/host<X>/version_product
  *
  **/
-static const char*
-mpt_get_product_name(u16 vendor, u16 device, u8 revision)
+static void
+mpt_get_product_name(u16 vendor, u16 device, u8 revision, char *prod_name)
 {
 	char *product_str = NULL;
 
@@ -1632,7 +1635,8 @@ mpt_get_product_name(u16 vendor, u16 device, u8 revision)
 	}
 
  out:
-	return product_str;
+	if (product_str)
+		sprintf(prod_name, "%s", product_str);
 }
 
 /**
@@ -1883,8 +1887,8 @@ mpt_attach(struct pci_dev *pdev, const struct pci_device_id *id)
 	dinitprintk(ioc, printk(MYIOC_s_INFO_FMT "facts @ %p, pfacts[0] @ %p\n",
 	    ioc->name, &ioc->facts, &ioc->pfacts[0]));
 
-	ioc->prod_name = mpt_get_product_name(pdev->vendor, pdev->device,
-					      pdev->revision);
+	mpt_get_product_name(pdev->vendor, pdev->device, pdev->revision,
+			     ioc->prod_name);
 
 	switch (pdev->device)
 	{
@@ -3171,7 +3175,12 @@ GetIocFacts(MPT_ADAPTER *ioc, int sleepFlag, int reason)
 			facts->FWImageSize = le32_to_cpu(facts->FWImageSize);
 		}
 
-		facts->FWImageSize = ALIGN(facts->FWImageSize, 4);
+		sz = facts->FWImageSize;
+		if ( sz & 0x01 )
+			sz += 1;
+		if ( sz & 0x02 )
+			sz += 2;
+		facts->FWImageSize = sz;
 
 		if (!facts->RequestFrameSize) {
 			/*  Something is wrong!  */
@@ -6998,7 +7007,7 @@ EXPORT_SYMBOL(mpt_halt_firmware);
  *	IOC doesn't reply to any outstanding request. This will transfer IOC
  *	to READY state.
  **/
-static int
+int
 mpt_SoftResetHandler(MPT_ADAPTER *ioc, int sleepFlag)
 {
 	int		 rc;

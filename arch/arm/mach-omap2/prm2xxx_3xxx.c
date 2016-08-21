@@ -16,6 +16,7 @@
 #include <linux/err.h>
 #include <linux/io.h>
 
+#include "common.h"
 #include "powerdomain.h"
 #include "prm2xxx_3xxx.h"
 #include "prm-regbits-24xx.h"

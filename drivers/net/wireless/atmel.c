@@ -28,8 +28,8 @@
     GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License
-    along with Atmel wireless lan drivers; if not, see
-    <http://www.gnu.org/licenses/>.
+    along with Atmel wireless lan drivers; if not, write to the Free Software
+    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
     For all queries about this code, please contact the current author,
     Simon Kelley <simon@thekelleys.org.uk> and not Atmel Corporation.
@@ -39,6 +39,7 @@
 
 ******************************************************************************/
 
+#include <linux/init.h>
 #include <linux/interrupt.h>
 
 #include <linux/kernel.h>
@@ -67,7 +68,7 @@
 #include <linux/moduleparam.h>
 #include <linux/firmware.h>
 #include <linux/jiffies.h>
-#include <net/cfg80211.h>
+#include <linux/ieee80211.h>
 #include "atmel.h"
 
 #define DRIVER_MAJOR 0
@@ -843,18 +844,18 @@ static netdev_tx_t start_tx(struct sk_buff *skb, struct net_device *dev)
 	if (priv->wep_is_on)
 		frame_ctl |= IEEE80211_FCTL_PROTECTED;
 	if (priv->operating_mode == IW_MODE_ADHOC) {
-		skb_copy_from_linear_data(skb, &header.addr1, ETH_ALEN);
-		memcpy(&header.addr2, dev->dev_addr, ETH_ALEN);
-		memcpy(&header.addr3, priv->BSSID, ETH_ALEN);
+		skb_copy_from_linear_data(skb, &header.addr1, 6);
+		memcpy(&header.addr2, dev->dev_addr, 6);
+		memcpy(&header.addr3, priv->BSSID, 6);
 	} else {
 		frame_ctl |= IEEE80211_FCTL_TODS;
-		memcpy(&header.addr1, priv->CurrentBSSID, ETH_ALEN);
-		memcpy(&header.addr2, dev->dev_addr, ETH_ALEN);
-		skb_copy_from_linear_data(skb, &header.addr3, ETH_ALEN);
+		memcpy(&header.addr1, priv->CurrentBSSID, 6);
+		memcpy(&header.addr2, dev->dev_addr, 6);
+		skb_copy_from_linear_data(skb, &header.addr3, 6);
 	}
 
 	if (priv->use_wpa)
-		memcpy(&header.addr4, SNAP_RFC1024, ETH_ALEN);
+		memcpy(&header.addr4, SNAP_RFC1024, 6);
 
 	header.frame_control = cpu_to_le16(frame_ctl);
 	/* Copy the wireless header into the card */
@@ -928,11 +929,11 @@ static void fast_rx_path(struct atmel_private *priv,
 		}
 	}
 
-	memcpy(skbp, header->addr1, ETH_ALEN); /* destination address */
+	memcpy(skbp, header->addr1, 6); /* destination address */
 	if (le16_to_cpu(header->frame_control) & IEEE80211_FCTL_FROMDS)
-		memcpy(&skbp[ETH_ALEN], header->addr3, ETH_ALEN);
+		memcpy(&skbp[6], header->addr3, 6);
 	else
-		memcpy(&skbp[ETH_ALEN], header->addr2, ETH_ALEN); /* source address */
+		memcpy(&skbp[6], header->addr2, 6); /* source address */
 
 	skb->protocol = eth_type_trans(skb, priv->dev);
 	skb->ip_summed = CHECKSUM_NONE;
@@ -968,14 +969,14 @@ static void frag_rx_path(struct atmel_private *priv,
 			 u16 msdu_size, u16 rx_packet_loc, u32 crc, u16 seq_no,
 			 u8 frag_no, int more_frags)
 {
-	u8 mac4[ETH_ALEN];
-	u8 source[ETH_ALEN];
+	u8 mac4[6];
+	u8 source[6];
 	struct sk_buff *skb;
 
 	if (le16_to_cpu(header->frame_control) & IEEE80211_FCTL_FROMDS)
-		memcpy(source, header->addr3, ETH_ALEN);
+		memcpy(source, header->addr3, 6);
 	else
-		memcpy(source, header->addr2, ETH_ALEN);
+		memcpy(source, header->addr2, 6);
 
 	rx_packet_loc += 24; /* skip header */
 
@@ -983,9 +984,9 @@ static void frag_rx_path(struct atmel_private *priv,
 		msdu_size -= 4;
 
 	if (frag_no == 0) { /* first fragment */
-		atmel_copy_to_host(priv->dev, mac4, rx_packet_loc, ETH_ALEN);
-		msdu_size -= ETH_ALEN;
-		rx_packet_loc += ETH_ALEN;
+		atmel_copy_to_host(priv->dev, mac4, rx_packet_loc, 6);
+		msdu_size -= 6;
+		rx_packet_loc += 6;
 
 		if (priv->do_rx_crc)
 			crc = crc32_le(crc, mac4, 6);
@@ -993,9 +994,9 @@ static void frag_rx_path(struct atmel_private *priv,
 		priv->frag_seq = seq_no;
 		priv->frag_no = 1;
 		priv->frag_len = msdu_size;
-		memcpy(priv->frag_source, source, ETH_ALEN);
-		memcpy(&priv->rx_buf[ETH_ALEN], source, ETH_ALEN);
-		memcpy(priv->rx_buf, header->addr1, ETH_ALEN);
+		memcpy(priv->frag_source, source, 6);
+		memcpy(&priv->rx_buf[6], source, 6);
+		memcpy(priv->rx_buf, header->addr1, 6);
 
 		atmel_copy_to_host(priv->dev, &priv->rx_buf[12], rx_packet_loc, msdu_size);
 
@@ -1005,13 +1006,13 @@ static void frag_rx_path(struct atmel_private *priv,
 			atmel_copy_to_host(priv->dev, (void *)&netcrc, rx_packet_loc + msdu_size, 4);
 			if ((crc ^ 0xffffffff) != netcrc) {
 				priv->dev->stats.rx_crc_errors++;
-				memset(priv->frag_source, 0xff, ETH_ALEN);
+				memset(priv->frag_source, 0xff, 6);
 			}
 		}
 
 	} else if (priv->frag_no == frag_no &&
 		   priv->frag_seq == seq_no &&
-		   memcmp(priv->frag_source, source, ETH_ALEN) == 0) {
+		   memcmp(priv->frag_source, source, 6) == 0) {
 
 		atmel_copy_to_host(priv->dev, &priv->rx_buf[12 + priv->frag_len],
 				   rx_packet_loc, msdu_size);
@@ -1023,7 +1024,7 @@ static void frag_rx_path(struct atmel_private *priv,
 			atmel_copy_to_host(priv->dev, (void *)&netcrc, rx_packet_loc + msdu_size, 4);
 			if ((crc ^ 0xffffffff) != netcrc) {
 				priv->dev->stats.rx_crc_errors++;
-				memset(priv->frag_source, 0xff, ETH_ALEN);
+				memset(priv->frag_source, 0xff, 6);
 				more_frags = 1; /* don't send broken assembly */
 			}
 		}
@@ -1032,7 +1033,7 @@ static void frag_rx_path(struct atmel_private *priv,
 		priv->frag_no++;
 
 		if (!more_frags) { /* last one */
-			memset(priv->frag_source, 0xff, ETH_ALEN);
+			memset(priv->frag_source, 0xff, 6);
 			if (!(skb = dev_alloc_skb(priv->frag_len + 14))) {
 				priv->dev->stats.rx_dropped++;
 			} else {
@@ -1128,7 +1129,7 @@ static void rx_done_irq(struct atmel_private *priv)
 			atmel_copy_to_host(priv->dev, (unsigned char *)&priv->rx_buf, rx_packet_loc + 24, msdu_size);
 
 			/* we use the same buffer for frag reassembly and control packets */
-			memset(priv->frag_source, 0xff, ETH_ALEN);
+			memset(priv->frag_source, 0xff, 6);
 
 			if (priv->do_rx_crc) {
 				/* last 4 octets is crc */
@@ -1556,7 +1557,7 @@ struct net_device *init_atmel_card(unsigned short irq, unsigned long port,
 	priv->last_qual = jiffies;
 	priv->last_beacon_timestamp = 0;
 	memset(priv->frag_source, 0xff, sizeof(priv->frag_source));
-	memset(priv->BSSID, 0, ETH_ALEN);
+	memset(priv->BSSID, 0, 6);
 	priv->CurrentBSSID[0] = 0xFF; /* Initialize to something invalid.... */
 	priv->station_was_associated = 0;
 
@@ -1717,7 +1718,7 @@ static int atmel_get_wap(struct net_device *dev,
 			 char *extra)
 {
 	struct atmel_private *priv = netdev_priv(dev);
-	memcpy(awrq->sa_data, priv->CurrentBSSID, ETH_ALEN);
+	memcpy(awrq->sa_data, priv->CurrentBSSID, 6);
 	awrq->sa_family = ARPHRD_ETHER;
 
 	return 0;
@@ -2273,7 +2274,7 @@ static int atmel_set_freq(struct net_device *dev,
 
 		/* Hack to fall through... */
 		fwrq->e = 0;
-		fwrq->m = ieee80211_frequency_to_channel(f);
+		fwrq->m = ieee80211_freq_to_dsss_chan(f);
 	}
 	/* Setting by channel number */
 	if ((fwrq->m > 1000) || (fwrq->e > 0))
@@ -2355,7 +2356,7 @@ static int atmel_get_scan(struct net_device *dev,
 	for (i = 0; i < priv->BSS_list_entries; i++) {
 		iwe.cmd = SIOCGIWAP;
 		iwe.u.ap_addr.sa_family = ARPHRD_ETHER;
-		memcpy(iwe.u.ap_addr.sa_data, priv->BSSinfo[i].BSSID, ETH_ALEN);
+		memcpy(iwe.u.ap_addr.sa_data, priv->BSSinfo[i].BSSID, 6);
 		current_ev = iwe_stream_add_event(info, current_ev,
 						  extra + IW_SCAN_MAX_DATA,
 						  &iwe, IW_EV_ADDR_LEN);
@@ -2434,8 +2435,8 @@ static int atmel_get_range(struct net_device *dev,
 			range->freq[k].i = i; /* List index */
 
 			/* Values in MHz -> * 10^5 * 10 */
-			range->freq[k].m = 100000 *
-			 ieee80211_channel_to_frequency(i, IEEE80211_BAND_2GHZ);
+			range->freq[k].m = (ieee80211_dsss_chan_to_freq(i) *
+					    100000);
 			range->freq[k++].e = 1;
 		}
 		range->num_frequency = k;
@@ -2598,11 +2599,11 @@ static const iw_handler atmel_private_handler[] =
 	NULL,				/* SIOCIWFIRSTPRIV */
 };
 
-struct atmel_priv_ioctl {
+typedef struct atmel_priv_ioctl {
 	char id[32];
 	unsigned char __user *data;
 	unsigned short len;
-};
+} atmel_priv_ioctl;
 
 #define ATMELFWL	SIOCIWFIRSTPRIV
 #define ATMELIDIFC	ATMELFWL + 1
@@ -2615,7 +2616,7 @@ static const struct iw_priv_args atmel_private_args[] = {
 		.cmd = ATMELFWL,
 		.set_args = IW_PRIV_TYPE_BYTE
 				| IW_PRIV_SIZE_FIXED
-				| sizeof(struct atmel_priv_ioctl),
+				| sizeof (atmel_priv_ioctl),
 		.get_args = IW_PRIV_TYPE_NONE,
 		.name = "atmelfwl"
 	}, {
@@ -2645,7 +2646,7 @@ static int atmel_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 {
 	int i, rc = 0;
 	struct atmel_private *priv = netdev_priv(dev);
-	struct atmel_priv_ioctl com;
+	atmel_priv_ioctl com;
 	struct iwreq *wrq = (struct iwreq *) rq;
 	unsigned char *new_firmware;
 	char domain[REGDOMAINSZ + 1];
@@ -2759,7 +2760,7 @@ static void atmel_enter_state(struct atmel_private *priv, int new_state)
 static void atmel_scan(struct atmel_private *priv, int specific_ssid)
 {
 	struct {
-		u8 BSSID[ETH_ALEN];
+		u8 BSSID[6];
 		u8 SSID[MAX_SSID_LENGTH];
 		u8 scan_type;
 		u8 channel;
@@ -2770,7 +2771,7 @@ static void atmel_scan(struct atmel_private *priv, int specific_ssid)
 		u8 SSID_size;
 	} cmd;
 
-	memset(cmd.BSSID, 0xff, ETH_ALEN);
+	memset(cmd.BSSID, 0xff, 6);
 
 	if (priv->fast_scan) {
 		cmd.SSID_size = priv->SSID_size;
@@ -2815,7 +2816,7 @@ static void join(struct atmel_private *priv, int type)
 
 	cmd.SSID_size = priv->SSID_size;
 	memcpy(cmd.SSID, priv->SSID, priv->SSID_size);
-	memcpy(cmd.BSSID, priv->CurrentBSSID, ETH_ALEN);
+	memcpy(cmd.BSSID, priv->CurrentBSSID, 6);
 	cmd.channel = (priv->channel & 0x7f);
 	cmd.BSS_type = type;
 	cmd.timeout = cpu_to_le16(2000);
@@ -2836,7 +2837,7 @@ static void start(struct atmel_private *priv, int type)
 
 	cmd.SSID_size = priv->SSID_size;
 	memcpy(cmd.SSID, priv->SSID, priv->SSID_size);
-	memcpy(cmd.BSSID, priv->BSSID, ETH_ALEN);
+	memcpy(cmd.BSSID, priv->BSSID, 6);
 	cmd.BSS_type = type;
 	cmd.channel = (priv->channel & 0x7f);
 
@@ -2882,9 +2883,9 @@ static void send_authentication_request(struct atmel_private *priv, u16 system,
 	header.frame_control = cpu_to_le16(IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_AUTH);
 	header.duration_id = cpu_to_le16(0x8000);
 	header.seq_ctrl = 0;
-	memcpy(header.addr1, priv->CurrentBSSID, ETH_ALEN);
-	memcpy(header.addr2, priv->dev->dev_addr, ETH_ALEN);
-	memcpy(header.addr3, priv->CurrentBSSID, ETH_ALEN);
+	memcpy(header.addr1, priv->CurrentBSSID, 6);
+	memcpy(header.addr2, priv->dev->dev_addr, 6);
+	memcpy(header.addr3, priv->CurrentBSSID, 6);
 
 	if (priv->wep_is_on && priv->CurrentAuthentTransactionSeqNum != 1)
 		/* no WEP for authentication frames with TrSeqNo 1 */
@@ -2915,7 +2916,7 @@ static void send_association_request(struct atmel_private *priv, int is_reassoc)
 	struct ass_req_format {
 		__le16 capability;
 		__le16 listen_interval;
-		u8 ap[ETH_ALEN]; /* nothing after here directly accessible */
+		u8 ap[6]; /* nothing after here directly accessible */
 		u8 ssid_el_id;
 		u8 ssid_len;
 		u8 ssid[MAX_SSID_LENGTH];
@@ -2929,9 +2930,9 @@ static void send_association_request(struct atmel_private *priv, int is_reassoc)
 	header.duration_id = cpu_to_le16(0x8000);
 	header.seq_ctrl = 0;
 
-	memcpy(header.addr1, priv->CurrentBSSID, ETH_ALEN);
-	memcpy(header.addr2, priv->dev->dev_addr, ETH_ALEN);
-	memcpy(header.addr3, priv->CurrentBSSID, ETH_ALEN);
+	memcpy(header.addr1, priv->CurrentBSSID, 6);
+	memcpy(header.addr2, priv->dev->dev_addr, 6);
+	memcpy(header.addr3, priv->CurrentBSSID, 6);
 
 	body.capability = cpu_to_le16(WLAN_CAPABILITY_ESS);
 	if (priv->wep_is_on)
@@ -2943,7 +2944,7 @@ static void send_association_request(struct atmel_private *priv, int is_reassoc)
 
 	/* current AP address - only in reassoc frame */
 	if (is_reassoc) {
-		memcpy(body.ap, priv->CurrentBSSID, ETH_ALEN);
+		memcpy(body.ap, priv->CurrentBSSID, 6);
 		ssid_el_p = &body.ssid_el_id;
 		bodysize = 18 + priv->SSID_size;
 	} else {
@@ -3020,7 +3021,7 @@ static void store_bss_info(struct atmel_private *priv,
 	int i, index;
 
 	for (index = -1, i = 0; i < priv->BSS_list_entries; i++)
-		if (memcmp(bss, priv->BSSinfo[i].BSSID, ETH_ALEN) == 0)
+		if (memcmp(bss, priv->BSSinfo[i].BSSID, 6) == 0)
 			index = i;
 
 	/* If we process a probe and an entry from this BSS exists
@@ -3031,7 +3032,7 @@ static void store_bss_info(struct atmel_private *priv,
 		if (priv->BSS_list_entries == MAX_BSS_ENTRIES)
 			return;
 		index = priv->BSS_list_entries++;
-		memcpy(priv->BSSinfo[index].BSSID, bss, ETH_ALEN);
+		memcpy(priv->BSSinfo[index].BSSID, bss, 6);
 		priv->BSSinfo[index].RSSI = rssi;
 	} else {
 		if (rssi > priv->BSSinfo[index].RSSI)
@@ -3211,7 +3212,7 @@ static void associate(struct atmel_private *priv, u16 frame_len, u16 subtype)
 	if (subtype == IEEE80211_STYPE_REASSOC_RESP &&
 	    status != WLAN_STATUS_ASSOC_DENIED_RATES &&
 	    status != WLAN_STATUS_CAPS_UNSUPPORTED &&
-	    priv->ReAssociationRequestRetryCnt < MAX_ASSOCIATION_RETRIES) {
+	    priv->AssociationRequestRetryCnt < MAX_ASSOCIATION_RETRIES) {
 		mod_timer(&priv->management_timer, jiffies + MGMT_JIFFIES);
 		priv->ReAssociationRequestRetryCnt++;
 		send_association_request(priv, 1);
@@ -3234,7 +3235,7 @@ static void atmel_join_bss(struct atmel_private *priv, int bss_index)
 {
 	struct bss_info *bss =  &priv->BSSinfo[bss_index];
 
-	memcpy(priv->CurrentBSSID, bss->BSSID, ETH_ALEN);
+	memcpy(priv->CurrentBSSID, bss->BSSID, 6);
 	memcpy(priv->SSID, bss->SSID, priv->SSID_size = bss->SSIDsize);
 
 	/* The WPA stuff cares about the current AP address */
@@ -3766,7 +3767,7 @@ static int probe_atmel_card(struct net_device *dev)
 				0x00, 0x04, 0x25, 0x00, 0x00, 0x00
 			};
 			printk(KERN_ALERT "%s: *** Invalid MAC address. UPGRADE Firmware ****\n", dev->name);
-			memcpy(dev->dev_addr, default_mac, ETH_ALEN);
+			memcpy(dev->dev_addr, default_mac, 6);
 		}
 	}
 
@@ -3818,7 +3819,7 @@ static void build_wpa_mib(struct atmel_private *priv)
 
 	struct { /* NB this is matched to the hardware, don't change. */
 		u8 cipher_default_key_value[MAX_ENCRYPTION_KEYS][MAX_ENCRYPTION_KEY_SIZE];
-		u8 receiver_address[ETH_ALEN];
+		u8 receiver_address[6];
 		u8 wep_is_on;
 		u8 default_key; /* 0..3 */
 		u8 group_key;
@@ -3836,7 +3837,7 @@ static void build_wpa_mib(struct atmel_private *priv)
 
 	mib.wep_is_on = priv->wep_is_on;
 	mib.exclude_unencrypted = priv->exclude_unencrypted;
-	memcpy(mib.receiver_address, priv->CurrentBSSID, ETH_ALEN);
+	memcpy(mib.receiver_address, priv->CurrentBSSID, 6);
 
 	/* zero all the keys before adding in valid ones. */
 	memset(mib.cipher_default_key_value, 0, sizeof(mib.cipher_default_key_value));
@@ -4277,7 +4278,8 @@ static void atmel_wmem32(struct atmel_private *priv, u16 pos, u32 data)
     GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License
-    along with AtmelMACFW; if not, see <http://www.gnu.org/licenses/>.
+    along with AtmelMACFW; if not, write to the Free Software
+    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 ****************************************************************************/
 /* This firmware should work on the 76C502 RFMD, RFMD_D, and RFMD_E        */

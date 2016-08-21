@@ -1,6 +1,5 @@
 /*
  * Copyright 2004, Instant802 Networks, Inc.
- * Copyright 2013-2014  Intel Mobile Communications GmbH
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -107,7 +106,6 @@ u16 ieee80211_select_queue(struct ieee80211_sub_if_data *sdata,
 	struct sta_info *sta = NULL;
 	const u8 *ra = NULL;
 	bool qos = false;
-	struct mac80211_qos_map *qos_map;
 
 	if (local->hw.queues < IEEE80211_NUM_ACS || skb->len < 6) {
 		skb->priority = 0; /* required for correct WPA/11i MIC */
@@ -119,7 +117,7 @@ u16 ieee80211_select_queue(struct ieee80211_sub_if_data *sdata,
 	case NL80211_IFTYPE_AP_VLAN:
 		sta = rcu_dereference(sdata->u.vlan.sta);
 		if (sta) {
-			qos = sta->sta.wme;
+			qos = test_sta_flag(sta, WLAN_STA_WME);
 			break;
 		}
 	case NL80211_IFTYPE_AP:
@@ -146,7 +144,7 @@ u16 ieee80211_select_queue(struct ieee80211_sub_if_data *sdata,
 	if (!sta && ra && !is_multicast_ether_addr(ra)) {
 		sta = sta_info_get(sdata, ra);
 		if (sta)
-			qos = sta->sta.wme;
+			qos = test_sta_flag(sta, WLAN_STA_WME);
 	}
 	rcu_read_unlock();
 
@@ -162,11 +160,7 @@ u16 ieee80211_select_queue(struct ieee80211_sub_if_data *sdata,
 
 	/* use the data classifier to determine what 802.1d tag the
 	 * data frame has */
-	rcu_read_lock();
-	qos_map = rcu_dereference(sdata->qos_map);
-	skb->priority = cfg80211_classify8021d(skb, qos_map ?
-					       &qos_map->qos_map : NULL);
-	rcu_read_unlock();
+	skb->priority = cfg80211_classify8021d(skb);
 
 	return ieee80211_downgrade_queue(sdata, skb);
 }

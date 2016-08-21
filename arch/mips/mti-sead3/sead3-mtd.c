@@ -50,4 +50,5 @@ static int __init sead3_mtd_init(void)
 
 	return 0;
 }
-device_initcall(sead3_mtd_init);
+
+module_init(sead3_mtd_init)

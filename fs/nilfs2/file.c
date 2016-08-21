@@ -56,9 +56,11 @@ int nilfs_sync_file(struct file *file, loff_t start, loff_t end, int datasync)
 	mutex_unlock(&inode->i_mutex);
 
 	nilfs = inode->i_sb->s_fs_info;
-	if (!err)
-		err = nilfs_flush_device(nilfs);
-
+	if (!err && nilfs_test_opt(nilfs, BARRIER)) {
+		err = blkdev_issue_flush(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
+		if (err != -EIO)
+			err = 0;
+	}
 	return err;
 }
 
@@ -132,7 +134,6 @@ static int nilfs_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 
 static const struct vm_operations_struct nilfs_file_vm_ops = {
 	.fault		= filemap_fault,
-	.map_pages	= filemap_map_pages,
 	.page_mkwrite	= nilfs_page_mkwrite,
 	.remap_pages	= generic_file_remap_pages,
 };
@@ -150,10 +151,10 @@ static int nilfs_file_mmap(struct file *file, struct vm_area_struct *vma)
  */
 const struct file_operations nilfs_file_operations = {
 	.llseek		= generic_file_llseek,
-	.read		= new_sync_read,
-	.write		= new_sync_write,
-	.read_iter	= generic_file_read_iter,
-	.write_iter	= generic_file_write_iter,
+	.read		= do_sync_read,
+	.write		= do_sync_write,
+	.aio_read	= generic_file_aio_read,
+	.aio_write	= generic_file_aio_write,
 	.unlocked_ioctl	= nilfs_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= nilfs_compat_ioctl,

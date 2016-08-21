@@ -53,7 +53,7 @@ static int wait_handshake(struct echoaudio *chip)
 		udelay(1);
 	}
 
-	dev_err(chip->card->dev, "wait_handshake(): Timeout waiting for DSP\n");
+	snd_printk(KERN_ERR "wait_handshake(): Timeout waiting for DSP\n");
 	return -EBUSY;
 }
 
@@ -149,8 +149,7 @@ static int read_sn(struct echoaudio *chip)
 
 	for (i = 0; i < 5; i++) {
 		if (read_dsp(chip, &sn[i])) {
-			dev_err(chip->card->dev,
-				"Failed to read serial number\n");
+			snd_printk(KERN_ERR "Failed to read serial number\n");
 			return -EIO;
 		}
 	}
@@ -185,7 +184,7 @@ static int load_asic_generic(struct echoaudio *chip, u32 cmd, short asic)
 
 	err = get_firmware(&fw, chip, asic);
 	if (err < 0) {
-		dev_warn(chip->card->dev, "Firmware not found !\n");
+		snd_printk(KERN_WARNING "Firmware not found !\n");
 		return err;
 	}
 
@@ -248,7 +247,7 @@ static int install_resident_loader(struct echoaudio *chip)
 
 	i = get_firmware(&fw, chip, FW_361_LOADER);
 	if (i < 0) {
-		dev_warn(chip->card->dev, "Firmware not found !\n");
+		snd_printk(KERN_WARNING "Firmware not found !\n");
 		return i;
 	}
 

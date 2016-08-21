@@ -34,11 +34,6 @@ struct iova_domain {
 	unsigned long	dma_32bit_pfn;
 };
 
-static inline unsigned long iova_size(struct iova *iova)
-{
-	return iova->pfn_hi - iova->pfn_lo + 1;
-}
-
 struct iova *alloc_iova_mem(void);
 void free_iova_mem(struct iova *iova);
 void free_iova(struct iova_domain *iovad, unsigned long pfn);
@@ -52,7 +47,5 @@ void copy_reserved_iova(struct iova_domain *from, struct iova_domain *to);
 void init_iova_domain(struct iova_domain *iovad, unsigned long pfn_32bit);
 struct iova *find_iova(struct iova_domain *iovad, unsigned long pfn);
 void put_iova_domain(struct iova_domain *iovad);
-struct iova *split_and_remove_iova(struct iova_domain *iovad,
-	struct iova *iova, unsigned long pfn_lo, unsigned long pfn_hi);
 
 #endif

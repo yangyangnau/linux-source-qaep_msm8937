@@ -319,10 +319,12 @@ static struct gtt_range *psbfb_alloc(struct drm_device *dev, int aligned_size)
 {
 	struct gtt_range *backing;
 	/* Begin by trying to use stolen memory backing */
-	backing = psb_gtt_alloc_range(dev, aligned_size, "fb", 1, PAGE_SIZE);
+	backing = psb_gtt_alloc_range(dev, aligned_size, "fb", 1);
 	if (backing) {
-		drm_gem_private_object_init(dev, &backing->gem, aligned_size);
-		return backing;
+		if (drm_gem_private_object_init(dev,
+					&backing->gem, aligned_size) == 0)
+			return backing;
+		psb_gtt_free_range(dev, backing);
 	}
 	return NULL;
 }
@@ -520,28 +522,27 @@ static struct drm_framebuffer *psb_user_framebuffer_create
 static void psbfb_gamma_set(struct drm_crtc *crtc, u16 red, u16 green,
 							u16 blue, int regno)
 {
-	struct gma_crtc *gma_crtc = to_gma_crtc(crtc);
+	struct psb_intel_crtc *intel_crtc = to_psb_intel_crtc(crtc);
 
-	gma_crtc->lut_r[regno] = red >> 8;
-	gma_crtc->lut_g[regno] = green >> 8;
-	gma_crtc->lut_b[regno] = blue >> 8;
+	intel_crtc->lut_r[regno] = red >> 8;
+	intel_crtc->lut_g[regno] = green >> 8;
+	intel_crtc->lut_b[regno] = blue >> 8;
 }
 
 static void psbfb_gamma_get(struct drm_crtc *crtc, u16 *red,
 					u16 *green, u16 *blue, int regno)
 {
-	struct gma_crtc *gma_crtc = to_gma_crtc(crtc);
+	struct psb_intel_crtc *intel_crtc = to_psb_intel_crtc(crtc);
 
-	*red = gma_crtc->lut_r[regno] << 8;
-	*green = gma_crtc->lut_g[regno] << 8;
-	*blue = gma_crtc->lut_b[regno] << 8;
+	*red = intel_crtc->lut_r[regno] << 8;
+	*green = intel_crtc->lut_g[regno] << 8;
+	*blue = intel_crtc->lut_b[regno] << 8;
 }
 
 static int psbfb_probe(struct drm_fb_helper *helper,
 				struct drm_fb_helper_surface_size *sizes)
 {
-	struct psb_fbdev *psb_fbdev =
-		container_of(helper, struct psb_fbdev, psb_fb_helper);
+	struct psb_fbdev *psb_fbdev = (struct psb_fbdev *)helper;
 	struct drm_device *dev = psb_fbdev->psb_fb_helper.dev;
 	struct drm_psb_private *dev_priv = dev->dev_private;
 	int bytespp;
@@ -562,7 +563,7 @@ static int psbfb_probe(struct drm_fb_helper *helper,
 	return psbfb_create(psb_fbdev, sizes);
 }
 
-static const struct drm_fb_helper_funcs psb_fb_helper_funcs = {
+static struct drm_fb_helper_funcs psb_fb_helper_funcs = {
 	.gamma_set = psbfb_gamma_set,
 	.gamma_get = psbfb_gamma_get,
 	.fb_probe = psbfb_probe,
@@ -601,8 +602,7 @@ int psb_fbdev_init(struct drm_device *dev)
 	}
 
 	dev_priv->fbdev = fbdev;
-
-	drm_fb_helper_prepare(dev, &fbdev->psb_fb_helper, &psb_fb_helper_funcs);
+	fbdev->psb_fb_helper.funcs = &psb_fb_helper_funcs;
 
 	drm_fb_helper_init(dev, &fbdev->psb_fb_helper, dev_priv->ops->crtcs,
 							INTELFB_CONN_LIMIT);
@@ -705,18 +705,19 @@ static void psb_setup_outputs(struct drm_device *dev)
 
 	list_for_each_entry(connector, &dev->mode_config.connector_list,
 			    head) {
-		struct gma_encoder *gma_encoder = gma_attached_encoder(connector);
-		struct drm_encoder *encoder = &gma_encoder->base;
+		struct psb_intel_encoder *psb_intel_encoder =
+			psb_intel_attached_encoder(connector);
+		struct drm_encoder *encoder = &psb_intel_encoder->base;
 		int crtc_mask = 0, clone_mask = 0;
 
 		/* valid crtcs */
-		switch (gma_encoder->type) {
+		switch (psb_intel_encoder->type) {
 		case INTEL_OUTPUT_ANALOG:
 			crtc_mask = (1 << 0);
 			clone_mask = (1 << INTEL_OUTPUT_ANALOG);
 			break;
 		case INTEL_OUTPUT_SDVO:
-			crtc_mask = dev_priv->ops->sdvo_mask;
+			crtc_mask = ((1 << 0) | (1 << 1));
 			clone_mask = (1 << INTEL_OUTPUT_SDVO);
 			break;
 		case INTEL_OUTPUT_LVDS:
@@ -745,7 +746,7 @@ static void psb_setup_outputs(struct drm_device *dev)
 		}
 		encoder->possible_crtcs = crtc_mask;
 		encoder->possible_clones =
-		    gma_connector_clones(dev, clone_mask);
+		    psb_intel_connector_clones(dev, clone_mask);
 	}
 }
 

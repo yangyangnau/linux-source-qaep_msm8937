@@ -696,6 +696,7 @@ static struct videobuf_queue *get_queue(struct file *file)
 		return &fh->vbiq;
 	default:
 		BUG();
+		return NULL;
 	}
 }
 
@@ -710,6 +711,7 @@ static int get_resource(struct file *file)
 		return RESOURCE_VBI;
 	default:
 		BUG();
+		return 0;
 	}
 }
 
@@ -810,6 +812,7 @@ video_read(struct file *file, char __user *data, size_t count, loff_t *ppos)
 					    file->f_flags & O_NONBLOCK);
 	default:
 		BUG();
+		return 0;
 	}
 }
 
@@ -1350,14 +1353,26 @@ static int vidioc_s_frequency (struct file *file, void *priv,
 	return cx88_set_freq(core, f);
 }
 
+static int vidioc_g_chip_ident(struct file *file, void *priv,
+				struct v4l2_dbg_chip_ident *chip)
+{
+	if (!v4l2_chip_match_host(&chip->match))
+		return -EINVAL;
+	chip->revision = 0;
+	chip->ident = V4L2_IDENT_UNKNOWN;
+	return 0;
+}
+
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 static int vidioc_g_register (struct file *file, void *fh,
 				struct v4l2_dbg_register *reg)
 {
 	struct cx88_core *core = ((struct cx8800_fh*)fh)->dev->core;
 
+	if (!v4l2_chip_match_host(&reg->match))
+		return -EINVAL;
 	/* cx2388x has a 24-bit register space */
-	reg->val = cx_read(reg->reg & 0xfffffc);
+	reg->val = cx_read(reg->reg & 0xffffff);
 	reg->size = 4;
 	return 0;
 }
@@ -1367,7 +1382,9 @@ static int vidioc_s_register (struct file *file, void *fh,
 {
 	struct cx88_core *core = ((struct cx8800_fh*)fh)->dev->core;
 
-	cx_write(reg->reg & 0xfffffc, reg->val);
+	if (!v4l2_chip_match_host(&reg->match))
+		return -EINVAL;
+	cx_write(reg->reg & 0xffffff, reg->val);
 	return 0;
 }
 #endif
@@ -1561,6 +1578,7 @@ static const struct v4l2_ioctl_ops video_ioctl_ops = {
 	.vidioc_s_frequency   = vidioc_s_frequency,
 	.vidioc_subscribe_event      = v4l2_ctrl_subscribe_event,
 	.vidioc_unsubscribe_event    = v4l2_event_unsubscribe,
+	.vidioc_g_chip_ident  = vidioc_g_chip_ident,
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 	.vidioc_g_register    = vidioc_g_register,
 	.vidioc_s_register    = vidioc_s_register,
@@ -1594,6 +1612,7 @@ static const struct v4l2_ioctl_ops vbi_ioctl_ops = {
 	.vidioc_s_tuner       = vidioc_s_tuner,
 	.vidioc_g_frequency   = vidioc_g_frequency,
 	.vidioc_s_frequency   = vidioc_s_frequency,
+	.vidioc_g_chip_ident  = vidioc_g_chip_ident,
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 	.vidioc_g_register    = vidioc_g_register,
 	.vidioc_s_register    = vidioc_s_register,
@@ -1624,6 +1643,7 @@ static const struct v4l2_ioctl_ops radio_ioctl_ops = {
 	.vidioc_s_frequency   = vidioc_s_frequency,
 	.vidioc_subscribe_event      = v4l2_ctrl_subscribe_event,
 	.vidioc_unsubscribe_event    = v4l2_event_unsubscribe,
+	.vidioc_g_chip_ident  = vidioc_g_chip_ident,
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 	.vidioc_g_register    = vidioc_g_register,
 	.vidioc_s_register    = vidioc_s_register,
@@ -1735,7 +1755,7 @@ static int cx8800_initdev(struct pci_dev *pci_dev,
 
 	/* get irq */
 	err = request_irq(pci_dev->irq, cx8800_irq,
-			  IRQF_SHARED, core->name, dev);
+			  IRQF_SHARED | IRQF_DISABLED, core->name, dev);
 	if (err < 0) {
 		printk(KERN_ERR "%s/0: can't get IRQ %d\n",
 		       core->name,pci_dev->irq);
@@ -1774,7 +1794,7 @@ static int cx8800_initdev(struct pci_dev *pci_dev,
 
 	/* load and configure helper modules */
 
-	if (core->board.audio_chip == CX88_AUDIO_WM8775) {
+	if (core->board.audio_chip == V4L2_IDENT_WM8775) {
 		struct i2c_board_info wm8775_info = {
 			.type = "wm8775",
 			.addr = 0x36 >> 1,
@@ -1795,7 +1815,7 @@ static int cx8800_initdev(struct pci_dev *pci_dev,
 		}
 	}
 
-	if (core->board.audio_chip == CX88_AUDIO_TVAUDIO) {
+	if (core->board.audio_chip == V4L2_IDENT_TVAUDIO) {
 		/* This probes for a tda9874 as is used on some
 		   Pixelview Ultra boards. */
 		v4l2_i2c_new_subdev(&core->v4l2_dev, &core->i2c_adap,
@@ -1919,6 +1939,7 @@ static void cx8800_finidev(struct pci_dev *pci_dev)
 
 	free_irq(pci_dev->irq, dev);
 	cx8800_unregister_video(dev);
+	pci_set_drvdata(pci_dev, NULL);
 
 	/* free memory */
 	btcx_riscmem_free(dev->pci,&dev->vidq.stopper);
@@ -2035,4 +2056,17 @@ static struct pci_driver cx8800_pci_driver = {
 #endif
 };
 
-module_pci_driver(cx8800_pci_driver);
+static int __init cx8800_init(void)
+{
+	printk(KERN_INFO "cx88/0: cx2388x v4l2 driver version %s loaded\n",
+	       CX88_VERSION);
+	return pci_register_driver(&cx8800_pci_driver);
+}
+
+static void __exit cx8800_fini(void)
+{
+	pci_unregister_driver(&cx8800_pci_driver);
+}
+
+module_init(cx8800_init);
+module_exit(cx8800_fini);

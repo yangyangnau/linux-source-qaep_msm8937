@@ -70,12 +70,8 @@ static struct quirk_entry quirk_asus_x55u = {
 	.no_display_toggle = true,
 };
 
-static struct quirk_entry quirk_asus_wapf4 = {
+static struct quirk_entry quirk_asus_x401u = {
 	.wapf = 4,
-};
-
-static struct quirk_entry quirk_asus_x200ca = {
-	.wapf = 2,
 };
 
 static int dmi_matched(const struct dmi_system_id *dmi)
@@ -84,21 +80,7 @@ static int dmi_matched(const struct dmi_system_id *dmi)
 	return 1;
 }
 
-static const struct dmi_system_id asus_quirks[] = {
-	{
-		.callback = dmi_matched,
-		.ident = "ASUSTeK COMPUTER INC. U32U",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK Computer Inc."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "U32U"),
-		},
-		/*
-		 * Note this machine has a Brazos APU, and most Brazos Asus
-		 * machines need quirk_asus_x55u / wmi_backlight_power but
-		 * here acpi-video seems to work fine for backlight control.
-		 */
-		.driver_data = &quirk_asus_wapf4,
-	},
+static struct dmi_system_id asus_quirks[] = {
 	{
 		.callback = dmi_matched,
 		.ident = "ASUSTeK COMPUTER INC. X401U",
@@ -115,7 +97,7 @@ static const struct dmi_system_id asus_quirks[] = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 			DMI_MATCH(DMI_PRODUCT_NAME, "X401A"),
 		},
-		.driver_data = &quirk_asus_wapf4,
+		.driver_data = &quirk_asus_x401u,
 	},
 	{
 		.callback = dmi_matched,
@@ -124,7 +106,7 @@ static const struct dmi_system_id asus_quirks[] = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 			DMI_MATCH(DMI_PRODUCT_NAME, "X401A1"),
 		},
-		.driver_data = &quirk_asus_wapf4,
+		.driver_data = &quirk_asus_x401u,
 	},
 	{
 		.callback = dmi_matched,
@@ -142,7 +124,7 @@ static const struct dmi_system_id asus_quirks[] = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 			DMI_MATCH(DMI_PRODUCT_NAME, "X501A"),
 		},
-		.driver_data = &quirk_asus_wapf4,
+		.driver_data = &quirk_asus_x401u,
 	},
 	{
 		.callback = dmi_matched,
@@ -151,52 +133,7 @@ static const struct dmi_system_id asus_quirks[] = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 			DMI_MATCH(DMI_PRODUCT_NAME, "X501A1"),
 		},
-		.driver_data = &quirk_asus_wapf4,
-	},
-	{
-		.callback = dmi_matched,
-		.ident = "ASUSTeK COMPUTER INC. X550CA",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "X550CA"),
-		},
-		.driver_data = &quirk_asus_wapf4,
-	},
-	{
-		.callback = dmi_matched,
-		.ident = "ASUSTeK COMPUTER INC. X550CC",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "X550CC"),
-		},
-		.driver_data = &quirk_asus_wapf4,
-	},
-	{
-		.callback = dmi_matched,
-		.ident = "ASUSTeK COMPUTER INC. X550CL",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "X550CL"),
-		},
-		.driver_data = &quirk_asus_wapf4,
-	},
-	{
-		.callback = dmi_matched,
-		.ident = "ASUSTeK COMPUTER INC. X550VB",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "X550VB"),
-		},
-		.driver_data = &quirk_asus_wapf4,
-	},
-	{
-		.callback = dmi_matched,
-		.ident = "ASUSTeK COMPUTER INC. X551CA",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "X551CA"),
-		},
-		.driver_data = &quirk_asus_wapf4,
+		.driver_data = &quirk_asus_x401u,
 	},
 	{
 		.callback = dmi_matched,
@@ -205,7 +142,7 @@ static const struct dmi_system_id asus_quirks[] = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 			DMI_MATCH(DMI_PRODUCT_NAME, "X55A"),
 		},
-		.driver_data = &quirk_asus_wapf4,
+		.driver_data = &quirk_asus_x401u,
 	},
 	{
 		.callback = dmi_matched,
@@ -214,7 +151,7 @@ static const struct dmi_system_id asus_quirks[] = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 			DMI_MATCH(DMI_PRODUCT_NAME, "X55C"),
 		},
-		.driver_data = &quirk_asus_wapf4,
+		.driver_data = &quirk_asus_x401u,
 	},
 	{
 		.callback = dmi_matched,
@@ -232,7 +169,7 @@ static const struct dmi_system_id asus_quirks[] = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 			DMI_MATCH(DMI_PRODUCT_NAME, "X55VD"),
 		},
-		.driver_data = &quirk_asus_wapf4,
+		.driver_data = &quirk_asus_x401u,
 	},
 	{
 		.callback = dmi_matched,
@@ -241,43 +178,7 @@ static const struct dmi_system_id asus_quirks[] = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 			DMI_MATCH(DMI_PRODUCT_NAME, "X75A"),
 		},
-		.driver_data = &quirk_asus_wapf4,
-	},
-	{
-		.callback = dmi_matched,
-		.ident = "ASUSTeK COMPUTER INC. X75VBP",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "X75VBP"),
-		},
-		.driver_data = &quirk_asus_wapf4,
-	},
-	{
-		.callback = dmi_matched,
-		.ident = "ASUSTeK COMPUTER INC. 1015E",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "1015E"),
-		},
-		.driver_data = &quirk_asus_wapf4,
-	},
-	{
-		.callback = dmi_matched,
-		.ident = "ASUSTeK COMPUTER INC. 1015U",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "1015U"),
-		},
-		.driver_data = &quirk_asus_wapf4,
-	},
-	{
-		.callback = dmi_matched,
-		.ident = "ASUSTeK COMPUTER INC. X200CA",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "X200CA"),
-		},
-		.driver_data = &quirk_asus_x200ca,
+		.driver_data = &quirk_asus_x401u,
 	},
 	{},
 };
@@ -355,7 +256,6 @@ static const struct key_entry asus_nb_wmi_keymap[] = {
 	{ KE_KEY, 0xB5, { KEY_CALC } },
 	{ KE_KEY, 0xC4, { KEY_KBDILLUMUP } },
 	{ KE_KEY, 0xC5, { KEY_KBDILLUMDOWN } },
-	{ KE_IGNORE, 0xC6, },  /* Ambient Light Sensor notification */
 	{ KE_END, 0},
 };
 

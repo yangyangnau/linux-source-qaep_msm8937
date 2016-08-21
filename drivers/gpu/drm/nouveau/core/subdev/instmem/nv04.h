@@ -5,9 +5,7 @@
 #include <core/ramht.h>
 #include <core/mm.h>
 
-#include "priv.h"
-
-extern struct nouveau_instobj_impl nv04_instobj_oclass;
+#include <subdev/instmem.h>
 
 struct nv04_instmem_priv {
 	struct nouveau_instmem base;

@@ -12,6 +12,16 @@
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301 USA
  */
 
 #include <linux/device.h>
@@ -196,7 +206,7 @@ static void resizer_set_bilinear(struct isp_res_device *res,
 /*
  * resizer_set_ycpos - Luminance and chrominance order
  * @res: Device context.
- * @pixelcode: pixel code.
+ * @order: order type.
  */
 static void resizer_set_ycpos(struct isp_res_device *res,
 			      enum v4l2_mbus_pixelcode pixelcode)
@@ -229,7 +239,7 @@ static void resizer_set_phase(struct isp_res_device *res, u32 h_phase,
 			      u32 v_phase)
 {
 	struct isp_device *isp = to_isp_device(res);
-	u32 rgval;
+	u32 rgval = 0;
 
 	rgval = isp_reg_readl(isp, OMAP3_ISP_IOMEM_RESZ, ISPRSZ_CNT) &
 	      ~(ISPRSZ_CNT_HSTPH_MASK | ISPRSZ_CNT_VSTPH_MASK);
@@ -265,7 +275,7 @@ static void resizer_set_luma(struct isp_res_device *res,
 			     struct resizer_luma_yenh *luma)
 {
 	struct isp_device *isp = to_isp_device(res);
-	u32 rgval;
+	u32 rgval = 0;
 
 	rgval  = (luma->algo << ISPRSZ_YENH_ALGO_SHIFT)
 		  & ISPRSZ_YENH_ALGO_MASK;
@@ -312,7 +322,7 @@ static void resizer_set_ratio(struct isp_res_device *res,
 {
 	struct isp_device *isp = to_isp_device(res);
 	const u16 *h_filter, *v_filter;
-	u32 rgval;
+	u32 rgval = 0;
 
 	rgval = isp_reg_readl(isp, OMAP3_ISP_IOMEM_RESZ, ISPRSZ_CNT) &
 			      ~(ISPRSZ_CNT_HRSZ_MASK | ISPRSZ_CNT_VRSZ_MASK);
@@ -355,8 +365,9 @@ static void resizer_set_output_size(struct isp_res_device *res,
 				    u32 width, u32 height)
 {
 	struct isp_device *isp = to_isp_device(res);
-	u32 rgval;
+	u32 rgval = 0;
 
+	dev_dbg(isp->dev, "Output size[w/h]: %dx%d\n", width, height);
 	rgval  = (width << ISPRSZ_OUT_SIZE_HORZ_SHIFT)
 		 & ISPRSZ_OUT_SIZE_HORZ_MASK;
 	rgval |= (height << ISPRSZ_OUT_SIZE_VERT_SHIFT)
@@ -398,7 +409,7 @@ static void resizer_set_output_offset(struct isp_res_device *res, u32 offset)
 static void resizer_set_start(struct isp_res_device *res, u32 left, u32 top)
 {
 	struct isp_device *isp = to_isp_device(res);
-	u32 rgval;
+	u32 rgval = 0;
 
 	rgval = (left << ISPRSZ_IN_START_HORZ_ST_SHIFT)
 		& ISPRSZ_IN_START_HORZ_ST_MASK;
@@ -418,7 +429,9 @@ static void resizer_set_input_size(struct isp_res_device *res,
 				   u32 width, u32 height)
 {
 	struct isp_device *isp = to_isp_device(res);
-	u32 rgval;
+	u32 rgval = 0;
+
+	dev_dbg(isp->dev, "Input size[w/h]: %dx%d\n", width, height);
 
 	rgval = (width << ISPRSZ_IN_SIZE_HORZ_SHIFT)
 		& ISPRSZ_IN_SIZE_HORZ_MASK;
@@ -905,8 +918,8 @@ static void resizer_calc_ratios(struct isp_res_device *res,
 /*
  * resizer_set_crop_params - Setup hardware with cropping parameters
  * @res : resizer private structure
- * @input : format on sink pad
- * @output : format on source pad
+ * @crop_rect : current crop rectangle
+ * @ratio : resizer ratios
  * return none
  */
 static void resizer_set_crop_params(struct isp_res_device *res,
@@ -1027,7 +1040,7 @@ static void resizer_isr_buffer(struct isp_res_device *res)
 	 */
 	buffer = omap3isp_video_buffer_next(&res->video_out);
 	if (buffer != NULL) {
-		resizer_set_outaddr(res, buffer->dma);
+		resizer_set_outaddr(res, buffer->isp_addr);
 		restart = 1;
 	}
 
@@ -1036,7 +1049,7 @@ static void resizer_isr_buffer(struct isp_res_device *res)
 	if (res->input == RESIZER_INPUT_MEMORY) {
 		buffer = omap3isp_video_buffer_next(&res->video_in);
 		if (buffer != NULL)
-			resizer_set_inaddr(res, buffer->dma);
+			resizer_set_inaddr(res, buffer->isp_addr);
 		pipe->state |= ISP_PIPELINE_IDLE_INPUT;
 	}
 
@@ -1062,12 +1075,9 @@ static void resizer_isr_buffer(struct isp_res_device *res)
 void omap3isp_resizer_isr(struct isp_res_device *res)
 {
 	struct v4l2_mbus_framefmt *informat, *outformat;
-	unsigned long flags;
 
 	if (omap3isp_module_sync_is_stopping(&res->wait, &res->stopping))
 		return;
-
-	spin_lock_irqsave(&res->lock, flags);
 
 	if (res->applycrop) {
 		outformat = __resizer_get_format(res, NULL, RESZ_PAD_SOURCE,
@@ -1077,8 +1087,6 @@ void omap3isp_resizer_isr(struct isp_res_device *res)
 		resizer_set_crop_params(res, informat, outformat);
 		res->applycrop = 0;
 	}
-
-	spin_unlock_irqrestore(&res->lock, flags);
 
 	resizer_isr_buffer(res);
 }
@@ -1093,7 +1101,7 @@ static int resizer_video_queue(struct isp_video *video,
 	struct isp_res_device *res = &video->isp->isp_res;
 
 	if (video->type == V4L2_BUF_TYPE_VIDEO_OUTPUT)
-		resizer_set_inaddr(res, buffer->dma);
+		resizer_set_inaddr(res, buffer->isp_addr);
 
 	/*
 	 * We now have a buffer queued on the output. Despite what the
@@ -1108,7 +1116,7 @@ static int resizer_video_queue(struct isp_video *video,
 	 * continuous mode or when starting the stream.
 	 */
 	if (video->type == V4L2_BUF_TYPE_VIDEO_CAPTURE)
-		resizer_set_outaddr(res, buffer->dma);
+		resizer_set_outaddr(res, buffer->isp_addr);
 
 	return 0;
 }
@@ -1282,10 +1290,8 @@ static int resizer_set_selection(struct v4l2_subdev *sd,
 {
 	struct isp_res_device *res = v4l2_get_subdevdata(sd);
 	struct isp_device *isp = to_isp_device(res);
-	const struct v4l2_mbus_framefmt *format_sink;
-	struct v4l2_mbus_framefmt format_source;
+	struct v4l2_mbus_framefmt *format_sink, *format_source;
 	struct resizer_ratio ratio;
-	unsigned long flags;
 
 	if (sel->target != V4L2_SEL_TGT_CROP ||
 	    sel->pad != RESZ_PAD_SINK)
@@ -1293,14 +1299,16 @@ static int resizer_set_selection(struct v4l2_subdev *sd,
 
 	format_sink = __resizer_get_format(res, fh, RESZ_PAD_SINK,
 					   sel->which);
-	format_source = *__resizer_get_format(res, fh, RESZ_PAD_SOURCE,
-					      sel->which);
+	format_source = __resizer_get_format(res, fh, RESZ_PAD_SOURCE,
+					     sel->which);
 
-	dev_dbg(isp->dev, "%s(%s): req %ux%u -> (%d,%d)/%ux%u -> %ux%u\n",
-		__func__, sel->which == V4L2_SUBDEV_FORMAT_TRY ? "try" : "act",
-		format_sink->width, format_sink->height,
+	dev_dbg(isp->dev, "%s: L=%d,T=%d,W=%d,H=%d,which=%d\n", __func__,
 		sel->r.left, sel->r.top, sel->r.width, sel->r.height,
-		format_source.width, format_source.height);
+		sel->which);
+
+	dev_dbg(isp->dev, "%s: input=%dx%d, output=%dx%d\n", __func__,
+		format_sink->width, format_sink->height,
+		format_source->width, format_source->height);
 
 	/* Clamp the crop rectangle to the bounds, and then mangle it further to
 	 * fulfill the TRM equations. Store the clamped but otherwise unmangled
@@ -1310,38 +1318,22 @@ static int resizer_set_selection(struct v4l2_subdev *sd,
 	 * smaller input crop rectangle every time the output size is set if we
 	 * stored the mangled rectangle.
 	 */
-	resizer_try_crop(format_sink, &format_source, &sel->r);
+	resizer_try_crop(format_sink, format_source, &sel->r);
 	*__resizer_get_crop(res, fh, sel->which) = sel->r;
-	resizer_calc_ratios(res, &sel->r, &format_source, &ratio);
+	resizer_calc_ratios(res, &sel->r, format_source, &ratio);
 
-	dev_dbg(isp->dev, "%s(%s): got %ux%u -> (%d,%d)/%ux%u -> %ux%u\n",
-		__func__, sel->which == V4L2_SUBDEV_FORMAT_TRY ? "try" : "act",
-		format_sink->width, format_sink->height,
-		sel->r.left, sel->r.top, sel->r.width, sel->r.height,
-		format_source.width, format_source.height);
-
-	if (sel->which == V4L2_SUBDEV_FORMAT_TRY) {
-		*__resizer_get_format(res, fh, RESZ_PAD_SOURCE, sel->which) =
-			format_source;
+	if (sel->which == V4L2_SUBDEV_FORMAT_TRY)
 		return 0;
-	}
-
-	/* Update the source format, resizing ratios and crop rectangle. If
-	 * streaming is on the IRQ handler will reprogram the resizer after the
-	 * current frame. We thus we need to protect against race conditions.
-	 */
-	spin_lock_irqsave(&res->lock, flags);
-
-	*__resizer_get_format(res, fh, RESZ_PAD_SOURCE, sel->which) =
-		format_source;
 
 	res->ratio = ratio;
 	res->crop.active = sel->r;
 
+	/*
+	 * set_selection can be called while streaming is on. In this case the
+	 * crop values will be set in the next IRQ.
+	 */
 	if (res->state != ISP_PIPELINE_STREAM_STOPPED)
 		res->applycrop = 1;
-
-	spin_unlock_irqrestore(&res->lock, flags);
 
 	return 0;
 }
@@ -1540,20 +1532,6 @@ static int resizer_set_format(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh,
 	return 0;
 }
 
-static int resizer_link_validate(struct v4l2_subdev *sd,
-				 struct media_link *link,
-				 struct v4l2_subdev_format *source_fmt,
-				 struct v4l2_subdev_format *sink_fmt)
-{
-	struct isp_res_device *res = v4l2_get_subdevdata(sd);
-	struct isp_pipeline *pipe = to_isp_pipeline(&sd->entity);
-
-	omap3isp_resizer_max_rate(res, &pipe->max_rate);
-
-	return v4l2_subdev_link_validate_default(sd, link,
-						 source_fmt, sink_fmt);
-}
-
 /*
  * resizer_init_formats - Initialize formats on all pads
  * @sd: ISP resizer V4L2 subdevice
@@ -1592,7 +1570,6 @@ static const struct v4l2_subdev_pad_ops resizer_v4l2_pad_ops = {
 	.set_fmt = resizer_set_format,
 	.get_selection = resizer_get_selection,
 	.set_selection = resizer_set_selection,
-	.link_validate = resizer_link_validate,
 };
 
 /* subdev operations */
@@ -1724,8 +1701,7 @@ static int resizer_init_entities(struct isp_res_device *res)
 	v4l2_set_subdevdata(sd, res);
 	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 
-	pads[RESZ_PAD_SINK].flags = MEDIA_PAD_FL_SINK
-				    | MEDIA_PAD_FL_MUST_CONNECT;
+	pads[RESZ_PAD_SINK].flags = MEDIA_PAD_FL_SINK;
 	pads[RESZ_PAD_SOURCE].flags = MEDIA_PAD_FL_SOURCE;
 
 	me->ops = &resizer_media_ops;
@@ -1789,8 +1765,6 @@ int omap3isp_resizer_init(struct isp_device *isp)
 
 	init_waitqueue_head(&res->wait);
 	atomic_set(&res->stopping, 0);
-	spin_lock_init(&res->lock);
-
 	return resizer_init_entities(res);
 }
 

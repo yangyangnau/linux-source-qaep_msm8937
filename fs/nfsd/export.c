@@ -17,11 +17,16 @@
 #include <linux/exportfs.h>
 #include <linux/sunrpc/svc_xprt.h>
 
+#include <net/ipv6.h>
+
 #include "nfsd.h"
 #include "nfsfh.h"
 #include "netns.h"
 
 #define NFSDDBG_FACILITY	NFSDDBG_EXPORT
+
+typedef struct auth_domain	svc_client;
+typedef struct svc_export	svc_export;
 
 /*
  * We have two caches.
@@ -68,7 +73,7 @@ static struct svc_expkey *svc_expkey_lookup(struct cache_detail *cd, struct svc_
 
 static int expkey_parse(struct cache_detail *cd, char *mesg, int mlen)
 {
-	/* client fsidtype fsid expiry [path] */
+	/* client fsidtype fsid [path] */
 	char *buf;
 	int len;
 	struct auth_domain *dom = NULL;
@@ -290,19 +295,13 @@ svc_expkey_update(struct cache_detail *cd, struct svc_expkey *new,
 
 static void nfsd4_fslocs_free(struct nfsd4_fs_locations *fsloc)
 {
-	struct nfsd4_fs_location *locations = fsloc->locations;
 	int i;
 
-	if (!locations)
-		return;
-
 	for (i = 0; i < fsloc->locations_count; i++) {
-		kfree(locations[i].path);
-		kfree(locations[i].hosts);
+		kfree(fsloc->locations[i].path);
+		kfree(fsloc->locations[i].hosts);
 	}
-
-	kfree(locations);
-	fsloc->locations = NULL;
+	kfree(fsloc->locations);
 }
 
 static void svc_export_put(struct kref *ref)
@@ -389,10 +388,6 @@ fsloc_parse(char **mesg, char *buf, struct nfsd4_fs_locations *fsloc)
 	int len;
 	int migrated, i, err;
 
-	/* more than one fsloc */
-	if (fsloc->locations)
-		return -EINVAL;
-
 	/* listsize */
 	err = get_uint(mesg, &fsloc->locations_count);
 	if (err)
@@ -442,18 +437,13 @@ out_free_all:
 
 static int secinfo_parse(char **mesg, char *buf, struct svc_export *exp)
 {
+	int listsize, err;
 	struct exp_flavor_info *f;
-	u32 listsize;
-	int err;
 
-	/* more than one secinfo */
-	if (exp->ex_nflavors)
-		return -EINVAL;
-
-	err = get_uint(mesg, &listsize);
+	err = get_int(mesg, &listsize);
 	if (err)
 		return err;
-	if (listsize > MAX_SECINFO_LIST)
+	if (listsize < 0 || listsize > MAX_SECINFO_LIST)
 		return -EINVAL;
 
 	for (f = exp->ex_flavors; f < exp->ex_flavors + listsize; f++) {
@@ -483,27 +473,6 @@ fsloc_parse(char **mesg, char *buf, struct nfsd4_fs_locations *fsloc){return 0;}
 static inline int
 secinfo_parse(char **mesg, char *buf, struct svc_export *exp) { return 0; }
 #endif
-
-static inline int
-uuid_parse(char **mesg, char *buf, unsigned char **puuid)
-{
-	int len;
-
-	/* more than one uuid */
-	if (*puuid)
-		return -EINVAL;
-
-	/* expect a 16 byte uuid encoded as \xXXXX... */
-	len = qword_get(mesg, buf, PAGE_SIZE);
-	if (len != EX_UUID_LEN)
-		return -EINVAL;
-
-	*puuid = kmemdup(buf, EX_UUID_LEN, GFP_KERNEL);
-	if (*puuid == NULL)
-		return -ENOMEM;
-
-	return 0;
-}
 
 static int svc_export_parse(struct cache_detail *cd, char *mesg, int mlen)
 {
@@ -583,9 +552,18 @@ static int svc_export_parse(struct cache_detail *cd, char *mesg, int mlen)
 		while ((len = qword_get(&mesg, buf, PAGE_SIZE)) > 0) {
 			if (strcmp(buf, "fsloc") == 0)
 				err = fsloc_parse(&mesg, buf, &exp.ex_fslocs);
-			else if (strcmp(buf, "uuid") == 0)
-				err = uuid_parse(&mesg, buf, &exp.ex_uuid);
-			else if (strcmp(buf, "secinfo") == 0)
+			else if (strcmp(buf, "uuid") == 0) {
+				/* expect a 16 byte uuid encoded as \xXXXX... */
+				len = qword_get(&mesg, buf, PAGE_SIZE);
+				if (len != 16)
+					err  = -EINVAL;
+				else {
+					exp.ex_uuid =
+						kmemdup(buf, 16, GFP_KERNEL);
+					if (exp.ex_uuid == NULL)
+						err = -ENOMEM;
+				}
+			} else if (strcmp(buf, "secinfo") == 0)
 				err = secinfo_parse(&mesg, buf, &exp);
 			else
 				/* quietly ignore unknown words and anything
@@ -602,25 +580,16 @@ static int svc_export_parse(struct cache_detail *cd, char *mesg, int mlen)
 		if (err)
 			goto out4;
 		/*
-		 * No point caching this if it would immediately expire.
-		 * Also, this protects exportfs's dummy export from the
-		 * anon_uid/anon_gid checks:
-		 */
-		if (exp.h.expiry_time < seconds_since_boot())
-			goto out4;
-		/*
 		 * For some reason exportfs has been passing down an
 		 * invalid (-1) uid & gid on the "dummy" export which it
 		 * uses to test export support.  To make sure exportfs
 		 * sees errors from check_export we therefore need to
 		 * delay these checks till after check_export:
 		 */
-		err = -EINVAL;
 		if (!uid_valid(exp.ex_anon_uid))
 			goto out4;
 		if (!gid_valid(exp.ex_anon_gid))
 			goto out4;
-		err = 0;
 	}
 
 	expp = svc_export_lookup(&exp);
@@ -671,7 +640,7 @@ static int svc_export_show(struct seq_file *m,
 		if (exp->ex_uuid) {
 			int i;
 			seq_puts(m, ",uuid=");
-			for (i = 0; i < EX_UUID_LEN; i++) {
+			for (i=0; i<16; i++) {
 				if ((i&3) == 0 && i)
 					seq_putc(m, ':');
 				seq_printf(m, "%02x", exp->ex_uuid[i]);
@@ -698,8 +667,8 @@ static void svc_export_init(struct cache_head *cnew, struct cache_head *citem)
 
 	kref_get(&item->ex_client->ref);
 	new->ex_client = item->ex_client;
-	new->ex_path = item->ex_path;
-	path_get(&item->ex_path);
+	new->ex_path.dentry = dget(item->ex_path.dentry);
+	new->ex_path.mnt = mntget(item->ex_path.mnt);
 	new->ex_fslocs.locations = NULL;
 	new->ex_fslocs.locations_count = 0;
 	new->ex_fslocs.migrated = 0;
@@ -793,7 +762,7 @@ svc_export_update(struct svc_export *new, struct svc_export *old)
 
 
 static struct svc_expkey *
-exp_find_key(struct cache_detail *cd, struct auth_domain *clp, int fsid_type,
+exp_find_key(struct cache_detail *cd, svc_client *clp, int fsid_type,
 	     u32 *fsidv, struct cache_req *reqp)
 {
 	struct svc_expkey key, *ek;
@@ -815,9 +784,9 @@ exp_find_key(struct cache_detail *cd, struct auth_domain *clp, int fsid_type,
 	return ek;
 }
 
-static struct svc_export *
-exp_get_by_name(struct cache_detail *cd, struct auth_domain *clp,
-		const struct path *path, struct cache_req *reqp)
+
+static svc_export *exp_get_by_name(struct cache_detail *cd, svc_client *clp,
+				   const struct path *path, struct cache_req *reqp)
 {
 	struct svc_export *exp, key;
 	int err;
@@ -841,11 +810,11 @@ exp_get_by_name(struct cache_detail *cd, struct auth_domain *clp,
 /*
  * Find the export entry for a given dentry.
  */
-static struct svc_export *
-exp_parent(struct cache_detail *cd, struct auth_domain *clp, struct path *path)
+static struct svc_export *exp_parent(struct cache_detail *cd, svc_client *clp,
+				     struct path *path)
 {
 	struct dentry *saved = dget(path->dentry);
-	struct svc_export *exp = exp_get_by_name(cd, clp, path, NULL);
+	svc_export *exp = exp_get_by_name(cd, clp, path, NULL);
 
 	while (PTR_ERR(exp) == -ENOENT && !IS_ROOT(path->dentry)) {
 		struct dentry *parent = dget_parent(path->dentry);
@@ -866,7 +835,7 @@ exp_parent(struct cache_detail *cd, struct auth_domain *clp, struct path *path)
  * since its harder to fool a kernel module than a user space program.
  */
 int
-exp_rootfh(struct net *net, struct auth_domain *clp, char *name,
+exp_rootfh(struct net *net, svc_client *clp, char *name,
 	   struct knfsd_fh *f, int maxsize)
 {
 	struct svc_export	*exp;
@@ -1145,7 +1114,6 @@ static struct flags {
 	{ NFSEXP_ALLSQUASH, {"all_squash", ""}},
 	{ NFSEXP_ASYNC, {"async", "sync"}},
 	{ NFSEXP_GATHERED_WRITES, {"wdelay", "no_wdelay"}},
-	{ NFSEXP_NOREADDIRPLUS, {"nordirplus", ""}},
 	{ NFSEXP_NOHIDE, {"nohide", ""}},
 	{ NFSEXP_CROSSMOUNT, {"crossmnt", ""}},
 	{ NFSEXP_NOSUBTREECHECK, {"no_subtree_check", ""}},
@@ -1254,7 +1222,7 @@ static int e_show(struct seq_file *m, void *p)
 		return 0;
 	}
 
-	exp_get(exp);
+	cache_get(&exp->h);
 	if (cache_check(cd, &exp->h, NULL))
 		return 0;
 	exp_put(exp);

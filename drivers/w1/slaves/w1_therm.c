@@ -27,7 +27,6 @@
 #include <linux/sched.h>
 #include <linux/device.h>
 #include <linux/types.h>
-#include <linux/slab.h>
 #include <linux/delay.h>
 
 #include "../w1.h"
@@ -37,11 +36,6 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Evgeniy Polyakov <zbr@ioremap.net>");
 MODULE_DESCRIPTION("Driver for 1-wire Dallas network protocol, temperature family.");
-MODULE_ALIAS("w1-family-" __stringify(W1_THERM_DS18S20));
-MODULE_ALIAS("w1-family-" __stringify(W1_THERM_DS1822));
-MODULE_ALIAS("w1-family-" __stringify(W1_THERM_DS18B20));
-MODULE_ALIAS("w1-family-" __stringify(W1_THERM_DS1825));
-MODULE_ALIAS("w1-family-" __stringify(W1_THERM_DS28EA00));
 
 /* Allow the strong pullup to be disabled, but default to enabled.
  * If it was disabled a parasite powered device might not get the require
@@ -59,51 +53,26 @@ MODULE_ALIAS("w1-family-" __stringify(W1_THERM_DS28EA00));
 static int w1_strong_pullup = 1;
 module_param_named(strong_pullup, w1_strong_pullup, int, 0);
 
-struct w1_therm_family_data {
-	uint8_t rom[9];
-	atomic_t refcnt;
-};
 
-/* return the address of the refcnt in the family data */
-#define THERM_REFCNT(family_data) \
-	(&((struct w1_therm_family_data*)family_data)->refcnt)
+static ssize_t w1_therm_read(struct device *device,
+	struct device_attribute *attr, char *buf);
+
+static struct device_attribute w1_therm_attr =
+	__ATTR(w1_slave, S_IRUGO, w1_therm_read, NULL);
 
 static int w1_therm_add_slave(struct w1_slave *sl)
 {
-	sl->family_data = kzalloc(sizeof(struct w1_therm_family_data),
-		GFP_KERNEL);
-	if (!sl->family_data)
-		return -ENOMEM;
-	atomic_set(THERM_REFCNT(sl->family_data), 1);
-	return 0;
+	return device_create_file(&sl->dev, &w1_therm_attr);
 }
 
 static void w1_therm_remove_slave(struct w1_slave *sl)
 {
-	int refcnt = atomic_sub_return(1, THERM_REFCNT(sl->family_data));
-	while(refcnt) {
-		msleep(1000);
-		refcnt = atomic_read(THERM_REFCNT(sl->family_data));
-	}
-	kfree(sl->family_data);
-	sl->family_data = NULL;
+	device_remove_file(&sl->dev, &w1_therm_attr);
 }
-
-static ssize_t w1_slave_show(struct device *device,
-	struct device_attribute *attr, char *buf);
-
-static DEVICE_ATTR_RO(w1_slave);
-
-static struct attribute *w1_therm_attrs[] = {
-	&dev_attr_w1_slave.attr,
-	NULL,
-};
-ATTRIBUTE_GROUPS(w1_therm);
 
 static struct w1_family_ops w1_therm_fops = {
 	.add_slave	= w1_therm_add_slave,
 	.remove_slave	= w1_therm_remove_slave,
-	.groups		= w1_therm_groups,
 };
 
 static struct w1_family w1_therm_family_DS18S20 = {
@@ -204,28 +173,19 @@ static inline int w1_convert_temp(u8 rom[9], u8 fid)
 }
 
 
-static ssize_t w1_slave_show(struct device *device,
+static ssize_t w1_therm_read(struct device *device,
 	struct device_attribute *attr, char *buf)
 {
 	struct w1_slave *sl = dev_to_w1_slave(device);
 	struct w1_master *dev = sl->master;
 	u8 rom[9], crc, verdict, external_power;
-	int i, ret, max_trying = 10;
+	int i, max_trying = 10;
 	ssize_t c = PAGE_SIZE;
-	u8 *family_data = sl->family_data;
 
-	ret = mutex_lock_interruptible(&dev->bus_mutex);
-	if (ret != 0)
-		goto post_unlock;
+	i = mutex_lock_interruptible(&dev->bus_mutex);
+	if (i != 0)
+		return i;
 
-	if(!sl->family_data)
-	{
-		ret = -ENODEV;
-		goto pre_unlock;
-	}
-
-	/* prevent the slave from going away in sleep */
-	atomic_inc(THERM_REFCNT(family_data));
 	memset(rom, 0, sizeof(rom));
 
 	while (max_trying--) {
@@ -255,19 +215,17 @@ static ssize_t w1_slave_show(struct device *device,
 				mutex_unlock(&dev->bus_mutex);
 
 				sleep_rem = msleep_interruptible(tm);
-				if (sleep_rem != 0) {
-					ret = -EINTR;
-					goto post_unlock;
-				}
+				if (sleep_rem != 0)
+					return -EINTR;
 
-				ret = mutex_lock_interruptible(&dev->bus_mutex);
-				if (ret != 0)
-					goto post_unlock;
+				i = mutex_lock_interruptible(&dev->bus_mutex);
+				if (i != 0)
+					return i;
 			} else if (!w1_strong_pullup) {
 				sleep_rem = msleep_interruptible(tm);
 				if (sleep_rem != 0) {
-					ret = -EINTR;
-					goto pre_unlock;
+					mutex_unlock(&dev->bus_mutex);
+					return -EINTR;
 				}
 			}
 
@@ -296,24 +254,18 @@ static ssize_t w1_slave_show(struct device *device,
 	c -= snprintf(buf + PAGE_SIZE - c, c, ": crc=%02x %s\n",
 			   crc, (verdict) ? "YES" : "NO");
 	if (verdict)
-		memcpy(family_data, rom, sizeof(rom));
+		memcpy(sl->rom, rom, sizeof(sl->rom));
 	else
 		dev_warn(device, "Read failed CRC check\n");
 
 	for (i = 0; i < 9; ++i)
-		c -= snprintf(buf + PAGE_SIZE - c, c, "%02x ",
-			      ((u8 *)family_data)[i]);
+		c -= snprintf(buf + PAGE_SIZE - c, c, "%02x ", sl->rom[i]);
 
 	c -= snprintf(buf + PAGE_SIZE - c, c, "t=%d\n",
 		w1_convert_temp(rom, sl->family->fid));
-	ret = PAGE_SIZE - c;
-
-pre_unlock:
 	mutex_unlock(&dev->bus_mutex);
 
-post_unlock:
-	atomic_dec(THERM_REFCNT(family_data));
-	return ret;
+	return PAGE_SIZE - c;
 }
 
 static int __init w1_therm_init(void)

@@ -20,6 +20,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/mutex.h>
@@ -203,7 +204,7 @@ static ssize_t tsl2550_store_power_state(struct device *dev,
 	unsigned long val = simple_strtoul(buf, NULL, 10);
 	int ret;
 
-	if (val > 1)
+	if (val < 0 || val > 1)
 		return -EINVAL;
 
 	mutex_lock(&data->update_lock);
@@ -235,7 +236,7 @@ static ssize_t tsl2550_store_operating_mode(struct device *dev,
 	unsigned long val = simple_strtoul(buf, NULL, 10);
 	int ret;
 
-	if (val > 1)
+	if (val < 0 || val > 1)
 		return -EINVAL;
 
 	if (data->power_state == 0)

@@ -4,6 +4,7 @@
 
 #include <linux/types.h>
 #include <linux/serial_reg.h>
+#include <linux/init.h>
 
 #include <asm/addrspace.h>
 
@@ -18,24 +19,8 @@
 #endif
 
 #ifdef CONFIG_MACH_JZ4740
-#include <asm/mach-jz4740/base.h>
-#define PORT(offset) (CKSEG1ADDR(JZ4740_UART0_BASE_ADDR) + (4 * offset))
-#endif
-
-#ifdef CONFIG_CPU_XLR
-#define UART0_BASE  0x1EF14000
-#define PORT(offset) (CKSEG1ADDR(UART0_BASE) + (4 * offset))
-#define IOTYPE unsigned int
-#endif
-
-#ifdef CONFIG_CPU_XLP
-#define UART0_BASE  0x18030100
-#define PORT(offset) (CKSEG1ADDR(UART0_BASE) + (4 * offset))
-#define IOTYPE unsigned int
-#endif
-
-#ifndef IOTYPE
-#define IOTYPE char
+#define UART0_BASE  0xB0030000
+#define PORT(offset) (UART0_BASE + (4 * offset))
 #endif
 
 #ifndef PORT
@@ -44,17 +29,17 @@
 
 static inline unsigned int serial_in(int offset)
 {
-	return *((volatile IOTYPE *)PORT(offset)) & 0xFF;
+	return *((char *)PORT(offset));
 }
 
 static inline void serial_out(int offset, int value)
 {
-	*((volatile IOTYPE *)PORT(offset)) = value & 0xFF;
+	*((char *)PORT(offset)) = value;
 }
 
 void putc(char c)
 {
-	int timeout = 1000000;
+	int timeout = 1024;
 
 	while (((serial_in(UART_LSR) & UART_LSR_THRE) == 0) && (timeout-- > 0))
 		;

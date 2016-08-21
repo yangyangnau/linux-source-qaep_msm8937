@@ -20,14 +20,9 @@
 #include <linux/cache.h>
 #include <linux/io.h>
 
-#ifdef __tilegx__
-#define ARCH_HAS_DMA_GET_REQUIRED_MASK
-#endif
-
 extern struct dma_map_ops *tile_dma_map_ops;
 extern struct dma_map_ops *gx_pci_dma_map_ops;
 extern struct dma_map_ops *gx_legacy_pci_dma_map_ops;
-extern struct dma_map_ops *gx_hybrid_pci_dma_map_ops;
 
 static inline struct dma_map_ops *get_dma_ops(struct device *dev)
 {
@@ -49,12 +44,12 @@ static inline void set_dma_offset(struct device *dev, dma_addr_t off)
 
 static inline dma_addr_t phys_to_dma(struct device *dev, phys_addr_t paddr)
 {
-	return paddr;
+	return paddr + get_dma_offset(dev);
 }
 
 static inline phys_addr_t dma_to_phys(struct device *dev, dma_addr_t daddr)
 {
-	return daddr;
+	return daddr - get_dma_offset(dev);
 }
 
 static inline void dma_mark_clean(void *addr, size_t size) {}
@@ -92,19 +87,11 @@ dma_set_mask(struct device *dev, u64 mask)
 {
 	struct dma_map_ops *dma_ops = get_dma_ops(dev);
 
-	/*
-	 * For PCI devices with 64-bit DMA addressing capability, promote
-	 * the dma_ops to hybrid, with the consistent memory DMA space limited
-	 * to 32-bit. For 32-bit capable devices, limit the streaming DMA
-	 * address range to max_direct_dma_addr.
-	 */
-	if (dma_ops == gx_pci_dma_map_ops ||
-	    dma_ops == gx_hybrid_pci_dma_map_ops ||
-	    dma_ops == gx_legacy_pci_dma_map_ops) {
-		if (mask == DMA_BIT_MASK(64) &&
-		    dma_ops == gx_legacy_pci_dma_map_ops)
-			set_dma_ops(dev, gx_hybrid_pci_dma_map_ops);
-		else if (mask > dev->archdata.max_direct_dma_addr)
+	/* Handle legacy PCI devices with limited memory addressability. */
+	if ((dma_ops == gx_pci_dma_map_ops) && (mask <= DMA_BIT_MASK(32))) {
+		set_dma_ops(dev, gx_legacy_pci_dma_map_ops);
+		set_dma_offset(dev, 0);
+		if (mask > dev->archdata.max_direct_dma_addr)
 			mask = dev->archdata.max_direct_dma_addr;
 	}
 

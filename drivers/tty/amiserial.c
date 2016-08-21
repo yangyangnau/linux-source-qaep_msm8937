@@ -1248,8 +1248,6 @@ static int rs_ioctl(struct tty_struct *tty,
 	struct async_icount cprev, cnow;	/* kernel counter temps */
 	void __user *argp = (void __user *)arg;
 	unsigned long flags;
-	DEFINE_WAIT(wait);
-	int ret;
 
 	if (serial_paranoia_check(info, tty->name, "rs_ioctl"))
 		return -ENODEV;
@@ -1290,33 +1288,25 @@ static int rs_ioctl(struct tty_struct *tty,
 			cprev = info->icount;
 			local_irq_restore(flags);
 			while (1) {
-				prepare_to_wait(&info->tport.delta_msr_wait,
-						&wait, TASK_INTERRUPTIBLE);
+				interruptible_sleep_on(&info->tport.delta_msr_wait);
+				/* see if a signal did it */
+				if (signal_pending(current))
+					return -ERESTARTSYS;
 				local_irq_save(flags);
 				cnow = info->icount; /* atomic copy */
 				local_irq_restore(flags);
 				if (cnow.rng == cprev.rng && cnow.dsr == cprev.dsr && 
-				    cnow.dcd == cprev.dcd && cnow.cts == cprev.cts) {
-					ret = -EIO; /* no change => error */
-					break;
-				}
+				    cnow.dcd == cprev.dcd && cnow.cts == cprev.cts)
+					return -EIO; /* no change => error */
 				if ( ((arg & TIOCM_RNG) && (cnow.rng != cprev.rng)) ||
 				     ((arg & TIOCM_DSR) && (cnow.dsr != cprev.dsr)) ||
 				     ((arg & TIOCM_CD)  && (cnow.dcd != cprev.dcd)) ||
 				     ((arg & TIOCM_CTS) && (cnow.cts != cprev.cts)) ) {
-					ret = 0;
-					break;
-				}
-				schedule();
-				/* see if a signal did it */
-				if (signal_pending(current)) {
-					ret = -ERESTARTSYS;
-					break;
+					return 0;
 				}
 				cprev = cnow;
 			}
-			finish_wait(&info->tport.delta_msr_wait, &wait);
-			return ret;
+			/* NOTREACHED */
 
 		case TIOCSERGWILD:
 		case TIOCSERSWILD:
@@ -1795,6 +1785,8 @@ static int __exit amiga_serial_remove(struct platform_device *pdev)
 	free_irq(IRQ_AMIGA_TBE, state);
 	free_irq(IRQ_AMIGA_RBF, state);
 
+	platform_set_drvdata(pdev, NULL);
+
 	return error;
 }
 
@@ -1865,9 +1857,6 @@ static struct console sercons = {
  */
 static int __init amiserial_console_init(void)
 {
-	if (!MACH_IS_AMIGA)
-		return -ENODEV;
-
 	register_console(&sercons);
 	return 0;
 }

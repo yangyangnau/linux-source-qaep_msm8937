@@ -44,7 +44,6 @@
 #include "board.h"
 #include "sam9_smc.h"
 #include "generic.h"
-#include "gpio.h"
 
 
 static void __init cam60_init_early(void)
@@ -113,7 +112,7 @@ static struct spi_board_info cam60_spi_devices[] __initdata = {
 /*
  * MACB Ethernet device
  */
-static struct macb_platform_data cam60_macb_data __initdata = {
+static struct __initdata macb_platform_data cam60_macb_data = {
 	.phy_irq_pin	= AT91_PIN_PB5,
 	.is_rmii	= 0,
 };
@@ -170,8 +169,6 @@ static void __init cam60_add_device_nand(void)
 
 static void __init cam60_board_init(void)
 {
-	at91_register_devices();
-
 	/* Serial */
 	/* DBGU on ttyS0. (Rx & Tx only) */
 	at91_register_uart(0, 0, 0);
@@ -190,7 +187,7 @@ static void __init cam60_board_init(void)
 
 MACHINE_START(CAM60, "KwikByte CAM60")
 	/* Maintainer: KwikByte */
-	.init_time	= at91_init_time,
+	.init_time	= at91sam926x_pit_init,
 	.map_io		= at91_map_io,
 	.handle_irq	= at91_aic_handle_irq,
 	.init_early	= cam60_init_early,

@@ -54,9 +54,8 @@ static int __init alloc_node_page_cgroup(int nid)
 
 	table_size = sizeof(struct page_cgroup) * nr_pages;
 
-	base = memblock_virt_alloc_try_nid_nopanic(
-			table_size, PAGE_SIZE, __pa(MAX_DMA_ADDRESS),
-			BOOTMEM_ALLOC_ACCESSIBLE, nid);
+	base = __alloc_bootmem_node_nopanic(NODE_DATA(nid),
+			table_size, PAGE_SIZE, __pa(MAX_DMA_ADDRESS));
 	if (!base)
 		return -ENOMEM;
 	NODE_DATA(nid)->node_page_cgroup = base;
@@ -171,12 +170,11 @@ static void free_page_cgroup(void *addr)
 			sizeof(struct page_cgroup) * PAGES_PER_SECTION;
 
 		BUG_ON(PageReserved(page));
-		kmemleak_free(addr);
 		free_pages_exact(addr, table_size);
 	}
 }
 
-static void __free_page_cgroup(unsigned long pfn)
+void __free_page_cgroup(unsigned long pfn)
 {
 	struct mem_section *ms;
 	struct page_cgroup *base;
@@ -189,9 +187,9 @@ static void __free_page_cgroup(unsigned long pfn)
 	ms->page_cgroup = NULL;
 }
 
-static int __meminit online_page_cgroup(unsigned long start_pfn,
-				unsigned long nr_pages,
-				int nid)
+int __meminit online_page_cgroup(unsigned long start_pfn,
+			unsigned long nr_pages,
+			int nid)
 {
 	unsigned long start, end, pfn;
 	int fail = 0;
@@ -224,8 +222,8 @@ static int __meminit online_page_cgroup(unsigned long start_pfn,
 	return -ENOMEM;
 }
 
-static int __meminit offline_page_cgroup(unsigned long start_pfn,
-				unsigned long nr_pages, int nid)
+int __meminit offline_page_cgroup(unsigned long start_pfn,
+		unsigned long nr_pages, int nid)
 {
 	unsigned long start, end, pfn;
 
@@ -453,7 +451,7 @@ unsigned short swap_cgroup_record(swp_entry_t ent, unsigned short id)
  * lookup_swap_cgroup_id - lookup mem_cgroup id tied to swap entry
  * @ent: swap entry to be looked up.
  *
- * Returns ID of mem_cgroup at success. 0 at failure. (0 is invalid ID)
+ * Returns CSS ID of mem_cgroup at success. 0 at failure. (0 is invalid ID)
  */
 unsigned short lookup_swap_cgroup_id(swp_entry_t ent)
 {

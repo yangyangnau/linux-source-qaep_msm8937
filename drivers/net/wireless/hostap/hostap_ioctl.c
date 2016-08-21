@@ -655,7 +655,7 @@ static int hostap_join_ap(struct net_device *dev)
 		if (!local->last_scan_results)
 			break;
 		entry = &local->last_scan_results[i];
-		if (ether_addr_equal(local->preferred_ap, entry->bssid)) {
+		if (memcmp(local->preferred_ap, entry->bssid, ETH_ALEN) == 0) {
 			req.channel = entry->chid;
 			break;
 		}
@@ -1978,7 +1978,7 @@ static inline int prism2_translate_scan(local_info_t *local,
 		list_for_each(ptr, &local->bss_list) {
 			struct hostap_bss_info *bss;
 			bss = list_entry(ptr, struct hostap_bss_info, list);
-			if (ether_addr_equal(bss->bssid, scan->bssid)) {
+			if (memcmp(bss->bssid, scan->bssid, ETH_ALEN) == 0) {
 				bss->included = 1;
 				current_ev = __prism2_translate_scan(
 					local, info, scan, bss, current_ev,
@@ -2567,7 +2567,7 @@ static int prism2_ioctl_priv_prism2_param(struct net_device *dev,
 		local->passive_scan_interval = value;
 		if (timer_pending(&local->passive_scan_timer))
 			del_timer(&local->passive_scan_timer);
-		if (value > 0 && value < INT_MAX / HZ) {
+		if (value > 0) {
 			local->passive_scan_timer.expires = jiffies +
 				local->passive_scan_interval * HZ;
 			add_timer(&local->passive_scan_timer);

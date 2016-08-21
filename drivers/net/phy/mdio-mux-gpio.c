@@ -10,6 +10,7 @@
 #include <linux/device.h>
 #include <linux/of_mdio.h>
 #include <linux/module.h>
+#include <linux/init.h>
 #include <linux/phy.h>
 #include <linux/mdio-mux.h>
 #include <linux/of_gpio.h>
@@ -105,7 +106,7 @@ err:
 
 static int mdio_mux_gpio_remove(struct platform_device *pdev)
 {
-	struct mdio_mux_gpio_state *s = dev_get_platdata(&pdev->dev);
+	struct mdio_mux_gpio_state *s = pdev->dev.platform_data;
 	mdio_mux_uninit(s->mux_handle);
 	return 0;
 }

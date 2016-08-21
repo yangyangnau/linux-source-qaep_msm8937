@@ -48,7 +48,7 @@ static int param_set_hashtbl_sz(const char *val, const struct kernel_param *kp)
 
 	if (!val)
 		goto out_inval;
-	ret = kstrtoul(val, 0, &num);
+	ret = strict_strtoul(val, 0, &num);
 	if (ret == -EINVAL)
 		goto out_inval;
 	nbits = fls(num);
@@ -79,10 +79,6 @@ static struct kernel_param_ops param_ops_hashtbl_sz = {
 
 module_param_named(auth_hashtable_size, auth_hashbits, hashtbl_sz, 0644);
 MODULE_PARM_DESC(auth_hashtable_size, "RPC credential cache hashtable size");
-
-static unsigned long auth_max_cred_cachesize = ULONG_MAX;
-module_param(auth_max_cred_cachesize, ulong, 0644);
-MODULE_PARM_DESC(auth_max_cred_cachesize, "RPC credential maximum total cache size");
 
 static u32
 pseudoflavor_to_flavor(u32 flavor) {
@@ -254,11 +250,11 @@ rpcauth_list_flavors(rpc_authflavor_t *array, int size)
 EXPORT_SYMBOL_GPL(rpcauth_list_flavors);
 
 struct rpc_auth *
-rpcauth_create(struct rpc_auth_create_args *args, struct rpc_clnt *clnt)
+rpcauth_create(rpc_authflavor_t pseudoflavor, struct rpc_clnt *clnt)
 {
 	struct rpc_auth		*auth;
 	const struct rpc_authops *ops;
-	u32			flavor = pseudoflavor_to_flavor(args->pseudoflavor);
+	u32			flavor = pseudoflavor_to_flavor(pseudoflavor);
 
 	auth = ERR_PTR(-EINVAL);
 	if (flavor >= RPC_AUTH_MAXFLAVOR)
@@ -273,7 +269,7 @@ rpcauth_create(struct rpc_auth_create_args *args, struct rpc_clnt *clnt)
 		goto out;
 	}
 	spin_unlock(&rpc_authflavor_lock);
-	auth = ops->create(args, clnt);
+	auth = ops->create(clnt, pseudoflavor);
 	module_put(ops->owner);
 	if (IS_ERR(auth))
 		return auth;
@@ -300,7 +296,7 @@ static void
 rpcauth_unhash_cred_locked(struct rpc_cred *cred)
 {
 	hlist_del_rcu(&cred->cr_hash);
-	smp_mb__before_atomic();
+	smp_mb__before_clear_bit();
 	clear_bit(RPCAUTH_CRED_HASHED, &cred->cr_flags);
 }
 
@@ -345,36 +341,6 @@ out_nocache:
 	return -ENOMEM;
 }
 EXPORT_SYMBOL_GPL(rpcauth_init_credcache);
-
-/*
- * Setup a credential key lifetime timeout notification
- */
-int
-rpcauth_key_timeout_notify(struct rpc_auth *auth, struct rpc_cred *cred)
-{
-	if (!cred->cr_auth->au_ops->key_timeout)
-		return 0;
-	return cred->cr_auth->au_ops->key_timeout(auth, cred);
-}
-EXPORT_SYMBOL_GPL(rpcauth_key_timeout_notify);
-
-bool
-rpcauth_cred_key_to_expire(struct rpc_cred *cred)
-{
-	if (!cred->cr_ops->crkey_to_expire)
-		return false;
-	return cred->cr_ops->crkey_to_expire(cred);
-}
-EXPORT_SYMBOL_GPL(rpcauth_cred_key_to_expire);
-
-char *
-rpcauth_stringify_acceptor(struct rpc_cred *cred)
-{
-	if (!cred->cr_ops->crstringify_acceptor)
-		return NULL;
-	return cred->cr_ops->crstringify_acceptor(cred);
-}
-EXPORT_SYMBOL_GPL(rpcauth_stringify_acceptor);
 
 /*
  * Destroy a list of credentials
@@ -447,13 +413,12 @@ EXPORT_SYMBOL_GPL(rpcauth_destroy_credcache);
 /*
  * Remove stale credentials. Avoid sleeping inside the loop.
  */
-static long
+static int
 rpcauth_prune_expired(struct list_head *free, int nr_to_scan)
 {
 	spinlock_t *cache_lock;
 	struct rpc_cred *cred, *next;
 	unsigned long expired = jiffies - RPC_AUTH_EXPIRY_MORATORIUM;
-	long freed = 0;
 
 	list_for_each_entry_safe(cred, next, &cred_unused, cr_lru) {
 
@@ -465,11 +430,10 @@ rpcauth_prune_expired(struct list_head *free, int nr_to_scan)
 		 */
 		if (time_in_range(cred->cr_expire, expired, jiffies) &&
 		    test_bit(RPCAUTH_CRED_HASHED, &cred->cr_flags) != 0)
-			break;
+			return 0;
 
 		list_del_init(&cred->cr_lru);
 		number_cred_unused--;
-		freed++;
 		if (atomic_read(&cred->cr_count) != 0)
 			continue;
 
@@ -482,60 +446,29 @@ rpcauth_prune_expired(struct list_head *free, int nr_to_scan)
 		}
 		spin_unlock(cache_lock);
 	}
-	return freed;
-}
-
-static unsigned long
-rpcauth_cache_do_shrink(int nr_to_scan)
-{
-	LIST_HEAD(free);
-	unsigned long freed;
-
-	spin_lock(&rpc_credcache_lock);
-	freed = rpcauth_prune_expired(&free, nr_to_scan);
-	spin_unlock(&rpc_credcache_lock);
-	rpcauth_destroy_credlist(&free);
-
-	return freed;
+	return (number_cred_unused / 100) * sysctl_vfs_cache_pressure;
 }
 
 /*
  * Run memory cache shrinker.
  */
-static unsigned long
-rpcauth_cache_shrink_scan(struct shrinker *shrink, struct shrink_control *sc)
-
+static int
+rpcauth_cache_shrinker(struct shrinker *shrink, struct shrink_control *sc)
 {
-	if ((sc->gfp_mask & GFP_KERNEL) != GFP_KERNEL)
-		return SHRINK_STOP;
+	LIST_HEAD(free);
+	int res;
+	int nr_to_scan = sc->nr_to_scan;
+	gfp_t gfp_mask = sc->gfp_mask;
 
-	/* nothing left, don't come back */
+	if ((gfp_mask & GFP_KERNEL) != GFP_KERNEL)
+		return (nr_to_scan == 0) ? 0 : -1;
 	if (list_empty(&cred_unused))
-		return SHRINK_STOP;
-
-	return rpcauth_cache_do_shrink(sc->nr_to_scan);
-}
-
-static unsigned long
-rpcauth_cache_shrink_count(struct shrinker *shrink, struct shrink_control *sc)
-
-{
-	return (number_cred_unused / 100) * sysctl_vfs_cache_pressure;
-}
-
-static void
-rpcauth_cache_enforce_limit(void)
-{
-	unsigned long diff;
-	unsigned int nr_to_scan;
-
-	if (number_cred_unused <= auth_max_cred_cachesize)
-		return;
-	diff = number_cred_unused - auth_max_cred_cachesize;
-	nr_to_scan = 100;
-	if (diff < nr_to_scan)
-		nr_to_scan = diff;
-	rpcauth_cache_do_shrink(nr_to_scan);
+		return 0;
+	spin_lock(&rpc_credcache_lock);
+	res = rpcauth_prune_expired(&free, nr_to_scan);
+	spin_unlock(&rpc_credcache_lock);
+	rpcauth_destroy_credlist(&free);
+	return res;
 }
 
 /*
@@ -557,12 +490,6 @@ rpcauth_lookup_credcache(struct rpc_auth *auth, struct auth_cred * acred,
 	hlist_for_each_entry_rcu(entry, &cache->hashtable[nr], cr_hash) {
 		if (!entry->cr_ops->crmatch(acred, entry, flags))
 			continue;
-		if (flags & RPCAUTH_LOOKUP_RCU) {
-			if (test_bit(RPCAUTH_CRED_HASHED, &entry->cr_flags) &&
-			    !test_bit(RPCAUTH_CRED_NEW, &entry->cr_flags))
-				cred = entry;
-			break;
-		}
 		spin_lock(&cache->lock);
 		if (test_bit(RPCAUTH_CRED_HASHED, &entry->cr_flags) == 0) {
 			spin_unlock(&cache->lock);
@@ -576,9 +503,6 @@ rpcauth_lookup_credcache(struct rpc_auth *auth, struct auth_cred * acred,
 
 	if (cred != NULL)
 		goto found;
-
-	if (flags & RPCAUTH_LOOKUP_RCU)
-		return ERR_PTR(-ECHILD);
 
 	new = auth->au_ops->crcreate(auth, acred, flags);
 	if (IS_ERR(new)) {
@@ -600,7 +524,6 @@ rpcauth_lookup_credcache(struct rpc_auth *auth, struct auth_cred * acred,
 	} else
 		list_add_tail(&new->cr_lru, &free);
 	spin_unlock(&cache->lock);
-	rpcauth_cache_enforce_limit();
 found:
 	if (test_bit(RPCAUTH_CRED_NEW, &cred->cr_flags) &&
 	    cred->cr_ops->cr_init != NULL &&
@@ -630,11 +553,12 @@ rpcauth_lookupcred(struct rpc_auth *auth, int flags)
 	memset(&acred, 0, sizeof(acred));
 	acred.uid = cred->fsuid;
 	acred.gid = cred->fsgid;
-	acred.group_info = cred->group_info;
+	acred.group_info = get_group_info(((struct cred *)cred)->group_info);
+
 	ret = auth->au_ops->lookup_cred(auth, &acred, flags);
+	put_group_info(acred.group_info);
 	return ret;
 }
-EXPORT_SYMBOL_GPL(rpcauth_lookupcred);
 
 void
 rpcauth_init_cred(struct rpc_cred *cred, const struct auth_cred *acred,
@@ -860,8 +784,7 @@ rpcauth_uptodatecred(struct rpc_task *task)
 }
 
 static struct shrinker rpc_cred_shrinker = {
-	.count_objects = rpcauth_cache_shrink_count,
-	.scan_objects = rpcauth_cache_shrink_scan,
+	.shrink = rpcauth_cache_shrinker,
 	.seeks = DEFAULT_SEEKS,
 };
 

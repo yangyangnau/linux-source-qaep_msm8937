@@ -30,7 +30,6 @@
 #include <linux/ioport.h>
 #include <linux/interrupt.h>
 #include <linux/phy.h>
-#include <linux/of_address.h>
 #include <linux/of_mdio.h>
 #include <linux/of_platform.h>
 
@@ -290,7 +289,7 @@ static int gpio_mdio_remove(struct platform_device *dev)
 	return 0;
 }
 
-static const struct of_device_id gpio_mdio_match[] =
+static struct of_device_id gpio_mdio_match[] =
 {
 	{
 		.compatible      = "gpio-mdio",

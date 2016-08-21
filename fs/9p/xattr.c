@@ -138,7 +138,8 @@ int v9fs_fid_xattr_set(struct p9_fid *fid, const char *name,
 	if (retval < 0) {
 		p9_debug(P9_DEBUG_VFS, "p9_client_xattrcreate failed %d\n",
 			 retval);
-		goto err;
+		p9_client_clunk(fid);
+		return retval;
 	}
 	msize = fid->clnt->msize;
 	while (value_len) {
@@ -151,15 +152,12 @@ int v9fs_fid_xattr_set(struct p9_fid *fid, const char *name,
 		if (write_count < 0) {
 			/* error in xattr write */
 			retval = write_count;
-			goto err;
+			break;
 		}
 		offset += write_count;
 		value_len -= write_count;
 	}
-	retval = 0;
-err:
-	p9_client_clunk(fid);
-	return retval;
+	return p9_client_clunk(fid);
 }
 
 ssize_t v9fs_listxattr(struct dentry *dentry, char *buffer, size_t buffer_size)
@@ -169,13 +167,9 @@ ssize_t v9fs_listxattr(struct dentry *dentry, char *buffer, size_t buffer_size)
 
 const struct xattr_handler *v9fs_xattr_handlers[] = {
 	&v9fs_xattr_user_handler,
-	&v9fs_xattr_trusted_handler,
 #ifdef CONFIG_9P_FS_POSIX_ACL
 	&v9fs_xattr_acl_access_handler,
 	&v9fs_xattr_acl_default_handler,
-#endif
-#ifdef CONFIG_9P_FS_SECURITY
-	&v9fs_xattr_security_handler,
 #endif
 	NULL
 };

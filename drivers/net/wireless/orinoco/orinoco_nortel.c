@@ -234,6 +234,7 @@ static int orinoco_nortel_init_one(struct pci_dev *pdev,
 	free_irq(pdev->irq, priv);
 
  fail_irq:
+	pci_set_drvdata(pdev, NULL);
 	free_orinocodev(priv);
 
  fail_alloc:
@@ -264,6 +265,7 @@ static void orinoco_nortel_remove_one(struct pci_dev *pdev)
 
 	orinoco_if_del(priv);
 	free_irq(pdev->irq, priv);
+	pci_set_drvdata(pdev, NULL);
 	free_orinocodev(priv);
 	pci_iounmap(pdev, priv->hw.iobase);
 	pci_iounmap(pdev, card->attr_io);
@@ -272,7 +274,7 @@ static void orinoco_nortel_remove_one(struct pci_dev *pdev)
 	pci_disable_device(pdev);
 }
 
-static const struct pci_device_id orinoco_nortel_id_table[] = {
+static DEFINE_PCI_DEVICE_TABLE(orinoco_nortel_id_table) = {
 	/* Nortel emobility PCI */
 	{0x126c, 0x8030, PCI_ANY_ID, PCI_ANY_ID,},
 	/* Symbol LA-4123 PCI */

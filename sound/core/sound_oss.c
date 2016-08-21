@@ -21,7 +21,7 @@
 
 #ifdef CONFIG_SND_OSSEMUL
 
-#if !IS_ENABLED(CONFIG_SOUND)
+#if !defined(CONFIG_SOUND) && !(defined(MODULE) && defined(CONFIG_SOUND_MODULE))
 #error "Enable the OSS soundcore multiplexer (CONFIG_SOUND) in the kernel."
 #endif
 
@@ -55,7 +55,7 @@ void *snd_lookup_oss_minor_data(unsigned int minor, int type)
 	if (mreg && mreg->type == type) {
 		private_data = mreg->private_data;
 		if (private_data && mreg->card_ptr)
-			get_device(&mreg->card_ptr->card_dev);
+			atomic_inc(&mreg->card_ptr->refcount);
 	} else
 		private_data = NULL;
 	mutex_unlock(&sound_oss_mutex);
@@ -105,7 +105,8 @@ static int snd_oss_kernel_minor(int type, struct snd_card *card, int dev)
 }
 
 int snd_register_oss_device(int type, struct snd_card *card, int dev,
-			    const struct file_operations *f_ops, void *private_data)
+			    const struct file_operations *f_ops, void *private_data,
+			    const char *name)
 {
 	int minor = snd_oss_kernel_minor(type, card, dev);
 	int minor_unit;

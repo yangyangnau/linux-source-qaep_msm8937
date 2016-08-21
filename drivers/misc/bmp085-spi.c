@@ -41,7 +41,7 @@ static int bmp085_spi_probe(struct spi_device *client)
 		return err;
 	}
 
-	return bmp085_probe(&client->dev, regmap, client->irq);
+	return bmp085_probe(&client->dev, regmap);
 }
 
 static int bmp085_spi_remove(struct spi_device *client)

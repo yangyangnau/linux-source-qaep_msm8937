@@ -1,5 +1,6 @@
 #include <linux/cpumask.h>
 #include <linux/interrupt.h>
+#include <linux/init.h>
 
 #include <linux/mm.h>
 #include <linux/delay.h>

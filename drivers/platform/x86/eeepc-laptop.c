@@ -28,7 +28,8 @@
 #include <linux/hwmon.h>
 #include <linux/hwmon-sysfs.h>
 #include <linux/slab.h>
-#include <linux/acpi.h>
+#include <acpi/acpi_drivers.h>
+#include <acpi/acpi_bus.h>
 #include <linux/uaccess.h>
 #include <linux/input.h>
 #include <linux/input/sparse-keymap.h>
@@ -165,6 +166,7 @@ struct eeepc_laptop {
 
 	struct platform_device *platform_device;
 	struct acpi_device *device;		/* the device we are in */
+	struct device *hwmon_device;
 	struct backlight_device *backlight_device;
 
 	struct input_dev *inputdev;
@@ -188,10 +190,16 @@ struct eeepc_laptop {
  */
 static int write_acpi_int(acpi_handle handle, const char *method, int val)
 {
+	struct acpi_object_list params;
+	union acpi_object in_obj;
 	acpi_status status;
 
-	status = acpi_execute_simple_method(handle, (char *)method, val);
+	params.count = 1;
+	params.pointer = &in_obj;
+	in_obj.type = ACPI_TYPE_INTEGER;
+	in_obj.integer.value = val;
 
+	status = acpi_evaluate_object(handle, (char *)method, &params, NULL);
 	return (status == AE_OK ? 0 : -1);
 }
 
@@ -263,11 +271,13 @@ static int acpi_setter_handle(struct eeepc_laptop *eeepc, int cm,
 /*
  * Sys helpers
  */
-static int parse_arg(const char *buf, int *val)
+static int parse_arg(const char *buf, unsigned long count, int *val)
 {
+	if (!count)
+		return 0;
 	if (sscanf(buf, "%i", val) != 1)
 		return -EINVAL;
-	return 0;
+	return count;
 }
 
 static ssize_t store_sys_acpi(struct device *dev, int cm,
@@ -276,13 +286,12 @@ static ssize_t store_sys_acpi(struct device *dev, int cm,
 	struct eeepc_laptop *eeepc = dev_get_drvdata(dev);
 	int rv, value;
 
-	rv = parse_arg(buf, &value);
-	if (rv < 0)
-		return rv;
-	rv = set_acpi(eeepc, cm, value);
-	if (rv < 0)
+	rv = parse_arg(buf, count, &value);
+	if (rv > 0)
+		value = set_acpi(eeepc, cm, value);
+	if (value < 0)
 		return -EIO;
-	return count;
+	return rv;
 }
 
 static ssize_t show_sys_acpi(struct device *dev, int cm, char *buf)
@@ -295,34 +304,30 @@ static ssize_t show_sys_acpi(struct device *dev, int cm, char *buf)
 	return sprintf(buf, "%d\n", value);
 }
 
-#define EEEPC_ACPI_SHOW_FUNC(_name, _cm)				\
-	static ssize_t _name##_show(struct device *dev,			\
+#define EEEPC_CREATE_DEVICE_ATTR(_name, _mode, _cm)			\
+	static ssize_t show_##_name(struct device *dev,			\
 				    struct device_attribute *attr,	\
 				    char *buf)				\
 	{								\
 		return show_sys_acpi(dev, _cm, buf);			\
-	}
-
-#define EEEPC_ACPI_STORE_FUNC(_name, _cm)				\
-	static ssize_t _name##_store(struct device *dev,		\
+	}								\
+	static ssize_t store_##_name(struct device *dev,		\
 				     struct device_attribute *attr,	\
 				     const char *buf, size_t count)	\
 	{								\
 		return store_sys_acpi(dev, _cm, buf, count);		\
+	}								\
+	static struct device_attribute dev_attr_##_name = {		\
+		.attr = {						\
+			.name = __stringify(_name),			\
+			.mode = _mode },				\
+		.show   = show_##_name,					\
+		.store  = store_##_name,				\
 	}
 
-#define EEEPC_CREATE_DEVICE_ATTR_RW(_name, _cm)				\
-	EEEPC_ACPI_SHOW_FUNC(_name, _cm)				\
-	EEEPC_ACPI_STORE_FUNC(_name, _cm)				\
-	static DEVICE_ATTR_RW(_name)
-
-#define EEEPC_CREATE_DEVICE_ATTR_WO(_name, _cm)				\
-	EEEPC_ACPI_STORE_FUNC(_name, _cm)				\
-	static DEVICE_ATTR_WO(_name)
-
-EEEPC_CREATE_DEVICE_ATTR_RW(camera, CM_ASL_CAMERA);
-EEEPC_CREATE_DEVICE_ATTR_RW(cardr, CM_ASL_CARDREADER);
-EEEPC_CREATE_DEVICE_ATTR_WO(disp, CM_ASL_DISPLAYSWITCH);
+EEEPC_CREATE_DEVICE_ATTR(camera, 0644, CM_ASL_CAMERA);
+EEEPC_CREATE_DEVICE_ATTR(cardr, 0644, CM_ASL_CARDREADER);
+EEEPC_CREATE_DEVICE_ATTR(disp, 0200, CM_ASL_DISPLAYSWITCH);
 
 struct eeepc_cpufv {
 	int num;
@@ -332,17 +337,14 @@ struct eeepc_cpufv {
 static int get_cpufv(struct eeepc_laptop *eeepc, struct eeepc_cpufv *c)
 {
 	c->cur = get_acpi(eeepc, CM_ASL_CPUFV);
-	if (c->cur < 0)
-		return -ENODEV;
-
 	c->num = (c->cur >> 8) & 0xff;
 	c->cur &= 0xff;
-	if (c->num == 0 || c->num > 12)
+	if (c->cur < 0 || c->num <= 0 || c->num > 12)
 		return -ENODEV;
 	return 0;
 }
 
-static ssize_t available_cpufv_show(struct device *dev,
+static ssize_t show_available_cpufv(struct device *dev,
 				    struct device_attribute *attr,
 				    char *buf)
 {
@@ -359,7 +361,7 @@ static ssize_t available_cpufv_show(struct device *dev,
 	return len;
 }
 
-static ssize_t cpufv_show(struct device *dev,
+static ssize_t show_cpufv(struct device *dev,
 			  struct device_attribute *attr,
 			  char *buf)
 {
@@ -371,7 +373,7 @@ static ssize_t cpufv_show(struct device *dev,
 	return sprintf(buf, "%#x\n", (c.num << 8) | c.cur);
 }
 
-static ssize_t cpufv_store(struct device *dev,
+static ssize_t store_cpufv(struct device *dev,
 			   struct device_attribute *attr,
 			   const char *buf, size_t count)
 {
@@ -383,18 +385,16 @@ static ssize_t cpufv_store(struct device *dev,
 		return -EPERM;
 	if (get_cpufv(eeepc, &c))
 		return -ENODEV;
-	rv = parse_arg(buf, &value);
+	rv = parse_arg(buf, count, &value);
 	if (rv < 0)
 		return rv;
-	if (value < 0 || value >= c.num)
+	if (!rv || value < 0 || value >= c.num)
 		return -EINVAL;
-	rv = set_acpi(eeepc, CM_ASL_CPUFV, value);
-	if (rv)
-		return rv;
-	return count;
+	set_acpi(eeepc, CM_ASL_CPUFV, value);
+	return rv;
 }
 
-static ssize_t cpufv_disabled_show(struct device *dev,
+static ssize_t show_cpufv_disabled(struct device *dev,
 			  struct device_attribute *attr,
 			  char *buf)
 {
@@ -403,14 +403,14 @@ static ssize_t cpufv_disabled_show(struct device *dev,
 	return sprintf(buf, "%d\n", eeepc->cpufv_disabled);
 }
 
-static ssize_t cpufv_disabled_store(struct device *dev,
+static ssize_t store_cpufv_disabled(struct device *dev,
 			   struct device_attribute *attr,
 			   const char *buf, size_t count)
 {
 	struct eeepc_laptop *eeepc = dev_get_drvdata(dev);
 	int rv, value;
 
-	rv = parse_arg(buf, &value);
+	rv = parse_arg(buf, count, &value);
 	if (rv < 0)
 		return rv;
 
@@ -420,7 +420,7 @@ static ssize_t cpufv_disabled_store(struct device *dev,
 			pr_warn("cpufv enabled (not officially supported "
 				"on this model)\n");
 		eeepc->cpufv_disabled = false;
-		return count;
+		return rv;
 	case 1:
 		return -EPERM;
 	default:
@@ -429,9 +429,29 @@ static ssize_t cpufv_disabled_store(struct device *dev,
 }
 
 
-static DEVICE_ATTR_RW(cpufv);
-static DEVICE_ATTR_RO(available_cpufv);
-static DEVICE_ATTR_RW(cpufv_disabled);
+static struct device_attribute dev_attr_cpufv = {
+	.attr = {
+		.name = "cpufv",
+		.mode = 0644 },
+	.show   = show_cpufv,
+	.store  = store_cpufv
+};
+
+static struct device_attribute dev_attr_available_cpufv = {
+	.attr = {
+		.name = "available_cpufv",
+		.mode = 0444 },
+	.show   = show_available_cpufv
+};
+
+static struct device_attribute dev_attr_cpufv_disabled = {
+	.attr = {
+		.name = "cpufv_disabled",
+		.mode = 0644 },
+	.show   = show_cpufv_disabled,
+	.store  = store_cpufv_disabled
+};
+
 
 static struct attribute *platform_attributes[] = {
 	&dev_attr_camera.attr,
@@ -533,7 +553,7 @@ static int eeepc_led_init(struct eeepc_laptop *eeepc)
 	eeepc->tpd_led.name = "eeepc::touchpad";
 	eeepc->tpd_led.brightness_set = tpd_led_set;
 	if (get_acpi(eeepc, CM_ASL_TPD) >= 0) /* if method is available */
-		eeepc->tpd_led.brightness_get = tpd_led_get;
+	  eeepc->tpd_led.brightness_get = tpd_led_get;
 	eeepc->tpd_led.max_brightness = 1;
 
 	rv = led_classdev_register(&eeepc->platform_device->dev,
@@ -578,7 +598,6 @@ static void eeepc_rfkill_hotplug(struct eeepc_laptop *eeepc, acpi_handle handle)
 		rfkill_set_sw_state(eeepc->wlan_rfkill, blocked);
 
 	mutex_lock(&eeepc->hotplug_lock);
-	pci_lock_rescan_remove();
 
 	if (eeepc->hotplug_slot) {
 		port = acpi_get_pci_dev(handle);
@@ -621,7 +640,8 @@ static void eeepc_rfkill_hotplug(struct eeepc_laptop *eeepc, acpi_handle handle)
 			dev = pci_scan_single_device(bus, 0);
 			if (dev) {
 				pci_bus_assign_resources(bus);
-				pci_bus_add_device(dev);
+				if (pci_bus_add_device(dev))
+					pr_err("Unable to hotplug wifi\n");
 			}
 		} else {
 			dev = pci_get_slot(bus, 0);
@@ -635,7 +655,6 @@ out_put_dev:
 	}
 
 out_unlock:
-	pci_unlock_rescan_remove();
 	mutex_unlock(&eeepc->hotplug_lock);
 }
 
@@ -668,21 +687,22 @@ static int eeepc_register_rfkill_notifier(struct eeepc_laptop *eeepc,
 
 	status = acpi_get_handle(NULL, node, &handle);
 
-	if (ACPI_FAILURE(status))
+	if (ACPI_SUCCESS(status)) {
+		status = acpi_install_notify_handler(handle,
+						     ACPI_SYSTEM_NOTIFY,
+						     eeepc_rfkill_notify,
+						     eeepc);
+		if (ACPI_FAILURE(status))
+			pr_warn("Failed to register notify on %s\n", node);
+
+		/*
+		 * Refresh pci hotplug in case the rfkill state was
+		 * changed during setup.
+		 */
+		eeepc_rfkill_hotplug(eeepc, handle);
+	} else
 		return -ENODEV;
 
-	status = acpi_install_notify_handler(handle,
-					     ACPI_SYSTEM_NOTIFY,
-					     eeepc_rfkill_notify,
-					     eeepc);
-	if (ACPI_FAILURE(status))
-		pr_warn("Failed to register notify on %s\n", node);
-
-	/*
-	 * Refresh pci hotplug in case the rfkill state was
-	 * changed during setup.
-	 */
-	eeepc_rfkill_hotplug(eeepc, handle);
 	return 0;
 }
 
@@ -694,21 +714,20 @@ static void eeepc_unregister_rfkill_notifier(struct eeepc_laptop *eeepc,
 
 	status = acpi_get_handle(NULL, node, &handle);
 
-	if (ACPI_FAILURE(status))
-		return;
-
-	status = acpi_remove_notify_handler(handle,
-					     ACPI_SYSTEM_NOTIFY,
-					     eeepc_rfkill_notify);
-	if (ACPI_FAILURE(status))
-		pr_err("Error removing rfkill notify handler %s\n",
-			node);
-		/*
-		 * Refresh pci hotplug in case the rfkill
-		 * state was changed after
-		 * eeepc_unregister_rfkill_notifier()
-		 */
-	eeepc_rfkill_hotplug(eeepc, handle);
+	if (ACPI_SUCCESS(status)) {
+		status = acpi_remove_notify_handler(handle,
+						     ACPI_SYSTEM_NOTIFY,
+						     eeepc_rfkill_notify);
+		if (ACPI_FAILURE(status))
+			pr_err("Error removing rfkill notify handler %s\n",
+				node);
+			/*
+			 * Refresh pci hotplug in case the rfkill
+			 * state was changed after
+			 * eeepc_unregister_rfkill_notifier()
+			 */
+		eeepc_rfkill_hotplug(eeepc, handle);
+	}
 }
 
 static int eeepc_get_adapter_status(struct hotplug_slot *hotplug_slot,
@@ -1030,11 +1049,10 @@ static ssize_t store_sys_hwmon(void (*set)(int), const char *buf, size_t count)
 {
 	int rv, value;
 
-	rv = parse_arg(buf, &value);
-	if (rv < 0)
-		return rv;
-	set(value);
-	return count;
+	rv = parse_arg(buf, count, &value);
+	if (rv > 0)
+		set(value);
+	return rv;
 }
 
 static ssize_t show_sys_hwmon(int (*get)(void), char *buf)
@@ -1042,57 +1060,76 @@ static ssize_t show_sys_hwmon(int (*get)(void), char *buf)
 	return sprintf(buf, "%d\n", get());
 }
 
-#define EEEPC_SENSOR_SHOW_FUNC(_name, _get)				\
-	static ssize_t _name##_show(struct device *dev,			\
+#define EEEPC_CREATE_SENSOR_ATTR(_name, _mode, _set, _get)		\
+	static ssize_t show_##_name(struct device *dev,			\
 				    struct device_attribute *attr,	\
 				    char *buf)				\
 	{								\
-		return show_sys_hwmon(_get, buf);			\
-	}
-
-#define EEEPC_SENSOR_STORE_FUNC(_name, _set)				\
-	static ssize_t _name##_store(struct device *dev,		\
+		return show_sys_hwmon(_set, buf);			\
+	}								\
+	static ssize_t store_##_name(struct device *dev,		\
 				     struct device_attribute *attr,	\
 				     const char *buf, size_t count)	\
 	{								\
-		return store_sys_hwmon(_set, buf, count);		\
-	}
+		return store_sys_hwmon(_get, buf, count);		\
+	}								\
+	static SENSOR_DEVICE_ATTR(_name, _mode, show_##_name, store_##_name, 0);
 
-#define EEEPC_CREATE_SENSOR_ATTR_RW(_name, _get, _set)			\
-	EEEPC_SENSOR_SHOW_FUNC(_name, _get)				\
-	EEEPC_SENSOR_STORE_FUNC(_name, _set)				\
-	static DEVICE_ATTR_RW(_name)
+EEEPC_CREATE_SENSOR_ATTR(fan1_input, S_IRUGO, eeepc_get_fan_rpm, NULL);
+EEEPC_CREATE_SENSOR_ATTR(pwm1, S_IRUGO | S_IWUSR,
+			 eeepc_get_fan_pwm, eeepc_set_fan_pwm);
+EEEPC_CREATE_SENSOR_ATTR(pwm1_enable, S_IRUGO | S_IWUSR,
+			 eeepc_get_fan_ctrl, eeepc_set_fan_ctrl);
 
-#define EEEPC_CREATE_SENSOR_ATTR_RO(_name, _get)			\
-	EEEPC_SENSOR_SHOW_FUNC(_name, _get)				\
-	static DEVICE_ATTR_RO(_name)
+static ssize_t
+show_name(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "eeepc\n");
+}
+static SENSOR_DEVICE_ATTR(name, S_IRUGO, show_name, NULL, 0);
 
-EEEPC_CREATE_SENSOR_ATTR_RO(fan1_input, eeepc_get_fan_rpm);
-EEEPC_CREATE_SENSOR_ATTR_RW(pwm1, eeepc_get_fan_pwm,
-			    eeepc_set_fan_pwm);
-EEEPC_CREATE_SENSOR_ATTR_RW(pwm1_enable, eeepc_get_fan_ctrl,
-			    eeepc_set_fan_ctrl);
-
-static struct attribute *hwmon_attrs[] = {
-	&dev_attr_pwm1.attr,
-	&dev_attr_fan1_input.attr,
-	&dev_attr_pwm1_enable.attr,
+static struct attribute *hwmon_attributes[] = {
+	&sensor_dev_attr_pwm1.dev_attr.attr,
+	&sensor_dev_attr_fan1_input.dev_attr.attr,
+	&sensor_dev_attr_pwm1_enable.dev_attr.attr,
+	&sensor_dev_attr_name.dev_attr.attr,
 	NULL
 };
-ATTRIBUTE_GROUPS(hwmon);
+
+static struct attribute_group hwmon_attribute_group = {
+	.attrs = hwmon_attributes
+};
+
+static void eeepc_hwmon_exit(struct eeepc_laptop *eeepc)
+{
+	struct device *hwmon;
+
+	hwmon = eeepc->hwmon_device;
+	if (!hwmon)
+		return;
+	sysfs_remove_group(&hwmon->kobj,
+			   &hwmon_attribute_group);
+	hwmon_device_unregister(hwmon);
+	eeepc->hwmon_device = NULL;
+}
 
 static int eeepc_hwmon_init(struct eeepc_laptop *eeepc)
 {
-	struct device *dev = &eeepc->platform_device->dev;
 	struct device *hwmon;
+	int result;
 
-	hwmon = devm_hwmon_device_register_with_groups(dev, "eeepc", NULL,
-						       hwmon_groups);
+	hwmon = hwmon_device_register(&eeepc->platform_device->dev);
 	if (IS_ERR(hwmon)) {
 		pr_err("Could not register eeepc hwmon device\n");
+		eeepc->hwmon_device = NULL;
 		return PTR_ERR(hwmon);
 	}
-	return 0;
+	eeepc->hwmon_device = hwmon;
+	result = sysfs_create_group(&hwmon->kobj,
+				    &hwmon_attribute_group);
+	if (result)
+		eeepc_hwmon_exit(eeepc);
+	return result;
 }
 
 /*
@@ -1172,8 +1209,10 @@ static int eeepc_input_init(struct eeepc_laptop *eeepc)
 	int error;
 
 	input = input_allocate_device();
-	if (!input)
+	if (!input) {
+		pr_info("Unable to allocate input device\n");
 		return -ENOMEM;
+	}
 
 	input->name = "Asus EeePC extra buttons";
 	input->phys = EEEPC_LAPTOP_FILE "/input0";
@@ -1230,6 +1269,7 @@ static void eeepc_acpi_notify(struct acpi_device *device, u32 event)
 	if (event > ACPI_MAX_SYS_NOTIFY)
 		return;
 	count = eeepc->event_count[event % 128]++;
+	acpi_bus_generate_proc_event(device, event, count);
 	acpi_bus_generate_netlink_event(device->pnp.device_class,
 					dev_name(&device->dev), event,
 					count);
@@ -1423,9 +1463,8 @@ static int eeepc_acpi_add(struct acpi_device *device)
 		result = eeepc_backlight_init(eeepc);
 		if (result)
 			goto fail_backlight;
-	} else {
+	} else
 		pr_info("Backlight controlled by ACPI video driver\n");
-	}
 
 	result = eeepc_input_init(eeepc);
 	if (result)
@@ -1449,6 +1488,7 @@ static int eeepc_acpi_add(struct acpi_device *device)
 fail_rfkill:
 	eeepc_led_exit(eeepc);
 fail_led:
+	eeepc_hwmon_exit(eeepc);
 fail_hwmon:
 	eeepc_input_exit(eeepc);
 fail_input:
@@ -1468,6 +1508,7 @@ static int eeepc_acpi_remove(struct acpi_device *device)
 	eeepc_backlight_exit(eeepc);
 	eeepc_rfkill_exit(eeepc);
 	eeepc_input_exit(eeepc);
+	eeepc_hwmon_exit(eeepc);
 	eeepc_led_exit(eeepc);
 	eeepc_platform_exit(eeepc);
 

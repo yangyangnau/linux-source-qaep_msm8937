@@ -953,7 +953,7 @@ static void nfs3_xdr_enc_readlink3args(struct rpc_rqst *req,
  *	};
  */
 static void encode_read3args(struct xdr_stream *xdr,
-			     const struct nfs_pgio_args *args)
+			     const struct nfs_readargs *args)
 {
 	__be32 *p;
 
@@ -966,7 +966,7 @@ static void encode_read3args(struct xdr_stream *xdr,
 
 static void nfs3_xdr_enc_read3args(struct rpc_rqst *req,
 				   struct xdr_stream *xdr,
-				   const struct nfs_pgio_args *args)
+				   const struct nfs_readargs *args)
 {
 	encode_read3args(xdr, args);
 	prepare_reply_buffer(req, args->pages, args->pgbase,
@@ -992,7 +992,7 @@ static void nfs3_xdr_enc_read3args(struct rpc_rqst *req,
  *	};
  */
 static void encode_write3args(struct xdr_stream *xdr,
-			      const struct nfs_pgio_args *args)
+			      const struct nfs_writeargs *args)
 {
 	__be32 *p;
 
@@ -1008,7 +1008,7 @@ static void encode_write3args(struct xdr_stream *xdr,
 
 static void nfs3_xdr_enc_write3args(struct rpc_rqst *req,
 				    struct xdr_stream *xdr,
-				    const struct nfs_pgio_args *args)
+				    const struct nfs_writeargs *args)
 {
 	encode_write3args(xdr, args);
 	xdr->buf->flags |= XDRBUF_WRITE;
@@ -1342,7 +1342,7 @@ static void nfs3_xdr_enc_setacl3args(struct rpc_rqst *req,
 	if (args->npages != 0)
 		xdr_write_pages(xdr, args->pages, 0, args->len);
 	else
-		xdr_reserve_space(xdr, args->len);
+		xdr_reserve_space(xdr, NFS_ACL_INLINE_BUFSIZE);
 
 	error = nfsacl_encode(xdr->buf, base, args->inode,
 			    (args->mask & NFS_ACL) ?
@@ -1589,7 +1589,7 @@ out_default:
  *	};
  */
 static int decode_read3resok(struct xdr_stream *xdr,
-			     struct nfs_pgio_res *result)
+			     struct nfs_readres *result)
 {
 	u32 eof, count, ocount, recvd;
 	__be32 *p;
@@ -1625,7 +1625,7 @@ out_overflow:
 }
 
 static int nfs3_xdr_dec_read3res(struct rpc_rqst *req, struct xdr_stream *xdr,
-				 struct nfs_pgio_res *result)
+				 struct nfs_readres *result)
 {
 	enum nfs_stat status;
 	int error;
@@ -1673,7 +1673,7 @@ out_status:
  *	};
  */
 static int decode_write3resok(struct xdr_stream *xdr,
-			      struct nfs_pgio_res *result)
+			      struct nfs_writeres *result)
 {
 	__be32 *p;
 
@@ -1697,7 +1697,7 @@ out_eio:
 }
 
 static int nfs3_xdr_dec_write3res(struct rpc_rqst *req, struct xdr_stream *xdr,
-				  struct nfs_pgio_res *result)
+				  struct nfs_writeres *result)
 {
 	enum nfs_stat status;
 	int error;

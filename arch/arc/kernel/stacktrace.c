@@ -64,9 +64,9 @@ static void seed_unwind_frame_info(struct task_struct *tsk,
 
 		frame_info->task = tsk;
 
-		frame_info->regs.r27 = TSK_K_FP(tsk);
-		frame_info->regs.r28 = TSK_K_ESP(tsk);
-		frame_info->regs.r31 = TSK_K_BLINK(tsk);
+		frame_info->regs.r27 = KSTK_FP(tsk);
+		frame_info->regs.r28 = KSTK_ESP(tsk);
+		frame_info->regs.r31 = KSTK_BLINK(tsk);
 		frame_info->regs.r63 = (unsigned int)__switch_to;
 
 		/* In the prologue of __switch_to, first FP is saved on stack
@@ -79,7 +79,7 @@ static void seed_unwind_frame_info(struct task_struct *tsk,
 		 * assembly code
 		 */
 		frame_info->regs.r27 = 0;
-		frame_info->regs.r28 += 60;
+		frame_info->regs.r28 += 64;
 		frame_info->call_frame = 0;
 
 	} else {
@@ -237,14 +237,11 @@ unsigned int get_wchan(struct task_struct *tsk)
  */
 void save_stack_trace_tsk(struct task_struct *tsk, struct stack_trace *trace)
 {
-	/* Assumes @tsk is sleeping so unwinds from __switch_to */
 	arc_unwind_core(tsk, NULL, __collect_all_but_sched, trace);
 }
 
 void save_stack_trace(struct stack_trace *trace)
 {
-	/* Pass NULL for task so it unwinds the current call frame */
-	arc_unwind_core(NULL, NULL, __collect_all, trace);
+	arc_unwind_core(current, NULL, __collect_all, trace);
 }
-EXPORT_SYMBOL_GPL(save_stack_trace);
 #endif

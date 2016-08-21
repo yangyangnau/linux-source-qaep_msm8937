@@ -102,14 +102,12 @@ pte_alloc_one(struct mm_struct *mm, unsigned long addr)
 #else
 	pte = alloc_pages(PGALLOC_GFP, 0);
 #endif
-	if (!pte)
-		return NULL;
-	if (!PageHighMem(pte))
-		clean_pte_table(page_address(pte));
-	if (!pgtable_page_ctor(pte)) {
-		__free_page(pte);
-		return NULL;
+	if (pte) {
+		if (!PageHighMem(pte))
+			clean_pte_table(page_address(pte));
+		pgtable_page_ctor(pte);
 	}
+
 	return pte;
 }
 

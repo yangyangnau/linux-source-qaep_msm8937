@@ -24,14 +24,15 @@
     GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License
-    along with Atmel wireless lan drivers; if not, see
-    <http://www.gnu.org/licenses/>.
+    along with Atmel wireless lan drivers; if not, write to the Free Software
+    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 ******************************************************************************/
 
 #ifdef __IN_PCMCIA_PACKAGE__
 #include <pcmcia/k_compat.h>
 #endif
+#include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/ptrace.h>
@@ -66,18 +67,18 @@ static void atmel_release(struct pcmcia_device *link);
 
 static void atmel_detach(struct pcmcia_device *p_dev);
 
-struct local_info {
+typedef struct local_info_t {
 	struct net_device *eth_dev;
-};
+} local_info_t;
 
 static int atmel_probe(struct pcmcia_device *p_dev)
 {
-	struct local_info *local;
+	local_info_t *local;
 
 	dev_dbg(&p_dev->dev, "atmel_attach()\n");
 
 	/* Allocate space for private device-specific data */
-	local = kzalloc(sizeof(*local), GFP_KERNEL);
+	local = kzalloc(sizeof(local_info_t), GFP_KERNEL);
 	if (!local)
 		return -ENOMEM;
 
@@ -117,7 +118,7 @@ static int atmel_config_check(struct pcmcia_device *p_dev, void *priv_data)
 
 static int atmel_config(struct pcmcia_device *link)
 {
-	struct local_info *dev;
+	local_info_t *dev;
 	int ret;
 	const struct pcmcia_device_id *did;
 
@@ -141,14 +142,14 @@ static int atmel_config(struct pcmcia_device *link)
 	if (ret)
 		goto failed;
 
-	((struct local_info *)link->priv)->eth_dev =
+	((local_info_t*)link->priv)->eth_dev =
 		init_atmel_card(link->irq,
 				link->resource[0]->start,
 				did ? did->driver_info : ATMEL_FW_TYPE_NONE,
 				&link->dev,
 				card_present,
 				link);
-	if (!((struct local_info *)link->priv)->eth_dev)
+	if (!((local_info_t*)link->priv)->eth_dev)
 			goto failed;
 
 
@@ -161,20 +162,20 @@ static int atmel_config(struct pcmcia_device *link)
 
 static void atmel_release(struct pcmcia_device *link)
 {
-	struct net_device *dev = ((struct local_info *)link->priv)->eth_dev;
+	struct net_device *dev = ((local_info_t*)link->priv)->eth_dev;
 
 	dev_dbg(&link->dev, "atmel_release\n");
 
 	if (dev)
 		stop_atmel_card(dev);
-	((struct local_info *)link->priv)->eth_dev = NULL;
+	((local_info_t*)link->priv)->eth_dev = NULL;
 
 	pcmcia_disable_device(link);
 }
 
 static int atmel_suspend(struct pcmcia_device *link)
 {
-	struct local_info *local = link->priv;
+	local_info_t *local = link->priv;
 
 	netif_device_detach(local->eth_dev);
 
@@ -183,7 +184,7 @@ static int atmel_suspend(struct pcmcia_device *link)
 
 static int atmel_resume(struct pcmcia_device *link)
 {
-	struct local_info *local = link->priv;
+	local_info_t *local = link->priv;
 
 	atmel_open(local->eth_dev);
 	netif_device_attach(local->eth_dev);

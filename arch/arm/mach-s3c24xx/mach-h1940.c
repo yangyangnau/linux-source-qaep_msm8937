@@ -19,7 +19,6 @@
 #include <linux/init.h>
 #include <linux/device.h>
 #include <linux/serial_core.h>
-#include <linux/serial_s3c.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
 #include <linux/gpio.h>
@@ -55,12 +54,14 @@
 #include <mach/regs-clock.h>
 #include <mach/regs-gpio.h>
 #include <mach/regs-lcd.h>
-#include <mach/gpio-samsung.h>
 
+#include <plat/clock.h>
 #include <plat/cpu.h>
 #include <plat/devs.h>
 #include <plat/gpio-cfg.h>
+#include <plat/pll.h>
 #include <plat/pm.h>
+#include <plat/regs-serial.h>
 #include <plat/samsung-time.h>
 
 #include "common.h"
@@ -71,10 +72,6 @@
 #define H1940_PA_LATCH		S3C2410_CS2
 
 #define H1940_LATCH_BIT(x)	(1 << ((x) + 16 - S3C_GPIO_END))
-
-#define S3C24XX_PLL_MDIV_SHIFT         (12)
-#define S3C24XX_PLL_PDIV_SHIFT         (4)
-#define S3C24XX_PLL_SDIV_SHIFT         (0)
 
 static struct map_desc h1940_iodesc[] __initdata = {
 	[0] = {
@@ -507,7 +504,6 @@ static struct platform_pwm_backlight_data backlight_data = {
 	.dft_brightness = 50,
 	/* tcnt = 0x31 */
 	.pwm_period_ns  = 36296,
-	.enable_gpio    = -1,
 	.init           = h1940_backlight_init,
 	.notify		= h1940_backlight_notify,
 	.exit           = h1940_backlight_exit,
@@ -516,7 +512,7 @@ static struct platform_pwm_backlight_data backlight_data = {
 static struct platform_device h1940_backlight = {
 	.name = "pwm-backlight",
 	.dev  = {
-		.parent = &samsung_device_pwm.dev,
+		.parent = &s3c_device_timer[0].dev,
 		.platform_data = &backlight_data,
 	},
 	.id   = -1,
@@ -636,7 +632,7 @@ static struct platform_device *h1940_devices[] __initdata = {
 	&h1940_device_bluetooth,
 	&s3c_device_sdi,
 	&s3c_device_rtc,
-	&samsung_device_pwm,
+	&s3c_device_timer[0],
 	&h1940_backlight,
 	&h1940_lcd_powerdev,
 	&s3c_device_adc,
@@ -648,6 +644,7 @@ static struct platform_device *h1940_devices[] __initdata = {
 static void __init h1940_map_io(void)
 {
 	s3c24xx_init_io(h1940_iodesc, ARRAY_SIZE(h1940_iodesc));
+	s3c24xx_init_clocks(0);
 	s3c24xx_init_uarts(h1940_uartcfgs, ARRAY_SIZE(h1940_uartcfgs));
 	samsung_set_timer_source(SAMSUNG_PWM3, SAMSUNG_PWM4);
 
@@ -661,12 +658,6 @@ static void __init h1940_map_io(void)
 	/* Add latch gpio chip, set latch initial value */
 	h1940_latch_control(0, 0);
 	WARN_ON(gpiochip_add(&h1940_latch_gpiochip));
-}
-
-static void __init h1940_init_time(void)
-{
-	s3c2410_init_clocks(12000000);
-	samsung_timer_init();
 }
 
 /* H1940 and RX3715 need to reserve this for suspend */
@@ -746,5 +737,6 @@ MACHINE_START(H1940, "IPAQ-H1940")
 	.reserve	= h1940_reserve,
 	.init_irq	= s3c2410_init_irq,
 	.init_machine	= h1940_init,
-	.init_time	= h1940_init_time,
+	.init_time	= samsung_timer_init,
+	.restart	= s3c2410_restart,
 MACHINE_END

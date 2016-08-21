@@ -24,7 +24,6 @@
  *
  * Documentation: ARM DDI 0196G == PL080
  * Documentation: ARM DDI 0218E == PL081
- * Documentation: S3C6410 User's Manual == PL080S
  *
  * PL080 & PL081 both have 16 sets of DMA signals that can be routed to any
  * channel.
@@ -36,14 +35,6 @@
  * so a multiplexing scheme with possible denial of use is necessary.
  *
  * The PL080 has a dual bus master, PL081 has a single master.
- *
- * PL080S is a version modified by Samsung and used in S3C64xx SoCs.
- * It differs in following aspects:
- * - CH_CONFIG register at different offset,
- * - separate CH_CONTROL2 register for transfer size,
- * - bigger maximum transfer size,
- * - 8-word aligned LLI, instead of 4-word, due to extra CCTL2 word,
- * - no support for peripheral flow control.
  *
  * Memory to peripheral transfer may be visualized as
  *	Get data from memory to DMAC
@@ -73,7 +64,10 @@
  *  - Peripheral flow control: the transfer size is ignored (and should be
  *    zero).  The data is transferred from the current LLI entry, until
  *    after the final transfer signalled by LBREQ or LSREQ.  The DMAC
- *    will then move to the next LLI entry. Unsupported by PL080S.
+ *    will then move to the next LLI entry.
+ *
+ * Global TODO:
+ * - Break out common code from arch/arm/mach-s3c64xx and share
  */
 #include <linux/amba/bus.h>
 #include <linux/amba/pl08x.h>
@@ -83,7 +77,6 @@
 #include <linux/dmaengine.h>
 #include <linux/dmapool.h>
 #include <linux/dma-mapping.h>
-#include <linux/export.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/module.h>
@@ -107,16 +100,24 @@ struct pl08x_driver_data;
  * @nomadik: whether the channels have Nomadik security extension bits
  *	that need to be checked for permission before use and some registers are
  *	missing
- * @pl080s: whether this version is a PL080S, which has separate register and
- *	LLI word for transfer size.
  */
 struct vendor_data {
-	u8 config_offset;
 	u8 channels;
 	bool dualmaster;
 	bool nomadik;
-	bool pl080s;
-	u32 max_transfer_size;
+};
+
+/*
+ * PL08X private data structures
+ * An LLI struct - see PL08x TRM.  Note that next uses bit[0] as a bus bit,
+ * start & end do not - their bus bit info is in cctl.  Also note that these
+ * are fixed 32-bit quantities.
+ */
+struct pl08x_lli {
+	u32 src;
+	u32 dst;
+	u32 lli;
+	u32 cctl;
 };
 
 /**
@@ -132,8 +133,6 @@ struct pl08x_bus_data {
 	u8 buswidth;
 };
 
-#define IS_BUS_ALIGNED(bus) IS_ALIGNED((bus)->addr, (bus)->buswidth)
-
 /**
  * struct pl08x_phy_chan - holder for the physical channels
  * @id: physical index to this channel
@@ -146,7 +145,6 @@ struct pl08x_bus_data {
 struct pl08x_phy_chan {
 	unsigned int id;
 	void __iomem *base;
-	void __iomem *reg_config;
 	spinlock_t lock;
 	struct pl08x_dma_chan *serving;
 	bool locked;
@@ -176,13 +174,12 @@ struct pl08x_sg {
  * @ccfg: config reg values for current txd
  * @done: this marks completed descriptors, which should not have their
  *   mux released.
- * @cyclic: indicate cyclic transfers
  */
 struct pl08x_txd {
 	struct virt_dma_desc vd;
 	struct list_head dsg_list;
 	dma_addr_t llis_bus;
-	u32 *llis_va;
+	struct pl08x_lli *llis_va;
 	/* Default cctl value for LLIs */
 	u32 cctl;
 	/*
@@ -191,7 +188,6 @@ struct pl08x_txd {
 	 */
 	u32 ccfg;
 	bool done;
-	bool cyclic;
 };
 
 /**
@@ -267,29 +263,17 @@ struct pl08x_driver_data {
 	struct dma_pool *pool;
 	u8 lli_buses;
 	u8 mem_buses;
-	u8 lli_words;
 };
 
 /*
  * PL08X specific defines
  */
 
-/* The order of words in an LLI. */
-#define PL080_LLI_SRC		0
-#define PL080_LLI_DST		1
-#define PL080_LLI_LLI		2
-#define PL080_LLI_CCTL		3
-#define PL080S_LLI_CCTL2	4
+/* Size (bytes) of each LLI buffer allocated for one transfer */
+# define PL08X_LLI_TSFR_SIZE	0x2000
 
-/* Total words in an LLI. */
-#define PL080_LLI_WORDS		4
-#define PL080S_LLI_WORDS	8
-
-/*
- * Number of LLIs in each LLI buffer allocated for one transfer
- * (maximum times we call dma_pool_alloc on this pool without freeing)
- */
-#define MAX_NUM_TSFR_LLIS	512
+/* Maximum times we call dma_pool_alloc on this pool without freeing */
+#define MAX_NUM_TSFR_LLIS	(PL08X_LLI_TSFR_SIZE/sizeof(struct pl08x_lli))
 #define PL08X_ALIGN		8
 
 static inline struct pl08x_dma_chan *to_pl08x_chan(struct dma_chan *chan)
@@ -315,8 +299,8 @@ static int pl08x_request_mux(struct pl08x_dma_chan *plchan)
 	const struct pl08x_platform_data *pd = plchan->host->pd;
 	int ret;
 
-	if (plchan->mux_use++ == 0 && pd->get_xfer_signal) {
-		ret = pd->get_xfer_signal(plchan->cd);
+	if (plchan->mux_use++ == 0 && pd->get_signal) {
+		ret = pd->get_signal(plchan->cd);
 		if (ret < 0) {
 			plchan->mux_use = 0;
 			return ret;
@@ -334,8 +318,8 @@ static void pl08x_release_mux(struct pl08x_dma_chan *plchan)
 	if (plchan->signal >= 0) {
 		WARN_ON(plchan->mux_use == 0);
 
-		if (--plchan->mux_use == 0 && pd->put_xfer_signal) {
-			pd->put_xfer_signal(plchan->cd, plchan->signal);
+		if (--plchan->mux_use == 0 && pd->put_signal) {
+			pd->put_signal(plchan->cd, plchan->signal);
 			plchan->signal = -1;
 		}
 	}
@@ -350,37 +334,8 @@ static int pl08x_phy_channel_busy(struct pl08x_phy_chan *ch)
 {
 	unsigned int val;
 
-	val = readl(ch->reg_config);
+	val = readl(ch->base + PL080_CH_CONFIG);
 	return val & PL080_CONFIG_ACTIVE;
-}
-
-static void pl08x_write_lli(struct pl08x_driver_data *pl08x,
-		struct pl08x_phy_chan *phychan, const u32 *lli, u32 ccfg)
-{
-	if (pl08x->vd->pl080s)
-		dev_vdbg(&pl08x->adev->dev,
-			"WRITE channel %d: csrc=0x%08x, cdst=0x%08x, "
-			"clli=0x%08x, cctl=0x%08x, cctl2=0x%08x, ccfg=0x%08x\n",
-			phychan->id, lli[PL080_LLI_SRC], lli[PL080_LLI_DST],
-			lli[PL080_LLI_LLI], lli[PL080_LLI_CCTL],
-			lli[PL080S_LLI_CCTL2], ccfg);
-	else
-		dev_vdbg(&pl08x->adev->dev,
-			"WRITE channel %d: csrc=0x%08x, cdst=0x%08x, "
-			"clli=0x%08x, cctl=0x%08x, ccfg=0x%08x\n",
-			phychan->id, lli[PL080_LLI_SRC], lli[PL080_LLI_DST],
-			lli[PL080_LLI_LLI], lli[PL080_LLI_CCTL], ccfg);
-
-	writel_relaxed(lli[PL080_LLI_SRC], phychan->base + PL080_CH_SRC_ADDR);
-	writel_relaxed(lli[PL080_LLI_DST], phychan->base + PL080_CH_DST_ADDR);
-	writel_relaxed(lli[PL080_LLI_LLI], phychan->base + PL080_CH_LLI);
-	writel_relaxed(lli[PL080_LLI_CCTL], phychan->base + PL080_CH_CONTROL);
-
-	if (pl08x->vd->pl080s)
-		writel_relaxed(lli[PL080S_LLI_CCTL2],
-				phychan->base + PL080S_CH_CONTROL2);
-
-	writel(ccfg, phychan->reg_config);
 }
 
 /*
@@ -395,6 +350,7 @@ static void pl08x_start_next_txd(struct pl08x_dma_chan *plchan)
 	struct pl08x_phy_chan *phychan = plchan->phychan;
 	struct virt_dma_desc *vd = vchan_next_desc(&plchan->vc);
 	struct pl08x_txd *txd = to_pl08x_txd(&vd->tx);
+	struct pl08x_lli *lli;
 	u32 val;
 
 	list_del(&txd->vd.node);
@@ -405,7 +361,19 @@ static void pl08x_start_next_txd(struct pl08x_dma_chan *plchan)
 	while (pl08x_phy_channel_busy(phychan))
 		cpu_relax();
 
-	pl08x_write_lli(pl08x, phychan, &txd->llis_va[0], txd->ccfg);
+	lli = &txd->llis_va[0];
+
+	dev_vdbg(&pl08x->adev->dev,
+		"WRITE channel %d: csrc=0x%08x, cdst=0x%08x, "
+		"clli=0x%08x, cctl=0x%08x, ccfg=0x%08x\n",
+		phychan->id, lli->src, lli->dst, lli->lli, lli->cctl,
+		txd->ccfg);
+
+	writel(lli->src, phychan->base + PL080_CH_SRC_ADDR);
+	writel(lli->dst, phychan->base + PL080_CH_DST_ADDR);
+	writel(lli->lli, phychan->base + PL080_CH_LLI);
+	writel(lli->cctl, phychan->base + PL080_CH_CONTROL);
+	writel(txd->ccfg, phychan->base + PL080_CH_CONFIG);
 
 	/* Enable the DMA channel */
 	/* Do not access config register until channel shows as disabled */
@@ -413,11 +381,11 @@ static void pl08x_start_next_txd(struct pl08x_dma_chan *plchan)
 		cpu_relax();
 
 	/* Do not access config register until channel shows as inactive */
-	val = readl(phychan->reg_config);
+	val = readl(phychan->base + PL080_CH_CONFIG);
 	while ((val & PL080_CONFIG_ACTIVE) || (val & PL080_CONFIG_ENABLE))
-		val = readl(phychan->reg_config);
+		val = readl(phychan->base + PL080_CH_CONFIG);
 
-	writel(val | PL080_CONFIG_ENABLE, phychan->reg_config);
+	writel(val | PL080_CONFIG_ENABLE, phychan->base + PL080_CH_CONFIG);
 }
 
 /*
@@ -436,9 +404,9 @@ static void pl08x_pause_phy_chan(struct pl08x_phy_chan *ch)
 	int timeout;
 
 	/* Set the HALT bit and wait for the FIFO to drain */
-	val = readl(ch->reg_config);
+	val = readl(ch->base + PL080_CH_CONFIG);
 	val |= PL080_CONFIG_HALT;
-	writel(val, ch->reg_config);
+	writel(val, ch->base + PL080_CH_CONFIG);
 
 	/* Wait for channel inactive */
 	for (timeout = 1000; timeout; timeout--) {
@@ -455,9 +423,9 @@ static void pl08x_resume_phy_chan(struct pl08x_phy_chan *ch)
 	u32 val;
 
 	/* Clear the HALT bit */
-	val = readl(ch->reg_config);
+	val = readl(ch->base + PL080_CH_CONFIG);
 	val &= ~PL080_CONFIG_HALT;
-	writel(val, ch->reg_config);
+	writel(val, ch->base + PL080_CH_CONFIG);
 }
 
 /*
@@ -469,12 +437,12 @@ static void pl08x_resume_phy_chan(struct pl08x_phy_chan *ch)
 static void pl08x_terminate_phy_chan(struct pl08x_driver_data *pl08x,
 	struct pl08x_phy_chan *ch)
 {
-	u32 val = readl(ch->reg_config);
+	u32 val = readl(ch->base + PL080_CH_CONFIG);
 
 	val &= ~(PL080_CONFIG_ENABLE | PL080_CONFIG_ERR_IRQ_MASK |
 	         PL080_CONFIG_TC_IRQ_MASK);
 
-	writel(val, ch->reg_config);
+	writel(val, ch->base + PL080_CH_CONFIG);
 
 	writel(1 << ch->id, pl08x->base + PL080_ERR_CLEAR);
 	writel(1 << ch->id, pl08x->base + PL080_TC_CLEAR);
@@ -484,28 +452,6 @@ static inline u32 get_bytes_in_cctl(u32 cctl)
 {
 	/* The source width defines the number of bytes */
 	u32 bytes = cctl & PL080_CONTROL_TRANSFER_SIZE_MASK;
-
-	cctl &= PL080_CONTROL_SWIDTH_MASK;
-
-	switch (cctl >> PL080_CONTROL_SWIDTH_SHIFT) {
-	case PL080_WIDTH_8BIT:
-		break;
-	case PL080_WIDTH_16BIT:
-		bytes *= 2;
-		break;
-	case PL080_WIDTH_32BIT:
-		bytes *= 4;
-		break;
-	}
-	return bytes;
-}
-
-static inline u32 get_bytes_in_cctl_pl080s(u32 cctl, u32 cctl1)
-{
-	/* The source width defines the number of bytes */
-	u32 bytes = cctl1 & PL080S_CONTROL_TRANSFER_SIZE_MASK;
-
-	cctl &= PL080_CONTROL_SWIDTH_MASK;
 
 	switch (cctl >> PL080_CONTROL_SWIDTH_SHIFT) {
 	case PL080_WIDTH_8BIT:
@@ -523,66 +469,47 @@ static inline u32 get_bytes_in_cctl_pl080s(u32 cctl, u32 cctl1)
 /* The channel should be paused when calling this */
 static u32 pl08x_getbytes_chan(struct pl08x_dma_chan *plchan)
 {
-	struct pl08x_driver_data *pl08x = plchan->host;
-	const u32 *llis_va, *llis_va_limit;
 	struct pl08x_phy_chan *ch;
-	dma_addr_t llis_bus;
 	struct pl08x_txd *txd;
-	u32 llis_max_words;
-	size_t bytes;
-	u32 clli;
+	size_t bytes = 0;
 
 	ch = plchan->phychan;
 	txd = plchan->at;
-
-	if (!ch || !txd)
-		return 0;
 
 	/*
 	 * Follow the LLIs to get the number of remaining
 	 * bytes in the currently active transaction.
 	 */
-	clli = readl(ch->base + PL080_CH_LLI) & ~PL080_LLI_LM_AHB2;
+	if (ch && txd) {
+		u32 clli = readl(ch->base + PL080_CH_LLI) & ~PL080_LLI_LM_AHB2;
 
-	/* First get the remaining bytes in the active transfer */
-	if (pl08x->vd->pl080s)
-		bytes = get_bytes_in_cctl_pl080s(
-				readl(ch->base + PL080_CH_CONTROL),
-				readl(ch->base + PL080S_CH_CONTROL2));
-	else
+		/* First get the remaining bytes in the active transfer */
 		bytes = get_bytes_in_cctl(readl(ch->base + PL080_CH_CONTROL));
 
-	if (!clli)
-		return bytes;
+		if (clli) {
+			struct pl08x_lli *llis_va = txd->llis_va;
+			dma_addr_t llis_bus = txd->llis_bus;
+			int index;
 
-	llis_va = txd->llis_va;
-	llis_bus = txd->llis_bus;
+			BUG_ON(clli < llis_bus || clli >= llis_bus +
+				sizeof(struct pl08x_lli) * MAX_NUM_TSFR_LLIS);
 
-	llis_max_words = pl08x->lli_words * MAX_NUM_TSFR_LLIS;
-	BUG_ON(clli < llis_bus || clli >= llis_bus +
-						sizeof(u32) * llis_max_words);
+			/*
+			 * Locate the next LLI - as this is an array,
+			 * it's simple maths to find.
+			 */
+			index = (clli - llis_bus) / sizeof(struct pl08x_lli);
 
-	/*
-	 * Locate the next LLI - as this is an array,
-	 * it's simple maths to find.
-	 */
-	llis_va += (clli - llis_bus) / sizeof(u32);
+			for (; index < MAX_NUM_TSFR_LLIS; index++) {
+				bytes += get_bytes_in_cctl(llis_va[index].cctl);
 
-	llis_va_limit = llis_va + llis_max_words;
-
-	for (; llis_va < llis_va_limit; llis_va += pl08x->lli_words) {
-		if (pl08x->vd->pl080s)
-			bytes += get_bytes_in_cctl_pl080s(
-						llis_va[PL080_LLI_CCTL],
-						llis_va[PL080S_LLI_CCTL2]);
-		else
-			bytes += get_bytes_in_cctl(llis_va[PL080_LLI_CCTL]);
-
-		/*
-		 * A LLI pointer going backward terminates the LLI list
-		 */
-		if (llis_va[PL080_LLI_LLI] <= clli)
-			break;
+				/*
+				 * A LLI pointer of 0 terminates the LLI list
+				 */
+				if (!llis_va[index].lli)
+					break;
+			}
+		}
 	}
 
 	return bytes;
@@ -793,7 +720,6 @@ static inline u32 pl08x_cctl_bits(u32 cctl, u8 srcwidth, u8 dstwidth,
 		break;
 	}
 
-	tsize &= PL080_CONTROL_TRANSFER_SIZE_MASK;
 	retbits |= tsize << PL080_CONTROL_TRANSFER_SIZE_SHIFT;
 	return retbits;
 }
@@ -838,26 +764,20 @@ static void pl08x_choose_master_bus(struct pl08x_lli_build_data *bd,
 /*
  * Fills in one LLI for a certain transfer descriptor and advance the counter
  */
-static void pl08x_fill_lli_for_desc(struct pl08x_driver_data *pl08x,
-				    struct pl08x_lli_build_data *bd,
-				    int num_llis, int len, u32 cctl, u32 cctl2)
+static void pl08x_fill_lli_for_desc(struct pl08x_lli_build_data *bd,
+	int num_llis, int len, u32 cctl)
 {
-	u32 offset = num_llis * pl08x->lli_words;
-	u32 *llis_va = bd->txd->llis_va + offset;
+	struct pl08x_lli *llis_va = bd->txd->llis_va;
 	dma_addr_t llis_bus = bd->txd->llis_bus;
 
 	BUG_ON(num_llis >= MAX_NUM_TSFR_LLIS);
 
-	/* Advance the offset to next LLI. */
-	offset += pl08x->lli_words;
-
-	llis_va[PL080_LLI_SRC] = bd->srcbus.addr;
-	llis_va[PL080_LLI_DST] = bd->dstbus.addr;
-	llis_va[PL080_LLI_LLI] = (llis_bus + sizeof(u32) * offset);
-	llis_va[PL080_LLI_LLI] |= bd->lli_bus;
-	llis_va[PL080_LLI_CCTL] = cctl;
-	if (pl08x->vd->pl080s)
-		llis_va[PL080S_LLI_CCTL2] = cctl2;
+	llis_va[num_llis].cctl = cctl;
+	llis_va[num_llis].src = bd->srcbus.addr;
+	llis_va[num_llis].dst = bd->dstbus.addr;
+	llis_va[num_llis].lli = llis_bus + (num_llis + 1) *
+		sizeof(struct pl08x_lli);
+	llis_va[num_llis].lli |= bd->lli_bus;
 
 	if (cctl & PL080_CONTROL_SRC_INCR)
 		bd->srcbus.addr += len;
@@ -869,52 +789,13 @@ static void pl08x_fill_lli_for_desc(struct pl08x_driver_data *pl08x,
 	bd->remainder -= len;
 }
 
-static inline void prep_byte_width_lli(struct pl08x_driver_data *pl08x,
-			struct pl08x_lli_build_data *bd, u32 *cctl, u32 len,
-			int num_llis, size_t *total_bytes)
+static inline void prep_byte_width_lli(struct pl08x_lli_build_data *bd,
+		u32 *cctl, u32 len, int num_llis, size_t *total_bytes)
 {
 	*cctl = pl08x_cctl_bits(*cctl, 1, 1, len);
-	pl08x_fill_lli_for_desc(pl08x, bd, num_llis, len, *cctl, len);
+	pl08x_fill_lli_for_desc(bd, num_llis, len, *cctl);
 	(*total_bytes) += len;
 }
-
-#ifdef VERBOSE_DEBUG
-static void pl08x_dump_lli(struct pl08x_driver_data *pl08x,
-			   const u32 *llis_va, int num_llis)
-{
-	int i;
-
-	if (pl08x->vd->pl080s) {
-		dev_vdbg(&pl08x->adev->dev,
-			"%-3s %-9s  %-10s %-10s %-10s %-10s %s\n",
-			"lli", "", "csrc", "cdst", "clli", "cctl", "cctl2");
-		for (i = 0; i < num_llis; i++) {
-			dev_vdbg(&pl08x->adev->dev,
-				"%3d @%p: 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x\n",
-				i, llis_va, llis_va[PL080_LLI_SRC],
-				llis_va[PL080_LLI_DST], llis_va[PL080_LLI_LLI],
-				llis_va[PL080_LLI_CCTL],
-				llis_va[PL080S_LLI_CCTL2]);
-			llis_va += pl08x->lli_words;
-		}
-	} else {
-		dev_vdbg(&pl08x->adev->dev,
-			"%-3s %-9s  %-10s %-10s %-10s %s\n",
-			"lli", "", "csrc", "cdst", "clli", "cctl");
-		for (i = 0; i < num_llis; i++) {
-			dev_vdbg(&pl08x->adev->dev,
-				"%3d @%p: 0x%08x 0x%08x 0x%08x 0x%08x\n",
-				i, llis_va, llis_va[PL080_LLI_SRC],
-				llis_va[PL080_LLI_DST], llis_va[PL080_LLI_LLI],
-				llis_va[PL080_LLI_CCTL]);
-			llis_va += pl08x->lli_words;
-		}
-	}
-}
-#else
-static inline void pl08x_dump_lli(struct pl08x_driver_data *pl08x,
-				  const u32 *llis_va, int num_llis) {}
-#endif
 
 /*
  * This fills in the table of LLIs for the transfer descriptor
@@ -929,7 +810,7 @@ static int pl08x_fill_llis_for_desc(struct pl08x_driver_data *pl08x,
 	int num_llis = 0;
 	u32 cctl, early_bytes = 0;
 	size_t max_bytes_per_lli, total_bytes;
-	u32 *llis_va, *last_lli;
+	struct pl08x_lli *llis_va;
 	struct pl08x_sg *dsg;
 
 	txd->llis_va = dma_pool_alloc(pl08x->pool, GFP_NOWAIT, &txd->llis_bus);
@@ -964,13 +845,10 @@ static int pl08x_fill_llis_for_desc(struct pl08x_driver_data *pl08x,
 
 		pl08x_choose_master_bus(&bd, &mbus, &sbus, cctl);
 
-		dev_vdbg(&pl08x->adev->dev,
-			"src=0x%08llx%s/%u dst=0x%08llx%s/%u len=%zu\n",
-			(u64)bd.srcbus.addr,
-			cctl & PL080_CONTROL_SRC_INCR ? "+" : "",
+		dev_vdbg(&pl08x->adev->dev, "src=0x%08x%s/%u dst=0x%08x%s/%u len=%zu\n",
+			bd.srcbus.addr, cctl & PL080_CONTROL_SRC_INCR ? "+" : "",
 			bd.srcbus.buswidth,
-			(u64)bd.dstbus.addr,
-			cctl & PL080_CONTROL_DST_INCR ? "+" : "",
+			bd.dstbus.addr, cctl & PL080_CONTROL_DST_INCR ? "+" : "",
 			bd.dstbus.buswidth,
 			bd.remainder);
 		dev_vdbg(&pl08x->adev->dev, "mbus=%s sbus=%s\n",
@@ -1008,8 +886,8 @@ static int pl08x_fill_llis_for_desc(struct pl08x_driver_data *pl08x,
 				return 0;
 			}
 
-			if (!IS_BUS_ALIGNED(&bd.srcbus) ||
-				!IS_BUS_ALIGNED(&bd.dstbus)) {
+			if ((bd.srcbus.addr % bd.srcbus.buswidth) ||
+					(bd.dstbus.addr % bd.dstbus.buswidth)) {
 				dev_err(&pl08x->adev->dev,
 					"%s src & dst address must be aligned to src"
 					" & dst width if peripheral is flow controller",
@@ -1019,8 +897,7 @@ static int pl08x_fill_llis_for_desc(struct pl08x_driver_data *pl08x,
 
 			cctl = pl08x_cctl_bits(cctl, bd.srcbus.buswidth,
 					bd.dstbus.buswidth, 0);
-			pl08x_fill_lli_for_desc(pl08x, &bd, num_llis++,
-					0, cctl, 0);
+			pl08x_fill_lli_for_desc(&bd, num_llis++, 0, cctl);
 			break;
 		}
 
@@ -1031,19 +908,19 @@ static int pl08x_fill_llis_for_desc(struct pl08x_driver_data *pl08x,
 		 */
 		if (bd.remainder < mbus->buswidth)
 			early_bytes = bd.remainder;
-		else if (!IS_BUS_ALIGNED(mbus)) {
-			early_bytes = mbus->buswidth -
-				(mbus->addr & (mbus->buswidth - 1));
+		else if ((mbus->addr) % (mbus->buswidth)) {
+			early_bytes = mbus->buswidth - (mbus->addr) %
+				(mbus->buswidth);
 			if ((bd.remainder - early_bytes) < mbus->buswidth)
 				early_bytes = bd.remainder;
 		}
 
 		if (early_bytes) {
 			dev_vdbg(&pl08x->adev->dev,
-				"%s byte width LLIs (remain 0x%08zx)\n",
+				"%s byte width LLIs (remain 0x%08x)\n",
 				__func__, bd.remainder);
-			prep_byte_width_lli(pl08x, &bd, &cctl, early_bytes,
-				num_llis++, &total_bytes);
+			prep_byte_width_lli(&bd, &cctl, early_bytes, num_llis++,
+				&total_bytes);
 		}
 
 		if (bd.remainder) {
@@ -1051,7 +928,7 @@ static int pl08x_fill_llis_for_desc(struct pl08x_driver_data *pl08x,
 			 * Master now aligned
 			 * - if slave is not then we must set its width down
 			 */
-			if (!IS_BUS_ALIGNED(sbus)) {
+			if (sbus->addr % sbus->buswidth) {
 				dev_dbg(&pl08x->adev->dev,
 					"%s set down bus width to one byte\n",
 					__func__);
@@ -1064,7 +941,7 @@ static int pl08x_fill_llis_for_desc(struct pl08x_driver_data *pl08x,
 			 * MIN(buswidths)
 			 */
 			max_bytes_per_lli = bd.srcbus.buswidth *
-						pl08x->vd->max_transfer_size;
+				PL080_CONTROL_TRANSFER_SIZE_MASK;
 			dev_vdbg(&pl08x->adev->dev,
 				"%s max bytes per lli = %zu\n",
 				__func__, max_bytes_per_lli);
@@ -1099,8 +976,8 @@ static int pl08x_fill_llis_for_desc(struct pl08x_driver_data *pl08x,
 
 				cctl = pl08x_cctl_bits(cctl, bd.srcbus.buswidth,
 					bd.dstbus.buswidth, tsize);
-				pl08x_fill_lli_for_desc(pl08x, &bd, num_llis++,
-						lli_len, cctl, tsize);
+				pl08x_fill_lli_for_desc(&bd, num_llis++,
+						lli_len, cctl);
 				total_bytes += lli_len;
 			}
 
@@ -1111,8 +988,8 @@ static int pl08x_fill_llis_for_desc(struct pl08x_driver_data *pl08x,
 				dev_vdbg(&pl08x->adev->dev,
 					"%s align with boundary, send odd bytes (remain %zu)\n",
 					__func__, bd.remainder);
-				prep_byte_width_lli(pl08x, &bd, &cctl,
-					bd.remainder, num_llis++, &total_bytes);
+				prep_byte_width_lli(&bd, &cctl, bd.remainder,
+						num_llis++, &total_bytes);
 			}
 		}
 
@@ -1126,25 +1003,33 @@ static int pl08x_fill_llis_for_desc(struct pl08x_driver_data *pl08x,
 		if (num_llis >= MAX_NUM_TSFR_LLIS) {
 			dev_err(&pl08x->adev->dev,
 				"%s need to increase MAX_NUM_TSFR_LLIS from 0x%08x\n",
-				__func__, MAX_NUM_TSFR_LLIS);
+				__func__, (u32) MAX_NUM_TSFR_LLIS);
 			return 0;
 		}
 	}
 
 	llis_va = txd->llis_va;
-	last_lli = llis_va + (num_llis - 1) * pl08x->lli_words;
+	/* The final LLI terminates the LLI. */
+	llis_va[num_llis - 1].lli = 0;
+	/* The final LLI element shall also fire an interrupt. */
+	llis_va[num_llis - 1].cctl |= PL080_CONTROL_TC_IRQ_EN;
 
-	if (txd->cyclic) {
-		/* Link back to the first LLI. */
-		last_lli[PL080_LLI_LLI] = txd->llis_bus | bd.lli_bus;
-	} else {
-		/* The final LLI terminates the LLI. */
-		last_lli[PL080_LLI_LLI] = 0;
-		/* The final LLI element shall also fire an interrupt. */
-		last_lli[PL080_LLI_CCTL] |= PL080_CONTROL_TC_IRQ_EN;
+#ifdef VERBOSE_DEBUG
+	{
+		int i;
+
+		dev_vdbg(&pl08x->adev->dev,
+			 "%-3s %-9s  %-10s %-10s %-10s %s\n",
+			 "lli", "", "csrc", "cdst", "clli", "cctl");
+		for (i = 0; i < num_llis; i++) {
+			dev_vdbg(&pl08x->adev->dev,
+				 "%3d @%p: 0x%08x 0x%08x 0x%08x 0x%08x\n",
+				 i, &llis_va[i], llis_va[i].src,
+				 llis_va[i].dst, llis_va[i].lli, llis_va[i].cctl
+				);
+		}
 	}
-
-	pl08x_dump_lli(pl08x, llis_va, num_llis);
+#endif
 
 	return num_llis;
 }
@@ -1165,12 +1050,42 @@ static void pl08x_free_txd(struct pl08x_driver_data *pl08x,
 	kfree(txd);
 }
 
+static void pl08x_unmap_buffers(struct pl08x_txd *txd)
+{
+	struct device *dev = txd->vd.tx.chan->device->dev;
+	struct pl08x_sg *dsg;
+
+	if (!(txd->vd.tx.flags & DMA_COMPL_SKIP_SRC_UNMAP)) {
+		if (txd->vd.tx.flags & DMA_COMPL_SRC_UNMAP_SINGLE)
+			list_for_each_entry(dsg, &txd->dsg_list, node)
+				dma_unmap_single(dev, dsg->src_addr, dsg->len,
+						DMA_TO_DEVICE);
+		else {
+			list_for_each_entry(dsg, &txd->dsg_list, node)
+				dma_unmap_page(dev, dsg->src_addr, dsg->len,
+						DMA_TO_DEVICE);
+		}
+	}
+	if (!(txd->vd.tx.flags & DMA_COMPL_SKIP_DEST_UNMAP)) {
+		if (txd->vd.tx.flags & DMA_COMPL_DEST_UNMAP_SINGLE)
+			list_for_each_entry(dsg, &txd->dsg_list, node)
+				dma_unmap_single(dev, dsg->dst_addr, dsg->len,
+						DMA_FROM_DEVICE);
+		else
+			list_for_each_entry(dsg, &txd->dsg_list, node)
+				dma_unmap_page(dev, dsg->dst_addr, dsg->len,
+						DMA_FROM_DEVICE);
+	}
+}
+
 static void pl08x_desc_free(struct virt_dma_desc *vd)
 {
 	struct pl08x_txd *txd = to_pl08x_txd(&vd->tx);
 	struct pl08x_dma_chan *plchan = to_pl08x_chan(vd->tx.chan);
 
-	dma_descriptor_unmap(&vd->tx);
+	if (!plchan->slave)
+		pl08x_unmap_buffers(txd);
+
 	if (!txd->done)
 		pl08x_release_mux(plchan);
 
@@ -1223,7 +1138,7 @@ static enum dma_status pl08x_dma_tx_status(struct dma_chan *chan,
 	size_t bytes = 0;
 
 	ret = dma_cookie_status(chan, cookie, txstate);
-	if (ret == DMA_COMPLETE)
+	if (ret == DMA_SUCCESS)
 		return ret;
 
 	/*
@@ -1238,7 +1153,7 @@ static enum dma_status pl08x_dma_tx_status(struct dma_chan *chan,
 
 	spin_lock_irqsave(&plchan->vc.lock, flags);
 	ret = dma_cookie_status(chan, cookie, txstate);
-	if (ret != DMA_COMPLETE) {
+	if (ret != DMA_SUCCESS) {
 		vd = vchan_find_desc(&plchan->vc, cookie);
 		if (vd) {
 			/* On the issued list, so hasn't been processed yet */
@@ -1390,7 +1305,6 @@ static int dma_set_runtime_config(struct dma_chan *chan,
 				  struct dma_slave_config *config)
 {
 	struct pl08x_dma_chan *plchan = to_pl08x_chan(chan);
-	struct pl08x_driver_data *pl08x = plchan->host;
 
 	if (!plchan->slave)
 		return -EINVAL;
@@ -1399,13 +1313,6 @@ static int dma_set_runtime_config(struct dma_chan *chan,
 	if (config->src_addr_width == DMA_SLAVE_BUSWIDTH_8_BYTES ||
 	    config->dst_addr_width == DMA_SLAVE_BUSWIDTH_8_BYTES)
 		return -EINVAL;
-
-	if (config->device_fc && pl08x->vd->pl080s) {
-		dev_err(&pl08x->adev->dev,
-			"%s: PL080S does not support peripheral flow control\n",
-			__func__);
-		return -EINVAL;
-	}
 
 	plchan->cfg = *config;
 
@@ -1497,18 +1404,24 @@ static struct dma_async_tx_descriptor *pl08x_prep_dma_memcpy(
 	return vchan_tx_prep(&plchan->vc, &txd->vd, flags);
 }
 
-static struct pl08x_txd *pl08x_init_txd(
-		struct dma_chan *chan,
-		enum dma_transfer_direction direction,
-		dma_addr_t *slave_addr)
+static struct dma_async_tx_descriptor *pl08x_prep_slave_sg(
+		struct dma_chan *chan, struct scatterlist *sgl,
+		unsigned int sg_len, enum dma_transfer_direction direction,
+		unsigned long flags, void *context)
 {
 	struct pl08x_dma_chan *plchan = to_pl08x_chan(chan);
 	struct pl08x_driver_data *pl08x = plchan->host;
 	struct pl08x_txd *txd;
+	struct pl08x_sg *dsg;
+	struct scatterlist *sg;
 	enum dma_slave_buswidth addr_width;
+	dma_addr_t slave_addr;
 	int ret, tmp;
 	u8 src_buses, dst_buses;
 	u32 maxburst, cctl;
+
+	dev_dbg(&pl08x->adev->dev, "%s prepare transaction of %d bytes from %s\n",
+			__func__, sg_dma_len(sgl), plchan->name);
 
 	txd = pl08x_get_txd(plchan);
 	if (!txd) {
@@ -1523,14 +1436,14 @@ static struct pl08x_txd *pl08x_init_txd(
 	 */
 	if (direction == DMA_MEM_TO_DEV) {
 		cctl = PL080_CONTROL_SRC_INCR;
-		*slave_addr = plchan->cfg.dst_addr;
+		slave_addr = plchan->cfg.dst_addr;
 		addr_width = plchan->cfg.dst_addr_width;
 		maxburst = plchan->cfg.dst_maxburst;
 		src_buses = pl08x->mem_buses;
 		dst_buses = plchan->cd->periph_buses;
 	} else if (direction == DMA_DEV_TO_MEM) {
 		cctl = PL080_CONTROL_DST_INCR;
-		*slave_addr = plchan->cfg.src_addr;
+		slave_addr = plchan->cfg.src_addr;
 		addr_width = plchan->cfg.src_addr_width;
 		maxburst = plchan->cfg.src_maxburst;
 		src_buses = plchan->cd->periph_buses;
@@ -1579,107 +1492,24 @@ static struct pl08x_txd *pl08x_init_txd(
 	else
 		txd->ccfg |= plchan->signal << PL080_CONFIG_SRC_SEL_SHIFT;
 
-	return txd;
-}
-
-static int pl08x_tx_add_sg(struct pl08x_txd *txd,
-			   enum dma_transfer_direction direction,
-			   dma_addr_t slave_addr,
-			   dma_addr_t buf_addr,
-			   unsigned int len)
-{
-	struct pl08x_sg *dsg;
-
-	dsg = kzalloc(sizeof(struct pl08x_sg), GFP_NOWAIT);
-	if (!dsg)
-		return -ENOMEM;
-
-	list_add_tail(&dsg->node, &txd->dsg_list);
-
-	dsg->len = len;
-	if (direction == DMA_MEM_TO_DEV) {
-		dsg->src_addr = buf_addr;
-		dsg->dst_addr = slave_addr;
-	} else {
-		dsg->src_addr = slave_addr;
-		dsg->dst_addr = buf_addr;
-	}
-
-	return 0;
-}
-
-static struct dma_async_tx_descriptor *pl08x_prep_slave_sg(
-		struct dma_chan *chan, struct scatterlist *sgl,
-		unsigned int sg_len, enum dma_transfer_direction direction,
-		unsigned long flags, void *context)
-{
-	struct pl08x_dma_chan *plchan = to_pl08x_chan(chan);
-	struct pl08x_driver_data *pl08x = plchan->host;
-	struct pl08x_txd *txd;
-	struct scatterlist *sg;
-	int ret, tmp;
-	dma_addr_t slave_addr;
-
-	dev_dbg(&pl08x->adev->dev, "%s prepare transaction of %d bytes from %s\n",
-			__func__, sg_dma_len(sgl), plchan->name);
-
-	txd = pl08x_init_txd(chan, direction, &slave_addr);
-	if (!txd)
-		return NULL;
-
 	for_each_sg(sgl, sg, sg_len, tmp) {
-		ret = pl08x_tx_add_sg(txd, direction, slave_addr,
-				      sg_dma_address(sg),
-				      sg_dma_len(sg));
-		if (ret) {
+		dsg = kzalloc(sizeof(struct pl08x_sg), GFP_NOWAIT);
+		if (!dsg) {
 			pl08x_release_mux(plchan);
 			pl08x_free_txd(pl08x, txd);
 			dev_err(&pl08x->adev->dev, "%s no mem for pl080 sg\n",
 					__func__);
 			return NULL;
 		}
-	}
+		list_add_tail(&dsg->node, &txd->dsg_list);
 
-	ret = pl08x_fill_llis_for_desc(plchan->host, txd);
-	if (!ret) {
-		pl08x_release_mux(plchan);
-		pl08x_free_txd(pl08x, txd);
-		return NULL;
-	}
-
-	return vchan_tx_prep(&plchan->vc, &txd->vd, flags);
-}
-
-static struct dma_async_tx_descriptor *pl08x_prep_dma_cyclic(
-		struct dma_chan *chan, dma_addr_t buf_addr, size_t buf_len,
-		size_t period_len, enum dma_transfer_direction direction,
-		unsigned long flags)
-{
-	struct pl08x_dma_chan *plchan = to_pl08x_chan(chan);
-	struct pl08x_driver_data *pl08x = plchan->host;
-	struct pl08x_txd *txd;
-	int ret, tmp;
-	dma_addr_t slave_addr;
-
-	dev_dbg(&pl08x->adev->dev,
-		"%s prepare cyclic transaction of %zd/%zd bytes %s %s\n",
-		__func__, period_len, buf_len,
-		direction == DMA_MEM_TO_DEV ? "to" : "from",
-		plchan->name);
-
-	txd = pl08x_init_txd(chan, direction, &slave_addr);
-	if (!txd)
-		return NULL;
-
-	txd->cyclic = true;
-	txd->cctl |= PL080_CONTROL_TC_IRQ_EN;
-	for (tmp = 0; tmp < buf_len; tmp += period_len) {
-		ret = pl08x_tx_add_sg(txd, direction, slave_addr,
-				      buf_addr + tmp, period_len);
-		if (ret) {
-			pl08x_release_mux(plchan);
-			pl08x_free_txd(pl08x, txd);
-			return NULL;
+		dsg->len = sg_dma_len(sg);
+		if (direction == DMA_MEM_TO_DEV) {
+			dsg->src_addr = sg_dma_address(sg);
+			dsg->dst_addr = slave_addr;
+		} else {
+			dsg->src_addr = slave_addr;
+			dsg->dst_addr = sg_dma_address(sg);
 		}
 	}
 
@@ -1772,7 +1602,6 @@ bool pl08x_filter_id(struct dma_chan *chan, void *chan_id)
 
 	return false;
 }
-EXPORT_SYMBOL_GPL(pl08x_filter_id);
 
 /*
  * Just check that the device is there and active
@@ -1823,9 +1652,7 @@ static irqreturn_t pl08x_irq(int irq, void *dev)
 
 			spin_lock(&plchan->vc.lock);
 			tx = plchan->at;
-			if (tx && tx->cyclic) {
-				vchan_cyclic_callback(&tx->vd);
-			} else if (tx) {
+			if (tx) {
 				plchan->at = NULL;
 				/*
 				 * This descriptor is done, release its mux
@@ -2019,18 +1846,12 @@ static int pl08x_probe(struct amba_device *adev, const struct amba_id *id)
 {
 	struct pl08x_driver_data *pl08x;
 	const struct vendor_data *vd = id->data;
-	u32 tsfr_size;
 	int ret = 0;
 	int i;
 
 	ret = amba_request_regions(adev, NULL);
 	if (ret)
 		return ret;
-
-	/* Ensure that we can do DMA */
-	ret = dma_set_mask_and_coherent(&adev->dev, DMA_BIT_MASK(32));
-	if (ret)
-		goto out_no_pl08x;
 
 	/* Create the driver state holder */
 	pl08x = kzalloc(sizeof(*pl08x), GFP_KERNEL);
@@ -2052,7 +1873,6 @@ static int pl08x_probe(struct amba_device *adev, const struct amba_id *id)
 
 	/* Initialize slave engine */
 	dma_cap_set(DMA_SLAVE, pl08x->slave.cap_mask);
-	dma_cap_set(DMA_CYCLIC, pl08x->slave.cap_mask);
 	pl08x->slave.dev = &adev->dev;
 	pl08x->slave.device_alloc_chan_resources = pl08x_alloc_chan_resources;
 	pl08x->slave.device_free_chan_resources = pl08x_free_chan_resources;
@@ -2060,7 +1880,6 @@ static int pl08x_probe(struct amba_device *adev, const struct amba_id *id)
 	pl08x->slave.device_tx_status = pl08x_dma_tx_status;
 	pl08x->slave.device_issue_pending = pl08x_issue_pending;
 	pl08x->slave.device_prep_slave_sg = pl08x_prep_slave_sg;
-	pl08x->slave.device_prep_dma_cyclic = pl08x_prep_dma_cyclic;
 	pl08x->slave.device_control = pl08x_control;
 
 	/* Get the platform data */
@@ -2083,15 +1902,9 @@ static int pl08x_probe(struct amba_device *adev, const struct amba_id *id)
 		pl08x->mem_buses = pl08x->pd->mem_buses;
 	}
 
-	if (vd->pl080s)
-		pl08x->lli_words = PL080S_LLI_WORDS;
-	else
-		pl08x->lli_words = PL080_LLI_WORDS;
-	tsfr_size = MAX_NUM_TSFR_LLIS * pl08x->lli_words * sizeof(u32);
-
 	/* A DMA memory pool for LLIs, align on 1-byte boundary */
 	pl08x->pool = dma_pool_create(DRIVER_NAME, &pl08x->adev->dev,
-						tsfr_size, PL08X_ALIGN, 0);
+			PL08X_LLI_TSFR_SIZE, PL08X_ALIGN, 0);
 	if (!pl08x->pool) {
 		ret = -ENOMEM;
 		goto out_no_lli_pool;
@@ -2110,7 +1923,8 @@ static int pl08x_probe(struct amba_device *adev, const struct amba_id *id)
 	writel(0x000000FF, pl08x->base + PL080_ERR_CLEAR);
 	writel(0x000000FF, pl08x->base + PL080_TC_CLEAR);
 
-	ret = request_irq(adev->irq[0], pl08x_irq, 0, DRIVER_NAME, pl08x);
+	ret = request_irq(adev->irq[0], pl08x_irq, IRQF_DISABLED,
+			  DRIVER_NAME, pl08x);
 	if (ret) {
 		dev_err(&adev->dev, "%s failed to request interrupt %d\n",
 			__func__, adev->irq[0]);
@@ -2133,7 +1947,6 @@ static int pl08x_probe(struct amba_device *adev, const struct amba_id *id)
 
 		ch->id = i;
 		ch->base = pl08x->base + PL080_Cx_BASE(i);
-		ch->reg_config = ch->base + vd->config_offset;
 		spin_lock_init(&ch->lock);
 
 		/*
@@ -2144,7 +1957,7 @@ static int pl08x_probe(struct amba_device *adev, const struct amba_id *id)
 		if (vd->nomadik) {
 			u32 val;
 
-			val = readl(ch->reg_config);
+			val = readl(ch->base + PL080_CH_CONFIG);
 			if (val & (PL080N_CONFIG_ITPROT | PL080N_CONFIG_SECPROT)) {
 				dev_info(&adev->dev, "physical channel %d reserved for secure access only\n", i);
 				ch->locked = true;
@@ -2169,7 +1982,7 @@ static int pl08x_probe(struct amba_device *adev, const struct amba_id *id)
 	/* Register slave channels */
 	ret = pl08x_dma_init_virtual_channels(pl08x, &pl08x->slave,
 			pl08x->pd->num_slave_channels, true);
-	if (ret < 0) {
+	if (ret <= 0) {
 		dev_warn(&pl08x->adev->dev,
 			"%s failed to enumerate slave channels - %d\n",
 				__func__, ret);
@@ -2195,8 +2008,8 @@ static int pl08x_probe(struct amba_device *adev, const struct amba_id *id)
 
 	amba_set_drvdata(adev, pl08x);
 	init_pl08x_debugfs(pl08x);
-	dev_info(&pl08x->adev->dev, "DMA: PL%03x%s rev%u at 0x%08llx irq %d\n",
-		 amba_part(adev), pl08x->vd->pl080s ? "s" : "", amba_rev(adev),
+	dev_info(&pl08x->adev->dev, "DMA: PL%03x rev%u at 0x%08llx irq %d\n",
+		 amba_part(adev), amba_rev(adev),
 		 (unsigned long long)adev->res.start, adev->irq[0]);
 
 	return 0;
@@ -2225,41 +2038,22 @@ out_no_pl08x:
 
 /* PL080 has 8 channels and the PL080 have just 2 */
 static struct vendor_data vendor_pl080 = {
-	.config_offset = PL080_CH_CONFIG,
 	.channels = 8,
 	.dualmaster = true,
-	.max_transfer_size = PL080_CONTROL_TRANSFER_SIZE_MASK,
 };
 
 static struct vendor_data vendor_nomadik = {
-	.config_offset = PL080_CH_CONFIG,
 	.channels = 8,
 	.dualmaster = true,
 	.nomadik = true,
-	.max_transfer_size = PL080_CONTROL_TRANSFER_SIZE_MASK,
-};
-
-static struct vendor_data vendor_pl080s = {
-	.config_offset = PL080S_CH_CONFIG,
-	.channels = 8,
-	.pl080s = true,
-	.max_transfer_size = PL080S_CONTROL_TRANSFER_SIZE_MASK,
 };
 
 static struct vendor_data vendor_pl081 = {
-	.config_offset = PL080_CH_CONFIG,
 	.channels = 2,
 	.dualmaster = false,
-	.max_transfer_size = PL080_CONTROL_TRANSFER_SIZE_MASK,
 };
 
 static struct amba_id pl08x_ids[] = {
-	/* Samsung PL080S variant */
-	{
-		.id	= 0x0a141080,
-		.mask	= 0xffffffff,
-		.data	= &vendor_pl080s,
-	},
 	/* PL080 */
 	{
 		.id	= 0x00041080,

@@ -198,7 +198,6 @@ static void srpt_event_handler(struct ib_event_handler *handler,
 	case IB_EVENT_PKEY_CHANGE:
 	case IB_EVENT_SM_CHANGE:
 	case IB_EVENT_CLIENT_REREGISTER:
-	case IB_EVENT_GID_CHANGE:
 		/* Refresh port data asynchronously. */
 		if (event->element.port_num <= sdev->device->phys_port_cnt) {
 			sport = &sdev->port[event->element.port_num - 1];
@@ -564,7 +563,7 @@ static int srpt_refresh_port(struct srpt_port *sport)
 							 &reg_req, 0,
 							 srpt_mad_send_handler,
 							 srpt_mad_recv_handler,
-							 sport, 0);
+							 sport);
 		if (IS_ERR(sport->mad_agent)) {
 			ret = PTR_ERR(sport->mad_agent);
 			sport->mad_agent = NULL;
@@ -1357,8 +1356,11 @@ static int srpt_abort_cmd(struct srpt_send_ioctx *ioctx)
 
 		/* XXX(hch): this is a horrible layering violation.. */
 		spin_lock_irqsave(&ioctx->cmd.t_state_lock, flags);
+		ioctx->cmd.transport_state |= CMD_T_LUN_STOP;
 		ioctx->cmd.transport_state &= ~CMD_T_ACTIVE;
 		spin_unlock_irqrestore(&ioctx->cmd.t_state_lock, flags);
+
+		complete(&ioctx->cmd.transport_lun_stop_comp);
 		break;
 	case SRPT_STATE_CMD_RSP_SENT:
 		/*
@@ -1366,6 +1368,9 @@ static int srpt_abort_cmd(struct srpt_send_ioctx *ioctx)
 		 * not been received in time.
 		 */
 		srpt_unmap_sg_to_ib_sge(ioctx->ch, ioctx);
+		spin_lock_irqsave(&ioctx->cmd.t_state_lock, flags);
+		ioctx->cmd.transport_state |= CMD_T_LUN_STOP;
+		spin_unlock_irqrestore(&ioctx->cmd.t_state_lock, flags);
 		target_put_sess_cmd(ioctx->ch->sess, &ioctx->cmd);
 		break;
 	case SRPT_STATE_MGMT_RSP_SENT:
@@ -1475,6 +1480,7 @@ static void srpt_handle_rdma_err_comp(struct srpt_rdma_ch *ch,
 {
 	struct se_cmd *cmd;
 	enum srpt_command_state state;
+	unsigned long flags;
 
 	cmd = &ioctx->cmd;
 	state = srpt_get_cmd_state(ioctx);
@@ -1494,6 +1500,9 @@ static void srpt_handle_rdma_err_comp(struct srpt_rdma_ch *ch,
 			       __func__, __LINE__, state);
 		break;
 	case SRPT_RDMA_WRITE_LAST:
+		spin_lock_irqsave(&ioctx->cmd.t_state_lock, flags);
+		ioctx->cmd.transport_state |= CMD_T_LUN_STOP;
+		spin_unlock_irqrestore(&ioctx->cmd.t_state_lock, flags);
 		break;
 	default:
 		printk(KERN_ERR "%s[%d]: opcode = %u\n", __func__,
@@ -2092,7 +2101,6 @@ static int srpt_create_ch_ib(struct srpt_rdma_ch *ch)
 	if (!qp_init)
 		goto out;
 
-retry:
 	ch->cq = ib_create_cq(sdev->device, srpt_completion, NULL, ch,
 			      ch->rq_size + srp_sq_size, 0);
 	if (IS_ERR(ch->cq)) {
@@ -2116,13 +2124,6 @@ retry:
 	ch->qp = ib_create_qp(sdev->pd, qp_init);
 	if (IS_ERR(ch->qp)) {
 		ret = PTR_ERR(ch->qp);
-		if (ret == -ENOMEM) {
-			srp_sq_size /= 2;
-			if (srp_sq_size >= MIN_SRPT_SQ_SIZE) {
-				ib_destroy_cq(ch->cq);
-				goto retry;
-			}
-		}
 		printk(KERN_ERR "failed to create_qp ret= %d\n", ret);
 		goto err_destroy_cq;
 	}
@@ -2593,7 +2594,7 @@ static int srpt_cm_req_recv(struct ib_cm_id *cm_id,
 		goto destroy_ib;
 	}
 
-	ch->sess = transport_init_session(TARGET_PROT_NORMAL);
+	ch->sess = transport_init_session();
 	if (IS_ERR(ch->sess)) {
 		rej->reason = __constant_cpu_to_be32(
 				SRP_LOGIN_REJ_INSUFFICIENT_RESOURCES);
@@ -3012,7 +3013,7 @@ static u8 tcm_to_srp_tsk_mgmt_status(const int tcm_mgmt_status)
  * Callback function called by the TCM core. Must not block since it can be
  * invoked on the context of the IB completion handler.
  */
-static void srpt_queue_response(struct se_cmd *cmd)
+static int srpt_queue_response(struct se_cmd *cmd)
 {
 	struct srpt_rdma_ch *ch;
 	struct srpt_send_ioctx *ioctx;
@@ -3022,6 +3023,8 @@ static void srpt_queue_response(struct se_cmd *cmd)
 	enum dma_data_direction dir;
 	int resp_len;
 	u8 srp_tm_status;
+
+	ret = 0;
 
 	ioctx = container_of(cmd, struct srpt_send_ioctx, cmd);
 	ch = ioctx->ch;
@@ -3048,7 +3051,7 @@ static void srpt_queue_response(struct se_cmd *cmd)
 		     || WARN_ON_ONCE(state == SRPT_STATE_CMD_RSP_SENT))) {
 		atomic_inc(&ch->req_lim_delta);
 		srpt_abort_cmd(ioctx);
-		return;
+		goto out;
 	}
 
 	dir = ioctx->cmd.data_direction;
@@ -3060,7 +3063,7 @@ static void srpt_queue_response(struct se_cmd *cmd)
 		if (ret) {
 			printk(KERN_ERR "xfer_data failed for tag %llu\n",
 			       ioctx->tag);
-			return;
+			goto out;
 		}
 	}
 
@@ -3081,25 +3084,9 @@ static void srpt_queue_response(struct se_cmd *cmd)
 		srpt_set_cmd_state(ioctx, SRPT_STATE_DONE);
 		target_put_sess_cmd(ioctx->ch->sess, &ioctx->cmd);
 	}
-}
 
-static int srpt_queue_data_in(struct se_cmd *cmd)
-{
-	srpt_queue_response(cmd);
-	return 0;
-}
-
-static void srpt_queue_tm_rsp(struct se_cmd *cmd)
-{
-	srpt_queue_response(cmd);
-}
-
-static void srpt_aborted_task(struct se_cmd *cmd)
-{
-	struct srpt_send_ioctx *ioctx = container_of(cmd,
-				struct srpt_send_ioctx, cmd);
-
-	srpt_unmap_sg_to_ib_sge(ioctx->ch, ioctx);
+out:
+	return ret;
 }
 
 static int srpt_queue_status(struct se_cmd *cmd)
@@ -3112,8 +3099,7 @@ static int srpt_queue_status(struct se_cmd *cmd)
 	    (SCF_TRANSPORT_TASK_SENSE | SCF_EMULATED_TASK_SENSE))
 		WARN_ON(cmd->scsi_status != SAM_STAT_CHECK_CONDITION);
 	ioctx->queue_status_only = true;
-	srpt_queue_response(cmd);
-	return 0;
+	return srpt_queue_response(cmd);
 }
 
 static void srpt_refresh_port_work(struct work_struct *work)
@@ -3582,7 +3568,7 @@ static int srpt_parse_i_port_id(u8 i_port_id[16], const char *name)
 	int ret, rc;
 
 	p = name;
-	if (strncasecmp(p, "0x", 2) == 0)
+	if (strnicmp(p, "0x", 2) == 0)
 		p += 2;
 	ret = -EINVAL;
 	len = strlen(p);
@@ -3687,9 +3673,9 @@ static ssize_t srpt_tpg_attrib_store_srp_max_rdma_size(
 	unsigned long val;
 	int ret;
 
-	ret = kstrtoul(page, 0, &val);
+	ret = strict_strtoul(page, 0, &val);
 	if (ret < 0) {
-		pr_err("kstrtoul() failed with ret: %d\n", ret);
+		pr_err("strict_strtoul() failed with ret: %d\n", ret);
 		return -EINVAL;
 	}
 	if (val > MAX_SRPT_RDMA_SIZE) {
@@ -3727,9 +3713,9 @@ static ssize_t srpt_tpg_attrib_store_srp_max_rsp_size(
 	unsigned long val;
 	int ret;
 
-	ret = kstrtoul(page, 0, &val);
+	ret = strict_strtoul(page, 0, &val);
 	if (ret < 0) {
-		pr_err("kstrtoul() failed with ret: %d\n", ret);
+		pr_err("strict_strtoul() failed with ret: %d\n", ret);
 		return -EINVAL;
 	}
 	if (val > MAX_SRPT_RSP_SIZE) {
@@ -3767,9 +3753,9 @@ static ssize_t srpt_tpg_attrib_store_srp_sq_size(
 	unsigned long val;
 	int ret;
 
-	ret = kstrtoul(page, 0, &val);
+	ret = strict_strtoul(page, 0, &val);
 	if (ret < 0) {
-		pr_err("kstrtoul() failed with ret: %d\n", ret);
+		pr_err("strict_strtoul() failed with ret: %d\n", ret);
 		return -EINVAL;
 	}
 	if (val > MAX_SRPT_SRQ_SIZE) {
@@ -3814,7 +3800,7 @@ static ssize_t srpt_tpg_store_enable(
 	unsigned long tmp;
         int ret;
 
-	ret = kstrtoul(page, 0, &tmp);
+	ret = strict_strtoul(page, 0, &tmp);
 	if (ret < 0) {
 		printk(KERN_ERR "Unable to extract srpt_tpg_store_enable\n");
 		return -EINVAL;
@@ -3946,10 +3932,9 @@ static struct target_core_fabric_ops srpt_template = {
 	.set_default_node_attributes	= srpt_set_default_node_attrs,
 	.get_task_tag			= srpt_get_task_tag,
 	.get_cmd_state			= srpt_get_tcm_cmd_state,
-	.queue_data_in			= srpt_queue_data_in,
+	.queue_data_in			= srpt_queue_response,
 	.queue_status			= srpt_queue_status,
-	.queue_tm_rsp			= srpt_queue_tm_rsp,
-	.aborted_task			= srpt_aborted_task,
+	.queue_tm_rsp			= srpt_queue_response,
 	/*
 	 * Setup function pointers for generic logic in
 	 * target_core_fabric_configfs.c

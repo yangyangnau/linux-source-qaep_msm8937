@@ -101,5 +101,6 @@ EXPORT_SYMBOL_GPL(synth_buffer_peek);
 void synth_buffer_clear(void)
 {
 	buff_in = buff_out = synth_buffer;
+	return;
 }
 EXPORT_SYMBOL_GPL(synth_buffer_clear);

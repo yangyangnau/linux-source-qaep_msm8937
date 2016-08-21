@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2014, Intel Corp.
+ * Copyright (C) 2000 - 2013, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,8 +41,7 @@
  * POSSIBILITY OF SUCH DAMAGES.
  */
 
-#define EXPORT_ACPI_INTERFACES
-
+#include <linux/export.h>
 #include <acpi/acpi.h>
 #include "accommon.h"
 
@@ -167,7 +166,7 @@ ACPI_EXPORT_SYMBOL(acpi_set_firmware_waking_vector64)
  *              THIS FUNCTION MUST BE CALLED WITH INTERRUPTS DISABLED
  *
  ******************************************************************************/
-acpi_status acpi_enter_sleep_state_s4bios(void)
+acpi_status asmlinkage acpi_enter_sleep_state_s4bios(void)
 {
 	u32 in_value;
 	acpi_status status;
@@ -317,24 +316,20 @@ acpi_status acpi_enter_sleep_state_prep(u8 sleep_state)
 
 	switch (sleep_state) {
 	case ACPI_STATE_S0:
-
 		sst_value = ACPI_SST_WORKING;
 		break;
 
 	case ACPI_STATE_S1:
 	case ACPI_STATE_S2:
 	case ACPI_STATE_S3:
-
 		sst_value = ACPI_SST_SLEEPING;
 		break;
 
 	case ACPI_STATE_S4:
-
 		sst_value = ACPI_SST_SLEEP_CONTEXT;
 		break;
 
 	default:
-
 		sst_value = ACPI_SST_INDICATOR_OFF;	/* Default is off */
 		break;
 	}
@@ -361,7 +356,7 @@ ACPI_EXPORT_SYMBOL(acpi_enter_sleep_state_prep)
  *              THIS FUNCTION MUST BE CALLED WITH INTERRUPTS DISABLED
  *
  ******************************************************************************/
-acpi_status acpi_enter_sleep_state(u8 sleep_state)
+acpi_status asmlinkage acpi_enter_sleep_state(u8 sleep_state)
 {
 	acpi_status status;
 

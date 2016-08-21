@@ -126,7 +126,7 @@ static inline __wsum udplite_csum(struct sk_buff *skb)
 	return skb_checksum(skb, off, len, 0);
 }
 
-void udplite4_register(void);
-int udplite_get_port(struct sock *sk, unsigned short snum,
-		     int (*scmp)(const struct sock *, const struct sock *));
+extern void	udplite4_register(void);
+extern int 	udplite_get_port(struct sock *sk, unsigned short snum,
+			int (*scmp)(const struct sock *, const struct sock *));
 #endif	/* _UDPLITE_H */

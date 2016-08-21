@@ -26,7 +26,6 @@ static int acer_tm360_irqrouting;
 static struct irq_routing_table *pirq_table;
 
 static int pirq_enable_irq(struct pci_dev *dev);
-static void pirq_disable_irq(struct pci_dev *dev);
 
 /*
  * Never use: 0, 1, 2 (timer, keyboard, and cascade)
@@ -54,7 +53,7 @@ struct irq_router_handler {
 };
 
 int (*pcibios_enable_irq)(struct pci_dev *dev) = pirq_enable_irq;
-void (*pcibios_disable_irq)(struct pci_dev *dev) = pirq_disable_irq;
+void (*pcibios_disable_irq)(struct pci_dev *dev) = NULL;
 
 /*
  *  Check passed address for the PCI IRQ Routing Table signature
@@ -137,9 +136,13 @@ static void __init pirq_peer_trick(void)
 		busmap[e->bus] = 1;
 	}
 	for (i = 1; i < 256; i++) {
+		int node;
 		if (!busmap[i] || pci_find_bus(0, i))
 			continue;
-		pcibios_scan_root(i);
+		node = get_mp_bus_to_node(i);
+		if (pci_scan_bus_on_node(i, &pci_root_ops, node))
+			printk(KERN_INFO "PCI: Discovered primary peer "
+			       "bus %02x [IRQ]\n", i);
 	}
 	pcibios_last_bus = -1;
 }
@@ -1187,7 +1190,7 @@ void pcibios_penalize_isa_irq(int irq, int active)
 
 static int pirq_enable_irq(struct pci_dev *dev)
 {
-	u8 pin = 0;
+	u8 pin;
 
 	pci_read_config_byte(dev, PCI_INTERRUPT_PIN, &pin);
 	if (pin && !pcibios_lookup_irq(dev, 1)) {
@@ -1228,6 +1231,8 @@ static int pirq_enable_irq(struct pci_dev *dev)
 			}
 			dev = temp_dev;
 			if (irq >= 0) {
+				io_apic_set_pci_routing(&dev->dev, irq,
+							 &irq_attr);
 				dev->irq = irq;
 				dev_info(&dev->dev, "PCI->APIC IRQ transform: "
 					 "INT %c -> IRQ %d\n", 'A' + pin - 1, irq);
@@ -1252,13 +1257,4 @@ static int pirq_enable_irq(struct pci_dev *dev)
 			 'A' + pin - 1, msg);
 	}
 	return 0;
-}
-
-static void pirq_disable_irq(struct pci_dev *dev)
-{
-	if (io_apic_assign_pci_irqs && !mp_should_keep_irq(&dev->dev) &&
-	    dev->irq) {
-		mp_unmap_irq(dev->irq);
-		dev->irq = 0;
-	}
 }

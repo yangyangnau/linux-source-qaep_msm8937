@@ -4,12 +4,12 @@
  * Copyright (c) 2000 Eric Brower (ebrower@usa.net)
  */
 
-#include <linux/device.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/errno.h>
 #include <linux/major.h>
+#include <linux/init.h>
 #include <linux/miscdevice.h>
 #include <linux/ioport.h>		/* request_region */
 #include <linux/slab.h>
@@ -144,7 +144,10 @@ static long d7s_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 	case D7SIOCTM:
 		/* toggle device mode-- flip display orientation */
-		regs ^= D7S_FLIP;
+		if (regs & D7S_FLIP)
+			regs &= ~D7S_FLIP;
+		else
+			regs |= D7S_FLIP;
 		writeb(regs, p->regs);
 		break;
 	}
@@ -178,7 +181,7 @@ static int d7s_probe(struct platform_device *op)
 	if (d7s_device)
 		goto out;
 
-	p = devm_kzalloc(&op->dev, sizeof(*p), GFP_KERNEL);
+	p = kzalloc(sizeof(*p), GFP_KERNEL);
 	err = -ENOMEM;
 	if (!p)
 		goto out;
@@ -229,6 +232,7 @@ out_iounmap:
 	of_iounmap(&op->resource[0], p->regs, sizeof(u8));
 
 out_free:
+	kfree(p);
 	goto out;
 }
 
@@ -248,6 +252,7 @@ static int d7s_remove(struct platform_device *op)
 
 	misc_deregister(&d7s_miscdev);
 	of_iounmap(&op->resource[0], p->regs, sizeof(u8));
+	kfree(p);
 
 	return 0;
 }

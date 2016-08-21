@@ -128,8 +128,10 @@ int __init x3proto_gpio_setup(void)
 	return 0;
 
 err_irq:
-	gpiochip_remove(&x3proto_gpio_chip);
-	ret = 0;
+	ret = gpiochip_remove(&x3proto_gpio_chip);
+	if (unlikely(ret))
+		pr_err("Failed deregistering GPIO\n");
+
 err_gpio:
 	synchronize_irq(ilsel);
 

@@ -313,7 +313,10 @@ out:
 
 static void recent_table_free(void *addr)
 {
-	kvfree(addr);
+	if (is_vmalloc_addr(addr))
+		vfree(addr);
+	else
+		kfree(addr);
 }
 
 static int recent_mt_check(const struct xt_mtchk_param *par,

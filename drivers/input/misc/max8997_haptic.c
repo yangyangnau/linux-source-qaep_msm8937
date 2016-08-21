@@ -23,6 +23,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/platform_device.h>
 #include <linux/err.h>
@@ -181,21 +182,11 @@ static void max8997_haptic_enable(struct max8997_haptic *chip)
 	}
 
 	if (!chip->enabled) {
-		error = regulator_enable(chip->regulator);
-		if (error) {
-			dev_err(chip->dev, "Failed to enable regulator\n");
-			goto out;
-		}
-		max8997_haptic_configure(chip);
-		if (chip->mode == MAX8997_EXTERNAL_MODE) {
-			error = pwm_enable(chip->pwm);
-			if (error) {
-				dev_err(chip->dev, "Failed to enable PWM\n");
-				regulator_disable(chip->regulator);
-				goto out;
-			}
-		}
 		chip->enabled = true;
+		regulator_enable(chip->regulator);
+		max8997_haptic_configure(chip);
+		if (chip->mode == MAX8997_EXTERNAL_MODE)
+			pwm_enable(chip->pwm);
 	}
 
 out:

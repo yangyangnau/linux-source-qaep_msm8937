@@ -1,4 +1,6 @@
 #
+# arch/microblaze/boot/Makefile
+#
 
 obj-y += linked_dtb.o
 

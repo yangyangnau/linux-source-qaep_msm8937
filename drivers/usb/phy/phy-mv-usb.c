@@ -11,6 +11,7 @@
 
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/init.h>
 #include <linux/io.h>
 #include <linux/uaccess.h>
 #include <linux/device.h>
@@ -212,12 +213,10 @@ static void mv_otg_start_host(struct mv_otg *mvotg, int on)
 
 	hcd = bus_to_hcd(otg->host);
 
-	if (on) {
+	if (on)
 		usb_add_hcd(hcd, hcd->irq, IRQF_SHARED);
-		device_wakeup_enable(hcd->self.controller);
-	} else {
+	else
 		usb_remove_hcd(hcd);
-	}
 #endif /* CONFIG_USB */
 }
 
@@ -654,7 +653,7 @@ static struct attribute_group inputs_attr_group = {
 	.attrs = inputs_attrs,
 };
 
-static int mv_otg_remove(struct platform_device *pdev)
+int mv_otg_remove(struct platform_device *pdev)
 {
 	struct mv_otg *mvotg = platform_get_drvdata(pdev);
 
@@ -674,7 +673,7 @@ static int mv_otg_remove(struct platform_device *pdev)
 
 static int mv_otg_probe(struct platform_device *pdev)
 {
-	struct mv_usb_platform_data *pdata = dev_get_platdata(&pdev->dev);
+	struct mv_usb_platform_data *pdata = pdev->dev.platform_data;
 	struct mv_otg *mvotg;
 	struct usb_otg *otg;
 	struct resource *r;
@@ -894,7 +893,7 @@ static int mv_otg_resume(struct platform_device *pdev)
 
 static struct platform_driver mv_otg_driver = {
 	.probe = mv_otg_probe,
-	.remove = mv_otg_remove,
+	.remove = __exit_p(mv_otg_remove),
 	.driver = {
 		   .owner = THIS_MODULE,
 		   .name = driver_name,

@@ -1,6 +1,5 @@
 *.a
 *.aux
-*.bc
 *.bin
 *.bz2
 *.cis
@@ -22,7 +21,6 @@
 *.i
 *.jpeg
 *.ko
-*.ll
 *.log
 *.lst
 *.lzma
@@ -37,7 +35,6 @@
 *.out
 *.patch
 *.pdf
-*.plist
 *.png
 *.pot
 *.ps

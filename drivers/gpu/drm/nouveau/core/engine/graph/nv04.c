@@ -24,6 +24,7 @@
 
 #include <core/client.h>
 #include <core/os.h>
+#include <core/class.h>
 #include <core/handle.h>
 #include <core/namedb.h>
 

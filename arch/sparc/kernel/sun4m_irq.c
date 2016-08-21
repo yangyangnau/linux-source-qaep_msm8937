@@ -9,8 +9,6 @@
  *  Copyright (C) 1996 Dave Redman (djhr@tadpole.co.uk)
  */
 
-#include <linux/slab.h>
-
 #include <asm/timer.h>
 #include <asm/traps.h>
 #include <asm/pgalloc.h>

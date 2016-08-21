@@ -218,9 +218,23 @@ static dma_addr_t crypt_phys;
 
 static int support_aes = 1;
 
-#define DRIVER_NAME "ixp4xx_crypto"
+static void dev_release(struct device *dev)
+{
+	return;
+}
 
-static struct platform_device *pdev;
+#define DRIVER_NAME "ixp4xx_crypto"
+static struct platform_device pseudo_dev = {
+	.name = DRIVER_NAME,
+	.id   = 0,
+	.num_resources = 0,
+	.dev  = {
+		.coherent_dma_mask = DMA_BIT_MASK(32),
+		.release = dev_release,
+	}
+};
+
+static struct device *dev = &pseudo_dev.dev;
 
 static inline dma_addr_t crypt_virt2phys(struct crypt_ctl *virt)
 {
@@ -249,7 +263,6 @@ static inline const struct ix_hash_algo *ix_hash(struct crypto_tfm *tfm)
 
 static int setup_crypt_desc(void)
 {
-	struct device *dev = &pdev->dev;
 	BUILD_BUG_ON(sizeof(struct crypt_ctl) != 64);
 	crypt_virt = dma_alloc_coherent(dev,
 			NPE_QLEN * sizeof(struct crypt_ctl),
@@ -350,7 +363,6 @@ static void finish_scattered_hmac(struct crypt_ctl *crypt)
 
 static void one_packet(dma_addr_t phys)
 {
-	struct device *dev = &pdev->dev;
 	struct crypt_ctl *crypt;
 	struct ixp_ctx *ctx;
 	int failed;
@@ -420,7 +432,7 @@ static void crypto_done_action(unsigned long arg)
 	tasklet_schedule(&crypto_done_tasklet);
 }
 
-static int init_ixp_crypto(struct device *dev)
+static int init_ixp_crypto(void)
 {
 	int ret = -ENODEV;
 	u32 msg[2] = { 0, 0 };
@@ -507,7 +519,7 @@ err:
 	return ret;
 }
 
-static void release_ixp_crypto(struct device *dev)
+static void release_ixp_crypto(void)
 {
 	qmgr_disable_irq(RECV_QID);
 	tasklet_kill(&crypto_done_tasklet);
@@ -874,7 +886,6 @@ static int ablk_perform(struct ablkcipher_request *req, int encrypt)
 	enum dma_data_direction src_direction = DMA_BIDIRECTIONAL;
 	struct ablk_ctx *req_ctx = ablkcipher_request_ctx(req);
 	struct buffer_desc src_hook;
-	struct device *dev = &pdev->dev;
 	gfp_t flags = req->base.flags & CRYPTO_TFM_REQ_MAY_SLEEP ?
 				GFP_KERNEL : GFP_ATOMIC;
 
@@ -999,7 +1010,6 @@ static int aead_perform(struct aead_request *req, int encrypt,
 	unsigned int cryptlen;
 	struct buffer_desc *buf, src_hook;
 	struct aead_ctx *req_ctx = aead_request_ctx(req);
-	struct device *dev = &pdev->dev;
 	gfp_t flags = req->base.flags & CRYPTO_TFM_REQ_MAY_SLEEP ?
 				GFP_KERNEL : GFP_ATOMIC;
 
@@ -1149,24 +1159,32 @@ static int aead_setkey(struct crypto_aead *tfm, const u8 *key,
 			unsigned int keylen)
 {
 	struct ixp_ctx *ctx = crypto_aead_ctx(tfm);
-	struct crypto_authenc_keys keys;
+	struct rtattr *rta = (struct rtattr *)key;
+	struct crypto_authenc_key_param *param;
 
-	if (crypto_authenc_extractkeys(&keys, key, keylen) != 0)
+	if (!RTA_OK(rta, keylen))
+		goto badkey;
+	if (rta->rta_type != CRYPTO_AUTHENC_KEYA_PARAM)
+		goto badkey;
+	if (RTA_PAYLOAD(rta) < sizeof(*param))
 		goto badkey;
 
-	if (keys.authkeylen > sizeof(ctx->authkey))
+	param = RTA_DATA(rta);
+	ctx->enckey_len = be32_to_cpu(param->enckeylen);
+
+	key += RTA_ALIGN(rta->rta_len);
+	keylen -= RTA_ALIGN(rta->rta_len);
+
+	if (keylen < ctx->enckey_len)
 		goto badkey;
 
-	if (keys.enckeylen > sizeof(ctx->enckey))
-		goto badkey;
-
-	memcpy(ctx->authkey, keys.authkey, keys.authkeylen);
-	memcpy(ctx->enckey, keys.enckey, keys.enckeylen);
-	ctx->authkey_len = keys.authkeylen;
-	ctx->enckey_len = keys.enckeylen;
+	ctx->authkey_len = keylen - ctx->enckey_len;
+	memcpy(ctx->enckey, key + ctx->authkey_len, ctx->enckey_len);
+	memcpy(ctx->authkey, key, ctx->authkey_len);
 
 	return aead_setup(tfm, crypto_aead_authsize(tfm));
 badkey:
+	ctx->enckey_len = 0;
 	crypto_aead_set_flags(tfm, CRYPTO_TFM_RES_BAD_KEY_LEN);
 	return -EINVAL;
 }
@@ -1400,28 +1418,20 @@ static struct ixp_alg ixp4xx_algos[] = {
 } };
 
 #define IXP_POSTFIX "-ixp4xx"
-
-static const struct platform_device_info ixp_dev_info __initdata = {
-	.name		= DRIVER_NAME,
-	.id		= 0,
-	.dma_mask	= DMA_BIT_MASK(32),
-};
-
 static int __init ixp_module_init(void)
 {
 	int num = ARRAY_SIZE(ixp4xx_algos);
-	int i, err;
+	int i,err ;
 
-	pdev = platform_device_register_full(&ixp_dev_info);
-	if (IS_ERR(pdev))
-		return PTR_ERR(pdev);
+	if (platform_device_register(&pseudo_dev))
+		return -ENODEV;
 
 	spin_lock_init(&desc_lock);
 	spin_lock_init(&emerg_lock);
 
-	err = init_ixp_crypto(&pdev->dev);
+	err = init_ixp_crypto();
 	if (err) {
-		platform_device_unregister(pdev);
+		platform_device_unregister(&pseudo_dev);
 		return err;
 	}
 	for (i=0; i< num; i++) {
@@ -1485,8 +1495,8 @@ static void __exit ixp_module_exit(void)
 		if (ixp4xx_algos[i].registered)
 			crypto_unregister_alg(&ixp4xx_algos[i].crypto);
 	}
-	release_ixp_crypto(&pdev->dev);
-	platform_device_unregister(pdev);
+	release_ixp_crypto();
+	platform_device_unregister(&pseudo_dev);
 }
 
 module_init(ixp_module_init);

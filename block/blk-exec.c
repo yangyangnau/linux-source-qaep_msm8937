@@ -5,7 +5,6 @@
 #include <linux/module.h>
 #include <linux/bio.h>
 #include <linux/blkdev.h>
-#include <linux/blk-mq.h>
 #include <linux/sched/sysctl.h>
 
 #include "blk.h"
@@ -25,6 +24,7 @@ static void blk_end_sync_rq(struct request *rq, int error)
 	struct completion *waiting = rq->end_io_data;
 
 	rq->end_io_data = NULL;
+	__blk_put_request(rq->q, rq);
 
 	/*
 	 * complete last, if this is a stack request the process (and thus
@@ -56,20 +56,9 @@ void blk_execute_rq_nowait(struct request_queue *q, struct gendisk *bd_disk,
 	bool is_pm_resume;
 
 	WARN_ON(irqs_disabled());
-	WARN_ON(rq->cmd_type == REQ_TYPE_FS);
 
 	rq->rq_disk = bd_disk;
 	rq->end_io = done;
-
-	/*
-	 * don't check dying flag for MQ because the request won't
-	 * be resued after dying flag is set
-	 */
-	if (q->mq_ops) {
-		blk_mq_insert_request(rq, at_head, true, false);
-		return;
-	}
-
 	/*
 	 * need to check this before __blk_run_queue(), because rq can
 	 * be freed before that returns.
@@ -79,9 +68,9 @@ void blk_execute_rq_nowait(struct request_queue *q, struct gendisk *bd_disk,
 	spin_lock_irq(q->queue_lock);
 
 	if (unlikely(blk_queue_dying(q))) {
-		rq->cmd_flags |= REQ_QUIET; 
 		rq->errors = -ENXIO;
-		__blk_end_request_all(rq, rq->errors);
+		if (rq->end_io)
+			rq->end_io(rq, rq->errors);
 		spin_unlock_irq(q->queue_lock);
 		return;
 	}
@@ -114,6 +103,12 @@ int blk_execute_rq(struct request_queue *q, struct gendisk *bd_disk,
 	int err = 0;
 	unsigned long hang_check;
 
+	/*
+	 * we need an extra reference to the request, so we can look at
+	 * it after io completion
+	 */
+	rq->ref_count++;
+
 	if (!rq->sense) {
 		memset(sense, 0, sizeof(sense));
 		rq->sense = sense;
@@ -132,11 +127,6 @@ int blk_execute_rq(struct request_queue *q, struct gendisk *bd_disk,
 
 	if (rq->errors)
 		err = -EIO;
-
-	if (rq->sense == sense)	{
-		rq->sense = NULL;
-		rq->sense_len = 0;
-	}
 
 	return err;
 }

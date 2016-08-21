@@ -45,6 +45,9 @@ struct virtqueue {
 	void *priv;
 };
 
+#define MODULE_LICENSE(__MODULE_LICENSE_value) \
+	const char *__MODULE_LICENSE_name = __MODULE_LICENSE_value
+
 /* Interfaces exported by virtio_ring. */
 int virtqueue_add_sgs(struct virtqueue *vq,
 		      struct scatterlist *sgs[],
@@ -63,7 +66,7 @@ int virtqueue_add_inbuf(struct virtqueue *vq,
 			void *data,
 			gfp_t gfp);
 
-bool virtqueue_kick(struct virtqueue *vq);
+void virtqueue_kick(struct virtqueue *vq);
 
 void *virtqueue_get_buf(struct virtqueue *vq, unsigned int *len);
 
@@ -79,7 +82,7 @@ struct virtqueue *vring_new_virtqueue(unsigned int index,
 				      struct virtio_device *vdev,
 				      bool weak_barriers,
 				      void *pages,
-				      bool (*notify)(struct virtqueue *vq),
+				      void (*notify)(struct virtqueue *vq),
 				      void (*callback)(struct virtqueue *vq),
 				      const char *name);
 void vring_del_virtqueue(struct virtqueue *vq);

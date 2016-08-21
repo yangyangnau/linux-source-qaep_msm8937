@@ -19,11 +19,17 @@
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  *
- * Authors: Ben Skeggs, Ilia Mirkin
+ * Authors: Ben Skeggs
  */
 
-#include <engine/xtensa.h>
+#include <core/engctx.h>
+#include <core/class.h>
+
 #include <engine/bsp.h>
+
+struct nv84_bsp_priv {
+	struct nouveau_engine base;
+};
 
 /*******************************************************************************
  * BSP object classes
@@ -31,7 +37,6 @@
 
 static struct nouveau_oclass
 nv84_bsp_sclass[] = {
-	{ 0x74b0, &nouveau_object_ofuncs },
 	{},
 };
 
@@ -43,7 +48,7 @@ static struct nouveau_oclass
 nv84_bsp_cclass = {
 	.handle = NV_ENGCTX(BSP, 0x84),
 	.ofuncs = &(struct nouveau_ofuncs) {
-		.ctor = _nouveau_xtensa_engctx_ctor,
+		.ctor = _nouveau_engctx_ctor,
 		.dtor = _nouveau_engctx_dtor,
 		.init = _nouveau_engctx_init,
 		.fini = _nouveau_engctx_fini,
@@ -61,10 +66,10 @@ nv84_bsp_ctor(struct nouveau_object *parent, struct nouveau_object *engine,
 	      struct nouveau_oclass *oclass, void *data, u32 size,
 	      struct nouveau_object **pobject)
 {
-	struct nouveau_xtensa *priv;
+	struct nv84_bsp_priv *priv;
 	int ret;
 
-	ret = nouveau_xtensa_create(parent, engine, oclass, 0x103000, true,
+	ret = nouveau_engine_create(parent, engine, oclass, true,
 				    "PBSP", "bsp", &priv);
 	*pobject = nv_object(priv);
 	if (ret)
@@ -73,8 +78,6 @@ nv84_bsp_ctor(struct nouveau_object *parent, struct nouveau_object *engine,
 	nv_subdev(priv)->unit = 0x04008000;
 	nv_engine(priv)->cclass = &nv84_bsp_cclass;
 	nv_engine(priv)->sclass = nv84_bsp_sclass;
-	priv->fifo_val = 0x1111;
-	priv->unkd28 = 0x90044;
 	return 0;
 }
 
@@ -83,10 +86,8 @@ nv84_bsp_oclass = {
 	.handle = NV_ENGINE(BSP, 0x84),
 	.ofuncs = &(struct nouveau_ofuncs) {
 		.ctor = nv84_bsp_ctor,
-		.dtor = _nouveau_xtensa_dtor,
-		.init = _nouveau_xtensa_init,
-		.fini = _nouveau_xtensa_fini,
-		.rd32 = _nouveau_xtensa_rd32,
-		.wr32 = _nouveau_xtensa_wr32,
+		.dtor = _nouveau_engine_dtor,
+		.init = _nouveau_engine_init,
+		.fini = _nouveau_engine_fini,
 	},
 };

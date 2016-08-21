@@ -152,6 +152,17 @@ static const struct file_operations dccpprobe_fops = {
 	.llseek  = noop_llseek,
 };
 
+static __init int setup_jprobe(void)
+{
+	int ret = register_jprobe(&dccp_send_probe);
+
+	if (ret) {
+		request_module("dccp");
+		ret = register_jprobe(&dccp_send_probe);
+	}
+	return ret;
+}
+
 static __init int dccpprobe_init(void)
 {
 	int ret = -ENOMEM;
@@ -163,13 +174,7 @@ static __init int dccpprobe_init(void)
 	if (!proc_create(procname, S_IRUSR, init_net.proc_net, &dccpprobe_fops))
 		goto err0;
 
-	ret = register_jprobe(&dccp_send_probe);
-	if (ret) {
-		ret = request_module("dccp");
-		if (!ret)
-			ret = register_jprobe(&dccp_send_probe);
-	}
-
+	ret = setup_jprobe();
 	if (ret)
 		goto err1;
 

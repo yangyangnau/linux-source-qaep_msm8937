@@ -34,7 +34,6 @@
 #include "../event.h"
 #include "../trace-event.h"
 #include "../evsel.h"
-#include "../debug.h"
 
 void boot_Perf__Trace__Context(pTHX_ CV *cv);
 void boot_DynaLoader(pTHX_ CV *cv);
@@ -195,7 +194,8 @@ static void define_event_symbols(struct event_format *event,
 		zero_flag_atom = 0;
 		break;
 	case PRINT_FIELD:
-		free(cur_field_name);
+		if (cur_field_name)
+			free(cur_field_name);
 		cur_field_name = strdup(args->field.name);
 		break;
 	case PRINT_FLAGS:
@@ -216,7 +216,6 @@ static void define_event_symbols(struct event_format *event,
 	case PRINT_BSTRING:
 	case PRINT_DYNAMIC_ARRAY:
 	case PRINT_STRING:
-	case PRINT_BITMASK:
 		break;
 	case PRINT_TYPE:
 		define_event_symbols(event, ev_name, args->typecast.item);
@@ -258,9 +257,11 @@ static inline struct event_format *find_cache_event(struct perf_evsel *evsel)
 	return event;
 }
 
-static void perl_process_tracepoint(struct perf_sample *sample,
+static void perl_process_tracepoint(union perf_event *perf_event __maybe_unused,
+				    struct perf_sample *sample,
 				    struct perf_evsel *evsel,
-				    struct thread *thread)
+				    struct machine *machine __maybe_unused,
+				    struct addr_location *al)
 {
 	struct format_field *field;
 	static char handler[256];
@@ -271,7 +272,8 @@ static void perl_process_tracepoint(struct perf_sample *sample,
 	int cpu = sample->cpu;
 	void *data = sample->raw_data;
 	unsigned long long nsecs = sample->time;
-	const char *comm = thread__comm_str(thread);
+	struct thread *thread = al->thread;
+	char *comm = thread->comm;
 
 	dSP;
 
@@ -347,7 +349,9 @@ static void perl_process_tracepoint(struct perf_sample *sample,
 
 static void perl_process_event_generic(union perf_event *event,
 				       struct perf_sample *sample,
-				       struct perf_evsel *evsel)
+				       struct perf_evsel *evsel,
+				       struct machine *machine __maybe_unused,
+				       struct addr_location *al __maybe_unused)
 {
 	dSP;
 
@@ -372,11 +376,11 @@ static void perl_process_event_generic(union perf_event *event,
 static void perl_process_event(union perf_event *event,
 			       struct perf_sample *sample,
 			       struct perf_evsel *evsel,
-			       struct thread *thread,
-			       struct addr_location *al __maybe_unused)
+			       struct machine *machine,
+			       struct addr_location *al)
 {
-	perl_process_tracepoint(sample, evsel, thread);
-	perl_process_event_generic(event, sample, evsel);
+	perl_process_tracepoint(event, sample, evsel, machine, al);
+	perl_process_event_generic(event, sample, evsel, machine, al);
 }
 
 static void run_start_sub(void)
@@ -430,11 +434,6 @@ error:
 	free(command_line);
 
 	return err;
-}
-
-static int perl_flush_script(void)
-{
-	return 0;
 }
 
 /*
@@ -638,7 +637,6 @@ static int perl_generate_script(struct pevent *pevent, const char *outfile)
 struct scripting_ops perl_scripting_ops = {
 	.name = "Perl",
 	.start_script = perl_start_script,
-	.flush_script = perl_flush_script,
 	.stop_script = perl_stop_script,
 	.process_event = perl_process_event,
 	.generate_script = perl_generate_script,

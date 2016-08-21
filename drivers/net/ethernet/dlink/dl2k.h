@@ -25,6 +25,7 @@
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/skbuff.h>
+#include <linux/init.h>
 #include <linux/crc32.h>
 #include <linux/ethtool.h>
 #include <linux/mii.h>
@@ -408,7 +409,7 @@ struct netdev_private {
         driver_data             Data private to the driver.
 */
 
-static const struct pci_device_id rio_pci_tbl[] = {
+static DEFINE_PCI_DEVICE_TABLE(rio_pci_tbl) = {
 	{0x1186, 0x4000, PCI_ANY_ID, PCI_ANY_ID, },
 	{0x13f0, 0x1021, PCI_ANY_ID, PCI_ANY_ID, },
 	{ }

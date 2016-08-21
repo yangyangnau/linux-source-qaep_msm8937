@@ -113,6 +113,7 @@ static void pcibios_scanbus(struct pci_controller *hose)
 		if (!pci_has_flag(PCI_PROBE_ONLY)) {
 			pci_bus_size_bridges(bus);
 			pci_bus_assign_resources(bus);
+			pci_enable_bridges(bus);
 		}
 	}
 }
@@ -120,37 +121,51 @@ static void pcibios_scanbus(struct pci_controller *hose)
 #ifdef CONFIG_OF
 void pci_load_of_ranges(struct pci_controller *hose, struct device_node *node)
 {
-	struct of_pci_range range;
-	struct of_pci_range_parser parser;
+	const __be32 *ranges;
+	int rlen;
+	int pna = of_n_addr_cells(node);
+	int np = pna + 5;
 
 	pr_info("PCI host bridge %s ranges:\n", node->full_name);
+	ranges = of_get_property(node, "ranges", &rlen);
+	if (ranges == NULL)
+		return;
 	hose->of_node = node;
 
-	if (of_pci_range_parser_init(&parser, node))
-		return;
-
-	for_each_of_pci_range(&parser, &range) {
+	while ((rlen -= np * 4) >= 0) {
+		u32 pci_space;
 		struct resource *res = NULL;
+		u64 addr, size;
 
-		switch (range.flags & IORESOURCE_TYPE_BITS) {
-		case IORESOURCE_IO:
+		pci_space = be32_to_cpup(&ranges[0]);
+		addr = of_translate_address(node, ranges + 3);
+		size = of_read_number(ranges + pna + 3, 2);
+		ranges += np;
+		switch ((pci_space >> 24) & 0x3) {
+		case 1:		/* PCI IO space */
 			pr_info("  IO 0x%016llx..0x%016llx\n",
-				range.cpu_addr,
-				range.cpu_addr + range.size - 1);
+					addr, addr + size - 1);
 			hose->io_map_base =
-				(unsigned long)ioremap(range.cpu_addr,
-						       range.size);
+				(unsigned long)ioremap(addr, size);
 			res = hose->io_resource;
+			res->flags = IORESOURCE_IO;
 			break;
-		case IORESOURCE_MEM:
+		case 2:		/* PCI Memory space */
+		case 3:		/* PCI 64 bits Memory space */
 			pr_info(" MEM 0x%016llx..0x%016llx\n",
-				range.cpu_addr,
-				range.cpu_addr + range.size - 1);
+					addr, addr + size - 1);
 			res = hose->mem_resource;
+			res->flags = IORESOURCE_MEM;
 			break;
 		}
-		if (res != NULL)
-			of_pci_range_to_resource(&range, node, res);
+		if (res != NULL) {
+			res->start = addr;
+			res->name = node->full_name;
+			res->end = res->start + size - 1;
+			res->parent = NULL;
+			res->sibling = NULL;
+			res->child = NULL;
+		}
 	}
 }
 

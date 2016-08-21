@@ -17,14 +17,34 @@
 
 static int proc_initialized;	/* = 0 */
 
-static loff_t proc_bus_pci_lseek(struct file *file, loff_t off, int whence)
+static loff_t
+proc_bus_pci_lseek(struct file *file, loff_t off, int whence)
 {
-	struct pci_dev *dev = PDE_DATA(file_inode(file));
-	return fixed_size_llseek(file, off, whence, dev->cfg_size);
+	loff_t new = -1;
+	struct inode *inode = file_inode(file);
+
+	mutex_lock(&inode->i_mutex);
+	switch (whence) {
+	case 0:
+		new = off;
+		break;
+	case 1:
+		new = file->f_pos + off;
+		break;
+	case 2:
+		new = inode->i_size + off;
+		break;
+	}
+	if (new < 0 || new > inode->i_size)
+		new = -EINVAL;
+	else
+		file->f_pos = new;
+	mutex_unlock(&inode->i_mutex);
+	return new;
 }
 
-static ssize_t proc_bus_pci_read(struct file *file, char __user *buf,
-				 size_t nbytes, loff_t *ppos)
+static ssize_t
+proc_bus_pci_read(struct file *file, char __user *buf, size_t nbytes, loff_t *ppos)
 {
 	struct pci_dev *dev = PDE_DATA(file_inode(file));
 	unsigned int pos = *ppos;
@@ -107,8 +127,8 @@ static ssize_t proc_bus_pci_read(struct file *file, char __user *buf,
 	return nbytes;
 }
 
-static ssize_t proc_bus_pci_write(struct file *file, const char __user *buf,
-				  size_t nbytes, loff_t *ppos)
+static ssize_t
+proc_bus_pci_write(struct file *file, const char __user *buf, size_t nbytes, loff_t *ppos)
 {
 	struct inode *ino = file_inode(file);
 	struct pci_dev *dev = PDE_DATA(ino);
@@ -221,7 +241,7 @@ static long proc_bus_pci_ioctl(struct file *file, unsigned int cmd,
 	default:
 		ret = -EINVAL;
 		break;
-	}
+	};
 
 	return ret;
 }
@@ -412,7 +432,7 @@ int pci_proc_detach_device(struct pci_dev *dev)
 	return 0;
 }
 
-int pci_proc_detach_bus(struct pci_bus *bus)
+int pci_proc_detach_bus(struct pci_bus* bus)
 {
 	proc_remove(bus->procdir);
 	return 0;
@@ -422,7 +442,6 @@ static int proc_bus_pci_dev_open(struct inode *inode, struct file *file)
 {
 	return seq_open(file, &proc_bus_pci_devices_op);
 }
-
 static const struct file_operations proc_bus_pci_dev_operations = {
 	.owner		= THIS_MODULE,
 	.open		= proc_bus_pci_dev_open,
@@ -443,4 +462,6 @@ static int __init pci_proc_init(void)
 
 	return 0;
 }
+
 device_initcall(pci_proc_init);
+

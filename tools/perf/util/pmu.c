@@ -1,16 +1,20 @@
 #include <linux/list.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <stdio.h>
-#include <stdbool.h>
-#include <stdarg.h>
 #include <dirent.h>
-#include <api/fs/fs.h>
-#include <locale.h>
+#include "sysfs.h"
 #include "util.h"
 #include "pmu.h"
 #include "parse-events.h"
 #include "cpumap.h"
+
+struct perf_pmu_alias {
+	char *name;
+	struct list_head terms;
+	struct list_head list;
+};
 
 struct perf_pmu_format {
 	char *name;
@@ -69,12 +73,13 @@ int perf_pmu__format_parse(char *dir, struct list_head *head)
  * located at:
  * /sys/bus/event_source/devices/<dev>/format as sysfs group attributes.
  */
-static int pmu_format(const char *name, struct list_head *format)
+static int pmu_format(char *name, struct list_head *format)
 {
 	struct stat st;
 	char path[PATH_MAX];
-	const char *sysfs = sysfs__mountpoint();
+	const char *sysfs;
 
+	sysfs = sysfs_find_mountpoint();
 	if (!sysfs)
 		return -1;
 
@@ -90,80 +95,7 @@ static int pmu_format(const char *name, struct list_head *format)
 	return 0;
 }
 
-static int perf_pmu__parse_scale(struct perf_pmu_alias *alias, char *dir, char *name)
-{
-	struct stat st;
-	ssize_t sret;
-	char scale[128];
-	int fd, ret = -1;
-	char path[PATH_MAX];
-	const char *lc;
-
-	snprintf(path, PATH_MAX, "%s/%s.scale", dir, name);
-
-	fd = open(path, O_RDONLY);
-	if (fd == -1)
-		return -1;
-
-	if (fstat(fd, &st) < 0)
-		goto error;
-
-	sret = read(fd, scale, sizeof(scale)-1);
-	if (sret < 0)
-		goto error;
-
-	scale[sret] = '\0';
-	/*
-	 * save current locale
-	 */
-	lc = setlocale(LC_NUMERIC, NULL);
-
-	/*
-	 * force to C locale to ensure kernel
-	 * scale string is converted correctly.
-	 * kernel uses default C locale.
-	 */
-	setlocale(LC_NUMERIC, "C");
-
-	alias->scale = strtod(scale, NULL);
-
-	/* restore locale */
-	setlocale(LC_NUMERIC, lc);
-
-	ret = 0;
-error:
-	close(fd);
-	return ret;
-}
-
-static int perf_pmu__parse_unit(struct perf_pmu_alias *alias, char *dir, char *name)
-{
-	char path[PATH_MAX];
-	ssize_t sret;
-	int fd;
-
-	snprintf(path, PATH_MAX, "%s/%s.unit", dir, name);
-
-	fd = open(path, O_RDONLY);
-	if (fd == -1)
-		return -1;
-
-		sret = read(fd, alias->unit, UNIT_MAX_LEN);
-	if (sret < 0)
-		goto error;
-
-	close(fd);
-
-	alias->unit[sret] = '\0';
-
-	return 0;
-error:
-	close(fd);
-	alias->unit[0] = '\0';
-	return -1;
-}
-
-static int perf_pmu__new_alias(struct list_head *list, char *dir, char *name, FILE *file)
+static int perf_pmu__new_alias(struct list_head *list, char *name, FILE *file)
 {
 	struct perf_pmu_alias *alias;
 	char buf[256];
@@ -179,9 +111,6 @@ static int perf_pmu__new_alias(struct list_head *list, char *dir, char *name, FI
 		return -ENOMEM;
 
 	INIT_LIST_HEAD(&alias->terms);
-	alias->scale = 1.0;
-	alias->unit[0] = '\0';
-
 	ret = parse_events_terms(&alias->terms, buf);
 	if (ret) {
 		free(alias);
@@ -189,28 +118,8 @@ static int perf_pmu__new_alias(struct list_head *list, char *dir, char *name, FI
 	}
 
 	alias->name = strdup(name);
-	/*
-	 * load unit name and scale if available
-	 */
-	perf_pmu__parse_unit(alias, dir, name);
-	perf_pmu__parse_scale(alias, dir, name);
-
 	list_add_tail(&alias->list, list);
-
 	return 0;
-}
-
-static inline bool pmu_alias_info_file(char *name)
-{
-	size_t len;
-
-	len = strlen(name);
-	if (len > 5 && !strcmp(name + len - 5, ".unit"))
-		return true;
-	if (len > 6 && !strcmp(name + len - 6, ".scale"))
-		return true;
-
-	return false;
 }
 
 /*
@@ -235,20 +144,13 @@ static int pmu_aliases_parse(char *dir, struct list_head *head)
 		if (!strcmp(name, ".") || !strcmp(name, ".."))
 			continue;
 
-		/*
-		 * skip info files parsed in perf_pmu__new_alias()
-		 */
-		if (pmu_alias_info_file(name))
-			continue;
-
 		snprintf(path, PATH_MAX, "%s/%s", dir, name);
 
 		ret = -EINVAL;
 		file = fopen(path, "r");
 		if (!file)
 			break;
-
-		ret = perf_pmu__new_alias(head, dir, name, file);
+		ret = perf_pmu__new_alias(head, name, file);
 		fclose(file);
 	}
 
@@ -260,12 +162,13 @@ static int pmu_aliases_parse(char *dir, struct list_head *head)
  * Reading the pmu event aliases definition, which should be located at:
  * /sys/bus/event_source/devices/<dev>/events as sysfs group attributes.
  */
-static int pmu_aliases(const char *name, struct list_head *head)
+static int pmu_aliases(char *name, struct list_head *head)
 {
 	struct stat st;
 	char path[PATH_MAX];
-	const char *sysfs = sysfs__mountpoint();
+	const char *sysfs;
 
+	sysfs = sysfs_find_mountpoint();
 	if (!sysfs)
 		return -1;
 
@@ -284,17 +187,17 @@ static int pmu_aliases(const char *name, struct list_head *head)
 static int pmu_alias_terms(struct perf_pmu_alias *alias,
 			   struct list_head *terms)
 {
-	struct parse_events_term *term, *cloned;
+	struct parse_events_term *term, *clone;
 	LIST_HEAD(list);
 	int ret;
 
 	list_for_each_entry(term, &alias->terms, list) {
-		ret = parse_events_term__clone(&cloned, term);
+		ret = parse_events_term__clone(&clone, term);
 		if (ret) {
 			parse_events__free_terms(&list);
 			return ret;
 		}
-		list_add_tail(&cloned->list, &list);
+		list_add_tail(&clone->list, &list);
 	}
 	list_splice(&list, terms);
 	return 0;
@@ -305,14 +208,15 @@ static int pmu_alias_terms(struct perf_pmu_alias *alias,
  * located at:
  * /sys/bus/event_source/devices/<dev>/type as sysfs attribute.
  */
-static int pmu_type(const char *name, __u32 *type)
+static int pmu_type(char *name, __u32 *type)
 {
 	struct stat st;
 	char path[PATH_MAX];
+	const char *sysfs;
 	FILE *file;
 	int ret = 0;
-	const char *sysfs = sysfs__mountpoint();
 
+	sysfs = sysfs_find_mountpoint();
 	if (!sysfs)
 		return -1;
 
@@ -337,10 +241,11 @@ static int pmu_type(const char *name, __u32 *type)
 static void pmu_read_sysfs(void)
 {
 	char path[PATH_MAX];
+	const char *sysfs;
 	DIR *dir;
 	struct dirent *dent;
-	const char *sysfs = sysfs__mountpoint();
 
+	sysfs = sysfs_find_mountpoint();
 	if (!sysfs)
 		return;
 
@@ -361,14 +266,15 @@ static void pmu_read_sysfs(void)
 	closedir(dir);
 }
 
-static struct cpu_map *pmu_cpumask(const char *name)
+static struct cpu_map *pmu_cpumask(char *name)
 {
 	struct stat st;
 	char path[PATH_MAX];
+	const char *sysfs;
 	FILE *file;
 	struct cpu_map *cpus;
-	const char *sysfs = sysfs__mountpoint();
 
+	sysfs = sysfs_find_mountpoint();
 	if (!sysfs)
 		return NULL;
 
@@ -387,13 +293,7 @@ static struct cpu_map *pmu_cpumask(const char *name)
 	return cpus;
 }
 
-struct perf_event_attr *__attribute__((weak))
-perf_pmu__get_default_config(struct perf_pmu *pmu __maybe_unused)
-{
-	return NULL;
-}
-
-static struct perf_pmu *pmu_lookup(const char *name)
+static struct perf_pmu *pmu_lookup(char *name)
 {
 	struct perf_pmu *pmu;
 	LIST_HEAD(format);
@@ -427,13 +327,10 @@ static struct perf_pmu *pmu_lookup(const char *name)
 	pmu->name = strdup(name);
 	pmu->type = type;
 	list_add_tail(&pmu->list, &pmus);
-
-	pmu->default_config = perf_pmu__get_default_config(pmu);
-
 	return pmu;
 }
 
-static struct perf_pmu *pmu_find(const char *name)
+static struct perf_pmu *pmu_find(char *name)
 {
 	struct perf_pmu *pmu;
 
@@ -459,7 +356,7 @@ struct perf_pmu *perf_pmu__scan(struct perf_pmu *pmu)
 	return NULL;
 }
 
-struct perf_pmu *perf_pmu__find(const char *name)
+struct perf_pmu *perf_pmu__find(char *name)
 {
 	struct perf_pmu *pmu;
 
@@ -488,34 +385,37 @@ pmu_find_format(struct list_head *formats, char *name)
 }
 
 /*
- * Sets value based on the format definition (format parameter)
+ * Returns value based on the format definition (format parameter)
  * and unformated value (value parameter).
+ *
+ * TODO maybe optimize a little ;)
  */
-static void pmu_format_value(unsigned long *format, __u64 value, __u64 *v,
-			     bool zero)
+static __u64 pmu_format_value(unsigned long *format, __u64 value)
 {
 	unsigned long fbit, vbit;
+	__u64 v = 0;
 
 	for (fbit = 0, vbit = 0; fbit < PERF_PMU_FORMAT_BITS; fbit++) {
 
 		if (!test_bit(fbit, format))
 			continue;
 
-		if (value & (1llu << vbit++))
-			*v |= (1llu << fbit);
-		else if (zero)
-			*v &= ~(1llu << fbit);
+		if (!(value & (1llu << vbit++)))
+			continue;
+
+		v |= (1llu << fbit);
 	}
+
+	return v;
 }
 
 /*
  * Setup one of config[12] attr members based on the
- * user input data - term parameter.
+ * user input data - temr parameter.
  */
 static int pmu_config_term(struct list_head *formats,
 			   struct perf_event_attr *attr,
-			   struct parse_events_term *term,
-			   bool zero)
+			   struct parse_events_term *term)
 {
 	struct perf_pmu_format *format;
 	__u64 *vp;
@@ -554,19 +454,18 @@ static int pmu_config_term(struct list_head *formats,
 	 * non-hardcoded terms, here's the place to translate
 	 * them into value.
 	 */
-	pmu_format_value(format->bits, term->val.num, vp, zero);
+	*vp |= pmu_format_value(format->bits, term->val.num);
 	return 0;
 }
 
 int perf_pmu__config_terms(struct list_head *formats,
 			   struct perf_event_attr *attr,
-			   struct list_head *head_terms,
-			   bool zero)
+			   struct list_head *head_terms)
 {
 	struct parse_events_term *term;
 
 	list_for_each_entry(term, head_terms, list)
-		if (pmu_config_term(formats, attr, term, zero))
+		if (pmu_config_term(formats, attr, term))
 			return -EINVAL;
 
 	return 0;
@@ -580,10 +479,8 @@ int perf_pmu__config_terms(struct list_head *formats,
 int perf_pmu__config(struct perf_pmu *pmu, struct perf_event_attr *attr,
 		     struct list_head *head_terms)
 {
-	bool zero = !!pmu->default_config;
-
 	attr->type = pmu->type;
-	return perf_pmu__config_terms(&pmu->format, attr, head_terms, zero);
+	return perf_pmu__config_terms(&pmu->format, attr, head_terms);
 }
 
 static struct perf_pmu_alias *pmu_find_alias(struct perf_pmu *pmu,
@@ -616,45 +513,15 @@ static struct perf_pmu_alias *pmu_find_alias(struct perf_pmu *pmu,
 	return NULL;
 }
 
-
-static int check_unit_scale(struct perf_pmu_alias *alias,
-			    const char **unit, double *scale)
-{
-	/*
-	 * Only one term in event definition can
-	 * define unit and scale, fail if there's
-	 * more than one.
-	 */
-	if ((*unit && alias->unit) ||
-	    (*scale && alias->scale))
-		return -EINVAL;
-
-	if (alias->unit)
-		*unit = alias->unit;
-
-	if (alias->scale)
-		*scale = alias->scale;
-
-	return 0;
-}
-
 /*
  * Find alias in the terms list and replace it with the terms
  * defined for the alias
  */
-int perf_pmu__check_alias(struct perf_pmu *pmu, struct list_head *head_terms,
-			  struct perf_pmu_info *info)
+int perf_pmu__check_alias(struct perf_pmu *pmu, struct list_head *head_terms)
 {
 	struct parse_events_term *term, *h;
 	struct perf_pmu_alias *alias;
 	int ret;
-
-	/*
-	 * Mark unit and scale as not set
-	 * (different from default values, see below)
-	 */
-	info->unit   = NULL;
-	info->scale  = 0.0;
 
 	list_for_each_entry_safe(term, h, head_terms, list) {
 		alias = pmu_find_alias(pmu, term);
@@ -663,26 +530,9 @@ int perf_pmu__check_alias(struct perf_pmu *pmu, struct list_head *head_terms,
 		ret = pmu_alias_terms(alias, &term->list);
 		if (ret)
 			return ret;
-
-		ret = check_unit_scale(alias, &info->unit, &info->scale);
-		if (ret)
-			return ret;
-
 		list_del(&term->list);
 		free(term);
 	}
-
-	/*
-	 * if no unit or scale foundin aliases, then
-	 * set defaults as for evsel
-	 * unit cannot left to NULL
-	 */
-	if (info->unit == NULL)
-		info->unit   = "";
-
-	if (info->scale == 0.0)
-		info->scale  = 1.0;
-
 	return 0;
 }
 
@@ -713,129 +563,4 @@ void perf_pmu__set_format(unsigned long *bits, long from, long to)
 	memset(bits, 0, BITS_TO_BYTES(PERF_PMU_FORMAT_BITS));
 	for (b = from; b <= to; b++)
 		set_bit(b, bits);
-}
-
-static char *format_alias(char *buf, int len, struct perf_pmu *pmu,
-			  struct perf_pmu_alias *alias)
-{
-	snprintf(buf, len, "%s/%s/", pmu->name, alias->name);
-	return buf;
-}
-
-static char *format_alias_or(char *buf, int len, struct perf_pmu *pmu,
-			     struct perf_pmu_alias *alias)
-{
-	snprintf(buf, len, "%s OR %s/%s/", alias->name, pmu->name, alias->name);
-	return buf;
-}
-
-static int cmp_string(const void *a, const void *b)
-{
-	const char * const *as = a;
-	const char * const *bs = b;
-	return strcmp(*as, *bs);
-}
-
-void print_pmu_events(const char *event_glob, bool name_only)
-{
-	struct perf_pmu *pmu;
-	struct perf_pmu_alias *alias;
-	char buf[1024];
-	int printed = 0;
-	int len, j;
-	char **aliases;
-
-	pmu = NULL;
-	len = 0;
-	while ((pmu = perf_pmu__scan(pmu)) != NULL)
-		list_for_each_entry(alias, &pmu->aliases, list)
-			len++;
-	aliases = malloc(sizeof(char *) * len);
-	if (!aliases)
-		return;
-	pmu = NULL;
-	j = 0;
-	while ((pmu = perf_pmu__scan(pmu)) != NULL)
-		list_for_each_entry(alias, &pmu->aliases, list) {
-			char *name = format_alias(buf, sizeof(buf), pmu, alias);
-			bool is_cpu = !strcmp(pmu->name, "cpu");
-
-			if (event_glob != NULL &&
-			    !(strglobmatch(name, event_glob) ||
-			      (!is_cpu && strglobmatch(alias->name,
-						       event_glob))))
-				continue;
-			aliases[j] = name;
-			if (is_cpu && !name_only)
-				aliases[j] = format_alias_or(buf, sizeof(buf),
-							      pmu, alias);
-			aliases[j] = strdup(aliases[j]);
-			j++;
-		}
-	len = j;
-	qsort(aliases, len, sizeof(char *), cmp_string);
-	for (j = 0; j < len; j++) {
-		if (name_only) {
-			printf("%s ", aliases[j]);
-			continue;
-		}
-		printf("  %-50s [Kernel PMU event]\n", aliases[j]);
-		zfree(&aliases[j]);
-		printed++;
-	}
-	if (printed)
-		printf("\n");
-	free(aliases);
-}
-
-bool pmu_have_event(const char *pname, const char *name)
-{
-	struct perf_pmu *pmu;
-	struct perf_pmu_alias *alias;
-
-	pmu = NULL;
-	while ((pmu = perf_pmu__scan(pmu)) != NULL) {
-		if (strcmp(pname, pmu->name))
-			continue;
-		list_for_each_entry(alias, &pmu->aliases, list)
-			if (!strcmp(alias->name, name))
-				return true;
-	}
-	return false;
-}
-
-static FILE *perf_pmu__open_file(struct perf_pmu *pmu, const char *name)
-{
-	struct stat st;
-	char path[PATH_MAX];
-	const char *sysfs;
-
-	sysfs = sysfs__mountpoint();
-	if (!sysfs)
-		return NULL;
-
-	snprintf(path, PATH_MAX,
-		 "%s" EVENT_SOURCE_DEVICE_PATH "%s/%s", sysfs, pmu->name, name);
-
-	if (stat(path, &st) < 0)
-		return NULL;
-
-	return fopen(path, "r");
-}
-
-int perf_pmu__scan_file(struct perf_pmu *pmu, const char *name, const char *fmt,
-			...)
-{
-	va_list args;
-	FILE *file;
-	int ret = EOF;
-
-	va_start(args, fmt);
-	file = perf_pmu__open_file(pmu, name);
-	if (file) {
-		ret = vfscanf(file, fmt, args);
-		fclose(file);
-	}
-	va_end(args);
-	return ret;
 }

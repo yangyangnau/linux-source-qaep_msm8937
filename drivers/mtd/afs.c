@@ -264,8 +264,7 @@ static struct mtd_part_parser afs_parser = {
 
 static int __init afs_parser_init(void)
 {
-	register_mtd_parser(&afs_parser);
-	return 0;
+	return register_mtd_parser(&afs_parser);
 }
 
 static void __exit afs_parser_exit(void)

@@ -90,7 +90,7 @@ static int __init ps3_rtc_init(void)
 
 	pdev = platform_device_register_simple("rtc-ps3", -1, NULL, 0);
 
-	return PTR_ERR_OR_ZERO(pdev);
+	return PTR_RET(pdev);
 }
 
 module_init(ps3_rtc_init);

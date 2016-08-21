@@ -13,6 +13,7 @@
 
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/init.h>
 #include <linux/mm.h>
 #include <linux/uaccess.h>
 #include <linux/fs.h>
@@ -41,11 +42,11 @@ static u8 *tx_buf;
 
 static int ack_ready(struct sdio_func *func)
 {
-	unsigned long wait = jiffies + HZ;
+	unsigned long start = jiffies;
 	u8 val;
 	int ret;
 
-	while (time_before(jiffies, wait)) {
+	while ((jiffies - start) < HZ) {
 		val = sdio_readb(func, 0x13, &ret);
 		if (val & 0x01)
 			return 1;

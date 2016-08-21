@@ -1043,6 +1043,11 @@ isdn_tty_change_speed(modem_info *info)
 	if (!(cflag & PARODD))
 		cval |= UART_LCR_EPAR;
 
+	/* CTS flow control flag and modem status interrupts */
+	if (cflag & CRTSCTS) {
+		port->flags |= ASYNC_CTS_FLOW;
+	} else
+		port->flags &= ~ASYNC_CTS_FLOW;
 	if (cflag & CLOCAL)
 		port->flags &= ~ASYNC_CHECK_CD;
 	else {

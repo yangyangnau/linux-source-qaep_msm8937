@@ -331,17 +331,17 @@ gen_return_code(unsigned char *codemem)
 }
 
 
-static int setup_frame(struct ksignal *ksig, sigset_t *set,
-		       struct pt_regs *regs)
+static int setup_frame(int sig, struct k_sigaction *ka, siginfo_t *info,
+		       sigset_t *set, struct pt_regs *regs)
 {
 	struct rt_sigframe *frame;
-	int err = 0, sig = ksig->sig;
+	int err = 0;
 	int signal;
 	unsigned long sp, ra, tp;
 
 	sp = regs->areg[1];
 
-	if ((ksig->ka.sa.sa_flags & SA_ONSTACK) != 0 && sas_ss_flags(sp) == 0) {
+	if ((ka->sa.sa_flags & SA_ONSTACK) != 0 && sas_ss_flags(sp) == 0) {
 		sp = current->sas_ss_sp + current->sas_ss_size;
 	}
 
@@ -351,7 +351,7 @@ static int setup_frame(struct ksignal *ksig, sigset_t *set,
 		panic ("Double exception sys_sigreturn\n");
 
 	if (!access_ok(VERIFY_WRITE, frame, sizeof(*frame))) {
-		return -EFAULT;
+		goto give_sigsegv;
 	}
 
 	signal = current_thread_info()->exec_domain
@@ -360,8 +360,8 @@ static int setup_frame(struct ksignal *ksig, sigset_t *set,
 		? current_thread_info()->exec_domain->signal_invmap[sig]
 		: sig;
 
-	if (ksig->ka.sa.sa_flags & SA_SIGINFO) {
-		err |= copy_siginfo_to_user(&frame->info, &ksig->info);
+	if (ka->sa.sa_flags & SA_SIGINFO) {
+		err |= copy_siginfo_to_user(&frame->info, info);
 	}
 
 	/* Create the user context.  */
@@ -372,8 +372,8 @@ static int setup_frame(struct ksignal *ksig, sigset_t *set,
 	err |= setup_sigcontext(frame, regs);
 	err |= __copy_to_user(&frame->uc.uc_sigmask, set, sizeof(*set));
 
-	if (ksig->ka.sa.sa_flags & SA_RESTORER) {
-		ra = (unsigned long)ksig->ka.sa.sa_restorer;
+	if (ka->sa.sa_flags & SA_RESTORER) {
+		ra = (unsigned long)ka->sa.sa_restorer;
 	} else {
 
 		/* Create sys_rt_sigreturn syscall in stack frame */
@@ -381,7 +381,7 @@ static int setup_frame(struct ksignal *ksig, sigset_t *set,
 		err |= gen_return_code(frame->retcode);
 
 		if (err) {
-			return -EFAULT;
+			goto give_sigsegv;
 		}
 		ra = (unsigned long) frame->retcode;
 	}
@@ -393,7 +393,7 @@ static int setup_frame(struct ksignal *ksig, sigset_t *set,
 
 	/* Set up registers for signal handler; preserve the threadptr */
 	tp = regs->threadptr;
-	start_thread(regs, (unsigned long) ksig->ka.sa.sa_handler,
+	start_thread(regs, (unsigned long) ka->sa.sa_handler,
 		     (unsigned long) frame);
 
 	/* Set up a stack frame for a call4
@@ -416,6 +416,10 @@ static int setup_frame(struct ksignal *ksig, sigset_t *set,
 #endif
 
 	return 0;
+
+give_sigsegv:
+	force_sigsegv(sig, current);
+	return -EFAULT;
 }
 
 /*
@@ -429,11 +433,15 @@ static int setup_frame(struct ksignal *ksig, sigset_t *set,
  */
 static void do_signal(struct pt_regs *regs)
 {
-	struct ksignal ksig;
+	siginfo_t info;
+	int signr;
+	struct k_sigaction ka;
 
 	task_pt_regs(current)->icountlevel = 0;
 
-	if (get_signal(&ksig)) {
+	signr = get_signal_to_deliver(&info, &ka, regs, NULL);
+
+	if (signr > 0) {
 		int ret;
 
 		/* Are we from a system call? */
@@ -449,7 +457,7 @@ static void do_signal(struct pt_regs *regs)
 					break;
 
 				case -ERESTARTSYS:
-					if (!(ksig.ka.sa.sa_flags & SA_RESTART)) {
+					if (!(ka.sa.sa_flags & SA_RESTART)) {
 						regs->areg[2] = -EINTR;
 						break;
 					}
@@ -468,8 +476,11 @@ static void do_signal(struct pt_regs *regs)
 
 		/* Whee!  Actually deliver the signal.  */
 		/* Set up the stack frame */
-		ret = setup_frame(&ksig, sigmask_to_save(), regs);
-		signal_setup_done(ret, &ksig, 0);
+		ret = setup_frame(signr, &ka, &info, sigmask_to_save(), regs);
+		if (ret)
+			return;
+
+		signal_delivered(signr, &info, &ka, regs, 0);
 		if (current->ptrace & PT_SINGLESTEP)
 			task_pt_regs(current)->icountlevel = 1;
 

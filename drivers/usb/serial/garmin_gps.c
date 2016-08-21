@@ -25,6 +25,7 @@
 
 #include <linux/kernel.h>
 #include <linux/errno.h>
+#include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/timer.h>
 #include <linux/tty.h>
@@ -274,13 +275,14 @@ static int pkt_add(struct garmin_data *garmin_data_p,
 	unsigned long flags;
 	struct garmin_packet *pkt;
 
-	/* process only packets containing data ... */
+	/* process only packets containg data ... */
 	if (data_length) {
 		pkt = kmalloc(sizeof(struct garmin_packet)+data_length,
 								GFP_ATOMIC);
-		if (!pkt)
+		if (pkt == NULL) {
+			dev_err(&garmin_data_p->port->dev, "out of memory\n");
 			return 0;
-
+		}
 		pkt->size = data_length;
 		memcpy(pkt->data, data, data_length);
 
@@ -946,9 +948,9 @@ static void garmin_close(struct usb_serial_port *port)
 {
 	struct garmin_data *garmin_data_p = usb_get_serial_port_data(port);
 
-	dev_dbg(&port->dev, "%s - mode=%d state=%d flags=0x%X\n",
-		__func__, garmin_data_p->mode, garmin_data_p->state,
-		garmin_data_p->flags);
+	dev_dbg(&port->dev, "%s - port %d - mode=%d state=%d flags=0x%X\n",
+		__func__, port->number, garmin_data_p->mode,
+		garmin_data_p->state, garmin_data_p->flags);
 
 	garmin_clear(garmin_data_p);
 
@@ -1004,11 +1006,14 @@ static int garmin_write_bulk(struct usb_serial_port *port,
 	spin_unlock_irqrestore(&garmin_data_p->lock, flags);
 
 	buffer = kmalloc(count, GFP_ATOMIC);
-	if (!buffer)
+	if (!buffer) {
+		dev_err(&port->dev, "out of memory\n");
 		return -ENOMEM;
+	}
 
 	urb = usb_alloc_urb(0, GFP_ATOMIC);
 	if (!urb) {
+		dev_err(&port->dev, "no more free urbs\n");
 		kfree(buffer);
 		return -ENOMEM;
 	}
@@ -1143,7 +1148,7 @@ static void garmin_read_process(struct garmin_data *garmin_data_p,
 	unsigned long flags;
 
 	if (garmin_data_p->flags & FLAGS_DROP_DATA) {
-		/* abort-transfer cmd is active */
+		/* abort-transfer cmd is actice */
 		dev_dbg(&garmin_data_p->port->dev, "%s - pkt dropped\n", __func__);
 	} else if (garmin_data_p->state != STATE_DISCONNECTED &&
 		garmin_data_p->state != STATE_RESET) {
@@ -1388,9 +1393,10 @@ static int garmin_port_probe(struct usb_serial_port *port)
 	struct garmin_data *garmin_data_p;
 
 	garmin_data_p = kzalloc(sizeof(struct garmin_data), GFP_KERNEL);
-	if (!garmin_data_p)
+	if (garmin_data_p == NULL) {
+		dev_err(&port->dev, "%s - Out of memory\n", __func__);
 		return -ENOMEM;
-
+	}
 	init_timer(&garmin_data_p->timer);
 	spin_lock_init(&garmin_data_p->lock);
 	INIT_LIST_HEAD(&garmin_data_p->pktlist);

@@ -9,7 +9,7 @@ paths="$@"
 # Doing this once at the beginning saves a lot of time, on a cache-hot tree.
 Kconfigs="`find . -name 'Kconfig' -o -name 'Kconfig*[^~]'`"
 
-printf "File list \tundefined symbol used\n"
+/bin/echo -e "File list \tundefined symbol used"
 find $paths -name '*.[chS]' -o -name 'Makefile' -o -name 'Makefile*[^~]'| while read i
 do
 	# Output the bare Kconfig variable and the filename; the _MODULE part at
@@ -54,6 +54,6 @@ while read symb files; do
 	# beyond the purpose of this script.
 	symb_bare=`echo $symb | sed -e 's/_MODULE//'`
 	if ! grep -q "\<$symb_bare\>" $Kconfigs; then
-		printf "$files: \t$symb\n"
+		/bin/echo -e "$files: \t$symb"
 	fi
 done|sort

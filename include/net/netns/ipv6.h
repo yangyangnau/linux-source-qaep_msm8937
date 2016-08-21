@@ -27,11 +27,7 @@ struct netns_sysctl_ipv6 {
 	int ip6_rt_gc_elasticity;
 	int ip6_rt_mtu_expires;
 	int ip6_rt_min_advmss;
-	int flowlabel_consistency;
-	int auto_flowlabels;
 	int icmpv6_time;
-	int anycast_src_echo_reply;
-	int fwmark_reflect;
 };
 
 struct netns_ipv6 {
@@ -76,7 +72,6 @@ struct netns_ipv6 {
 #endif
 #endif
 	atomic_t		dev_addr_genid;
-	atomic_t		fib6_sernum;
 };
 
 #if IS_ENABLED(CONFIG_NF_DEFRAG_IPV6)

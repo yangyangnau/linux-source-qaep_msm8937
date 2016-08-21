@@ -116,7 +116,7 @@ wait_boot_cpu_to_stop(int cpuid)
 /*
  * Where secondaries begin a life of C.
  */
-void
+void __cpuinit
 smp_callin(void)
 {
 	int cpuid = hard_smp_processor_id();
@@ -138,11 +138,9 @@ smp_callin(void)
 
 	/* Get our local ticker going. */
 	smp_setup_percpu_timer(cpuid);
-	init_clockevent();
 
 	/* Call platform-specific callin, if specified */
-	if (alpha_mv.smp_callin)
-		alpha_mv.smp_callin();
+	if (alpha_mv.smp_callin) alpha_mv.smp_callin();
 
 	/* All kernel threads share the same mm context.  */
 	atomic_inc(&init_mm.mm_count);
@@ -196,7 +194,7 @@ wait_for_txrdy (unsigned long cpumask)
  * Send a message to a secondary's console.  "START" is one such
  * interesting message.  ;-)
  */
-static void
+static void __cpuinit
 send_secondary_console_msg(char *str, int cpuid)
 {
 	struct percpu_struct *cpu;
@@ -266,10 +264,9 @@ recv_secondary_console_msg(void)
 		if (cnt <= 0 || cnt >= 80)
 			strcpy(buf, "<<< BOGUS MSG >>>");
 		else {
-			cp1 = (char *) &cpu->ipc_buffer[1];
+			cp1 = (char *) &cpu->ipc_buffer[11];
 			cp2 = buf;
-			memcpy(cp2, cp1, cnt);
-			cp2[cnt] = '\0';
+			strcpy(cp2, cp1);
 			
 			while ((cp2 = strchr(cp2, '\r')) != 0) {
 				*cp2 = ' ';
@@ -288,7 +285,7 @@ recv_secondary_console_msg(void)
 /*
  * Convince the console to have a secondary cpu begin execution.
  */
-static int
+static int __cpuinit
 secondary_cpu_start(int cpuid, struct task_struct *idle)
 {
 	struct percpu_struct *cpu;
@@ -359,7 +356,7 @@ secondary_cpu_start(int cpuid, struct task_struct *idle)
 /*
  * Bring one cpu online.
  */
-static int
+static int __cpuinit
 smp_boot_one_cpu(int cpuid, struct task_struct *idle)
 {
 	unsigned long timeout;
@@ -475,7 +472,7 @@ smp_prepare_boot_cpu(void)
 {
 }
 
-int
+int __cpuinit
 __cpu_up(unsigned int cpu, struct task_struct *tidle)
 {
 	smp_boot_one_cpu(cpu, tidle);
@@ -498,6 +495,35 @@ smp_cpus_done(unsigned int max_cpus)
 	       num_online_cpus(), 
 	       (bogosum + 2500) / (500000/HZ),
 	       ((bogosum + 2500) / (5000/HZ)) % 100);
+}
+
+
+void
+smp_percpu_timer_interrupt(struct pt_regs *regs)
+{
+	struct pt_regs *old_regs;
+	int cpu = smp_processor_id();
+	unsigned long user = user_mode(regs);
+	struct cpuinfo_alpha *data = &cpu_data[cpu];
+
+	old_regs = set_irq_regs(regs);
+
+	/* Record kernel PC.  */
+	profile_tick(CPU_PROFILING);
+
+	if (!--data->prof_counter) {
+		/* We need to make like a normal interrupt -- otherwise
+		   timer interrupts ignore the global interrupt lock,
+		   which would be a Bad Thing.  */
+		irq_enter();
+
+		update_process_times(user);
+
+		data->prof_counter = data->prof_multiplier;
+
+		irq_exit();
+	}
+	set_irq_regs(old_regs);
 }
 
 int

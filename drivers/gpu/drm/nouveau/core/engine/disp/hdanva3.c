@@ -22,47 +22,28 @@
  * Authors: Ben Skeggs
  */
 
-#include <core/client.h>
-#include <nvif/unpack.h>
-#include <nvif/class.h>
-
-#include <subdev/timer.h>
+#include <core/os.h>
+#include <core/class.h>
 
 #include "nv50.h"
 
 int
-nva3_hda_eld(NV50_DISP_MTHD_V1)
+nva3_hda_eld(struct nv50_disp_priv *priv, int or, u8 *data, u32 size)
 {
-	union {
-		struct nv50_disp_sor_hda_eld_v0 v0;
-	} *args = data;
-	const u32 soff = outp->or * 0x800;
-	int ret, i;
+	const u32 soff = (or * 0x800);
+	int i;
 
-	nv_ioctl(object, "disp sor hda eld size %d\n", size);
-	if (nvif_unpack(args->v0, 0, 0, true)) {
-		nv_ioctl(object, "disp sor hda eld vers %d\n", args->v0.version);
-		if (size > 0x60)
-			return -E2BIG;
-	} else
-		return ret;
-
-	if (size && args->v0.data[0]) {
-		if (outp->info.type == DCB_OUTPUT_DP) {
-			nv_mask(priv, 0x61c1e0 + soff, 0x8000000d, 0x80000001);
-			nv_wait(priv, 0x61c1e0 + soff, 0x80000000, 0x00000000);
-		}
+	if (data && data[0]) {
 		for (i = 0; i < size; i++)
-			nv_wr32(priv, 0x61c440 + soff, (i << 8) | args->v0.data[0]);
+			nv_wr32(priv, 0x61c440 + soff, (i << 8) | data[i]);
 		for (; i < 0x60; i++)
 			nv_wr32(priv, 0x61c440 + soff, (i << 8));
 		nv_mask(priv, 0x61c448 + soff, 0x80000003, 0x80000003);
+	} else
+	if (data) {
+		nv_mask(priv, 0x61c448 + soff, 0x80000003, 0x80000001);
 	} else {
-		if (outp->info.type == DCB_OUTPUT_DP) {
-			nv_mask(priv, 0x61c1e0 + soff, 0x80000001, 0x80000000);
-			nv_wait(priv, 0x61c1e0 + soff, 0x80000000, 0x00000000);
-		}
-		nv_mask(priv, 0x61c448 + soff, 0x80000003, 0x80000000 | !!size);
+		nv_mask(priv, 0x61c448 + soff, 0x80000003, 0x80000000);
 	}
 
 	return 0;

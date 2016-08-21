@@ -26,20 +26,25 @@ static int deliver_clone(const struct net_bridge_port *prev,
 			 void (*__packet_hook)(const struct net_bridge_port *p,
 					       struct sk_buff *skb));
 
-/* Don't forward packets to originating port or forwarding disabled */
+/* Don't forward packets to originating port or forwarding diasabled */
 static inline int should_deliver(const struct net_bridge_port *p,
 				 const struct sk_buff *skb)
 {
-	return ((p->flags & BR_HAIRPIN_MODE) || skb->dev != p->dev) &&
+	return (((p->flags & BR_HAIRPIN_MODE) || skb->dev != p->dev) &&
 		br_allowed_egress(p->br, nbp_get_vlan_info(p), skb) &&
-		p->state == BR_STATE_FORWARDING;
+		p->state == BR_STATE_FORWARDING);
+}
+
+static inline unsigned int packet_length(const struct sk_buff *skb)
+{
+	return skb->len - (skb->protocol == htons(ETH_P_8021Q) ? VLAN_HLEN : 0);
 }
 
 int br_dev_queue_push_xmit(struct sk_buff *skb)
 {
 	/* ip_fragment doesn't copy the MAC header */
 	if (nf_bridge_maybe_copy_header(skb) ||
-	    !is_skb_forwardable(skb->dev, skb)) {
+	    (packet_length(skb) > skb->dev->mtu && !skb_is_gso(skb))) {
 		kfree_skb(skb);
 	} else {
 		skb_push(skb, ETH_HLEN);
@@ -49,7 +54,6 @@ int br_dev_queue_push_xmit(struct sk_buff *skb)
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(br_dev_queue_push_xmit);
 
 int br_forward_finish(struct sk_buff *skb)
 {
@@ -57,7 +61,6 @@ int br_forward_finish(struct sk_buff *skb)
 		       br_dev_queue_push_xmit);
 
 }
-EXPORT_SYMBOL_GPL(br_forward_finish);
 
 static void __br_deliver(const struct net_bridge_port *to, struct sk_buff *skb)
 {
@@ -68,7 +71,7 @@ static void __br_deliver(const struct net_bridge_port *to, struct sk_buff *skb)
 	skb->dev = to->dev;
 
 	if (unlikely(netpoll_tx_running(to->br->dev))) {
-		if (!is_skb_forwardable(skb->dev, skb))
+		if (packet_length(skb) > skb->dev->mtu && !skb_is_gso(skb))
 			kfree_skb(skb);
 		else {
 			skb_push(skb, ETH_HLEN);
@@ -112,7 +115,6 @@ void br_deliver(const struct net_bridge_port *to, struct sk_buff *skb)
 
 	kfree_skb(skb);
 }
-EXPORT_SYMBOL_GPL(br_deliver);
 
 /* called with rcu_read_lock */
 void br_forward(const struct net_bridge_port *to, struct sk_buff *skb, struct sk_buff *skb0)
@@ -172,8 +174,7 @@ out:
 static void br_flood(struct net_bridge *br, struct sk_buff *skb,
 		     struct sk_buff *skb0,
 		     void (*__packet_hook)(const struct net_bridge_port *p,
-					   struct sk_buff *skb),
-		     bool unicast)
+					   struct sk_buff *skb))
 {
 	struct net_bridge_port *p;
 	struct net_bridge_port *prev;
@@ -181,9 +182,6 @@ static void br_flood(struct net_bridge *br, struct sk_buff *skb,
 	prev = NULL;
 
 	list_for_each_entry_rcu(p, &br->port_list, list) {
-		/* Do not flood unicast traffic to ports that turn it off */
-		if (unicast && !(p->flags & BR_FLOOD))
-			continue;
 		prev = maybe_deliver(prev, p, skb, __packet_hook);
 		if (IS_ERR(prev))
 			goto out;
@@ -205,16 +203,16 @@ out:
 
 
 /* called with rcu_read_lock */
-void br_flood_deliver(struct net_bridge *br, struct sk_buff *skb, bool unicast)
+void br_flood_deliver(struct net_bridge *br, struct sk_buff *skb)
 {
-	br_flood(br, skb, NULL, __br_deliver, unicast);
+	br_flood(br, skb, NULL, __br_deliver);
 }
 
 /* called under bridge lock */
 void br_flood_forward(struct net_bridge *br, struct sk_buff *skb,
-		      struct sk_buff *skb2, bool unicast)
+		      struct sk_buff *skb2)
 {
-	br_flood(br, skb, skb2, __br_forward, unicast);
+	br_flood(br, skb, skb2, __br_forward);
 }
 
 #ifdef CONFIG_BRIDGE_IGMP_SNOOPING

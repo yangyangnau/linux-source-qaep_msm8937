@@ -144,9 +144,8 @@ static int snd_card_ad1816a_probe(int dev, struct pnp_card_link *pcard,
 	struct snd_opl3 *opl3;
 	struct snd_timer *timer;
 
-	error = snd_card_new(&pcard->card->dev,
-			     index[dev], id[dev], THIS_MODULE,
-			     sizeof(struct snd_ad1816a), &card);
+	error = snd_card_create(index[dev], id[dev], THIS_MODULE,
+				sizeof(struct snd_ad1816a), &card);
 	if (error < 0)
 		return error;
 	chip = card->private_data;
@@ -155,6 +154,7 @@ static int snd_card_ad1816a_probe(int dev, struct pnp_card_link *pcard,
 		snd_card_free(card);
 		return error;
 	}
+	snd_card_set_dev(card, &pcard->card->dev);
 
 	if ((error = snd_ad1816a_create(card, port[dev],
 					irq[dev],

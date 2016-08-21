@@ -78,9 +78,9 @@ struct exception_table_entry
 };
 
 /* Returns 0 if exception not found and fixup otherwise.  */
-unsigned long search_extables_range(unsigned long addr, unsigned long *g2);
+extern unsigned long search_extables_range(unsigned long addr, unsigned long *g2);
 
-void __ret_efault(void);
+extern void __ret_efault(void);
 
 /* Uh, these should become the main single-value transfer routines..
  * They automatically use the right size if we just have the right
@@ -152,7 +152,7 @@ __asm__ __volatile__(							\
        : "=&r" (ret) : "r" (x), "m" (*__m(addr)),			\
 	 "i" (-EFAULT))
 
-int __put_user_bad(void);
+extern int __put_user_bad(void);
 
 #define __get_user_check(x,addr,size,type) ({ \
 register int __gu_ret; \
@@ -244,9 +244,9 @@ __asm__ __volatile__(							\
 	".previous\n\t"							\
        : "=&r" (x) : "m" (*__m(addr)), "i" (retval))
 
-int __get_user_bad(void);
+extern int __get_user_bad(void);
 
-unsigned long __copy_user(void __user *to, const void __user *from, unsigned long size);
+extern unsigned long __copy_user(void __user *to, const void __user *from, unsigned long size);
 
 static inline unsigned long copy_to_user(void __user *to, const void *from, unsigned long n)
 {
@@ -306,8 +306,8 @@ static inline unsigned long clear_user(void __user *addr, unsigned long n)
 		return n;
 }
 
-__must_check long strlen_user(const char __user *str);
-__must_check long strnlen_user(const char __user *str, long n);
+extern __must_check long strlen_user(const char __user *str);
+extern __must_check long strnlen_user(const char __user *str, long n);
 
 #endif  /* __ASSEMBLY__ */
 

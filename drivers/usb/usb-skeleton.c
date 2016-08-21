@@ -14,6 +14,7 @@
 
 #include <linux/kernel.h>
 #include <linux/errno.h>
+#include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/kref.h>
@@ -324,8 +325,9 @@ retry:
 		rv = skel_do_read_io(dev, count);
 		if (rv < 0)
 			goto exit;
-		else
+		else if (!(file->f_flags & O_NONBLOCK))
 			goto retry;
+		rv = -EAGAIN;
 	}
 exit:
 	mutex_unlock(&dev->io_mutex);

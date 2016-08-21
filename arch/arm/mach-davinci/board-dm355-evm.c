@@ -22,17 +22,15 @@
 #include <media/tvp514x.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/eeprom.h>
-#include <linux/platform_data/gpio-davinci.h>
-#include <linux/platform_data/i2c-davinci.h>
-#include <linux/platform_data/mtd-davinci.h>
-#include <linux/platform_data/mmc-davinci.h>
-#include <linux/platform_data/usb-davinci.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 
+#include <linux/platform_data/i2c-davinci.h>
 #include <mach/serial.h>
-#include <mach/common.h>
+#include <linux/platform_data/mtd-davinci.h>
+#include <linux/platform_data/mmc-davinci.h>
+#include <linux/platform_data/usb-davinci.h>
 
 #include "davinci.h"
 
@@ -316,6 +314,10 @@ static struct platform_device *davinci_evm_devices[] __initdata = {
 	&davinci_nand_device,
 };
 
+static struct davinci_uart_config uart_config __initdata = {
+	.enabled_uarts = (1 << 0),
+};
+
 static void __init dm355_evm_map_io(void)
 {
 	dm355_init();
@@ -350,7 +352,11 @@ static struct davinci_mmc_config dm355evm_mmc_config = {
  * you have proper Mini-B or Mini-A cables (or Mini-A adapters)
  * the ID pin won't need any help.
  */
+#ifdef CONFIG_USB_MUSB_PERIPHERAL
+#define USB_ID_VALUE	0	/* ID pulled high; *should* float */
+#else
 #define USB_ID_VALUE	1	/* ID pulled low */
+#endif
 
 static struct spi_eeprom at25640a = {
 	.byte_len	= SZ_64K / 8,
@@ -373,11 +379,6 @@ static struct spi_board_info dm355_evm_spi_info[] __initconst = {
 static __init void dm355_evm_init(void)
 {
 	struct clk *aemif;
-	int ret;
-
-	ret = dm355_gpio_register();
-	if (ret)
-		pr_warn("%s: GPIO init failed: %d\n", __func__, ret);
 
 	gpio_request(1, "dm9000");
 	gpio_direction_input(1);
@@ -392,7 +393,7 @@ static __init void dm355_evm_init(void)
 	platform_add_devices(davinci_evm_devices,
 			     ARRAY_SIZE(davinci_evm_devices));
 	evm_init_i2c();
-	davinci_serial_init(dm355_serial_device);
+	davinci_serial_init(&uart_config);
 
 	/* NOTE:  NAND flash timings set by the UBL are slower than
 	 * needed by MT29F16G08FAA chips ... EMIF.A1CR is 0x40400204

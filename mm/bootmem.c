@@ -16,9 +16,9 @@
 #include <linux/kmemleak.h>
 #include <linux/range.h>
 #include <linux/memblock.h>
-#include <linux/bug.h>
-#include <linux/io.h>
 
+#include <asm/bug.h>
+#include <asm/io.h>
 #include <asm/processor.h>
 
 #include "internal.h"
@@ -172,12 +172,11 @@ void __init free_bootmem_late(unsigned long physaddr, unsigned long size)
 static unsigned long __init free_all_bootmem_core(bootmem_data_t *bdata)
 {
 	struct page *page;
-	unsigned long *map, start, end, pages, count = 0;
+	unsigned long start, end, pages, count = 0;
 
 	if (!bdata->node_bootmem_map)
 		return 0;
 
-	map = bdata->node_bootmem_map;
 	start = bdata->node_min_pfn;
 	end = bdata->node_low_pfn;
 
@@ -185,9 +184,10 @@ static unsigned long __init free_all_bootmem_core(bootmem_data_t *bdata)
 		bdata - bootmem_node_data, start, end);
 
 	while (start < end) {
-		unsigned long idx, vec;
+		unsigned long *map, idx, vec;
 		unsigned shift;
 
+		map = bdata->node_bootmem_map;
 		idx = start - bdata->node_min_pfn;
 		shift = idx & (BITS_PER_LONG - 1);
 		/*
@@ -241,27 +241,33 @@ static unsigned long __init free_all_bootmem_core(bootmem_data_t *bdata)
 	return count;
 }
 
-static int reset_managed_pages_done __initdata;
-
-void reset_node_managed_pages(pg_data_t *pgdat)
+static void reset_node_lowmem_managed_pages(pg_data_t *pgdat)
 {
 	struct zone *z;
 
+	/*
+	 * In free_area_init_core(), highmem zone's managed_pages is set to
+	 * present_pages, and bootmem allocator doesn't allocate from highmem
+	 * zones. So there's no need to recalculate managed_pages because all
+	 * highmem pages will be managed by the buddy system. Here highmem
+	 * zone also includes highmem movable zone.
+	 */
 	for (z = pgdat->node_zones; z < pgdat->node_zones + MAX_NR_ZONES; z++)
-		z->managed_pages = 0;
+		if (!is_highmem(z))
+			z->managed_pages = 0;
 }
 
-void __init reset_all_zones_managed_pages(void)
+/**
+ * free_all_bootmem_node - release a node's free pages to the buddy allocator
+ * @pgdat: node to be released
+ *
+ * Returns the number of pages actually released.
+ */
+unsigned long __init free_all_bootmem_node(pg_data_t *pgdat)
 {
-	struct pglist_data *pgdat;
-
-	if (reset_managed_pages_done)
-		return;
-
-	for_each_online_pgdat(pgdat)
-		reset_node_managed_pages(pgdat);
-
-	reset_managed_pages_done = 1;
+	register_page_bootmem_info_node(pgdat);
+	reset_node_lowmem_managed_pages(pgdat);
+	return free_all_bootmem_core(pgdat->bdata);
 }
 
 /**
@@ -273,13 +279,13 @@ unsigned long __init free_all_bootmem(void)
 {
 	unsigned long total_pages = 0;
 	bootmem_data_t *bdata;
+	struct pglist_data *pgdat;
 
-	reset_all_zones_managed_pages();
+	for_each_online_pgdat(pgdat)
+		reset_node_lowmem_managed_pages(pgdat);
 
 	list_for_each_entry(bdata, &bdata_list, list)
 		total_pages += free_all_bootmem_core(bdata);
-
-	totalram_pages += total_pages;
 
 	return total_pages;
 }
@@ -785,7 +791,7 @@ void * __init __alloc_bootmem_node_high(pg_data_t *pgdat, unsigned long size,
 		return kzalloc_node(size, GFP_NOWAIT, pgdat->node_id);
 
 	/* update goal according ...MAX_DMA32_PFN */
-	end_pfn = pgdat_end_pfn(pgdat);
+	end_pfn = pgdat->node_start_pfn + pgdat->node_spanned_pages;
 
 	if (end_pfn > MAX_DMA32_PFN + (128 >> (20 - PAGE_SHIFT)) &&
 	    (goal >> PAGE_SHIFT) < MAX_DMA32_PFN) {

@@ -14,7 +14,7 @@
 
 #include <linux/genalloc.h>
 #include <linux/platform_data/davinci_asp.h>
-#include <linux/platform_data/edma.h>
+#include <mach/edma.h>
 
 struct davinci_pcm_dma_params {
 	int channel;			/* sync dma channel ID */
@@ -29,13 +29,7 @@ struct davinci_pcm_dma_params {
 	unsigned int fifo_level;
 };
 
-#if IS_ENABLED(CONFIG_SND_DAVINCI_SOC)
 int davinci_soc_platform_register(struct device *dev);
-#else
-static inline int davinci_soc_platform_register(struct device *dev)
-{
-	return 0;
-}
-#endif /* CONFIG_SND_DAVINCI_SOC */
+void davinci_soc_platform_unregister(struct device *dev);
 
 #endif

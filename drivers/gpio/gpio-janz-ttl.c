@@ -149,24 +149,37 @@ static int ttl_probe(struct platform_device *pdev)
 	struct resource *res;
 	int ret;
 
-	pdata = dev_get_platdata(&pdev->dev);
+	pdata = pdev->dev.platform_data;
 	if (!pdata) {
 		dev_err(dev, "no platform data\n");
-		return -ENXIO;
+		ret = -ENXIO;
+		goto out_return;
 	}
 
-	mod = devm_kzalloc(dev, sizeof(*mod), GFP_KERNEL);
-	if (!mod)
-		return -ENOMEM;
+	mod = kzalloc(sizeof(*mod), GFP_KERNEL);
+	if (!mod) {
+		dev_err(dev, "unable to allocate private data\n");
+		ret = -ENOMEM;
+		goto out_return;
+	}
 
 	platform_set_drvdata(pdev, mod);
 	spin_lock_init(&mod->lock);
 
 	/* get access to the MODULbus registers for this module */
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	mod->regs = devm_ioremap_resource(dev, res);
-	if (IS_ERR(mod->regs))
-		return PTR_ERR(mod->regs);
+	if (!res) {
+		dev_err(dev, "MODULbus registers not found\n");
+		ret = -ENODEV;
+		goto out_free_mod;
+	}
+
+	mod->regs = ioremap(res->start, resource_size(res));
+	if (!mod->regs) {
+		dev_err(dev, "MODULbus registers not ioremap\n");
+		ret = -ENOMEM;
+		goto out_free_mod;
+	}
 
 	ttl_setup_device(mod);
 
@@ -185,18 +198,33 @@ static int ttl_probe(struct platform_device *pdev)
 	ret = gpiochip_add(gpio);
 	if (ret) {
 		dev_err(dev, "unable to add GPIO chip\n");
-		return ret;
+		goto out_iounmap_regs;
 	}
 
 	return 0;
+
+out_iounmap_regs:
+	iounmap(mod->regs);
+out_free_mod:
+	kfree(mod);
+out_return:
+	return ret;
 }
 
 static int ttl_remove(struct platform_device *pdev)
 {
 	struct ttl_module *mod = platform_get_drvdata(pdev);
+	struct device *dev = &pdev->dev;
+	int ret;
 
-	gpiochip_remove(&mod->gpio);
+	ret = gpiochip_remove(&mod->gpio);
+	if (ret) {
+		dev_err(dev, "unable to remove GPIO chip\n");
+		return ret;
+	}
 
+	iounmap(mod->regs);
+	kfree(mod);
 	return 0;
 }
 

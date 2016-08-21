@@ -15,7 +15,8 @@
 #include <linux/power_supply.h>
 #include <linux/olpc-ec.h>
 
-#include <linux/acpi.h>
+#include <acpi/acpi_bus.h>
+#include <acpi/acpi_drivers.h>
 #include <asm/olpc.h>
 
 #define DRV_NAME			"olpc-xo15-sci"
@@ -39,9 +40,16 @@ static bool				lid_wake_on_close;
  */
 static int set_lid_wake_behavior(bool wake_on_close)
 {
+	struct acpi_object_list arg_list;
+	union acpi_object arg;
 	acpi_status status;
 
-	status = acpi_execute_simple_method(NULL, "\\_SB.PCI0.LID.LIDW", wake_on_close);
+	arg_list.count		= 1;
+	arg_list.pointer	= &arg;
+	arg.type		= ACPI_TYPE_INTEGER;
+	arg.integer.value	= wake_on_close;
+
+	status = acpi_evaluate_object(NULL, "\\_SB.PCI0.LID.LIDW", &arg_list, NULL);
 	if (ACPI_FAILURE(status)) {
 		pr_warning(PFX "failed to set lid behavior\n");
 		return 1;

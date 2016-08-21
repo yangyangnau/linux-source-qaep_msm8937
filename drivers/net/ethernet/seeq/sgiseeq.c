@@ -11,6 +11,7 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/errno.h>
+#include <linux/init.h>
 #include <linux/types.h>
 #include <linux/interrupt.h>
 #include <linux/string.h>
@@ -355,7 +356,7 @@ static inline void sgiseeq_rx(struct net_device *dev, struct sgiseeq_private *sp
 		if (pkt_status & SEEQ_RSTAT_FIG) {
 			/* Packet is OK. */
 			/* We don't want to receive our own packets */
-			if (!ether_addr_equal(rd->skb->data + 6, dev->dev_addr)) {
+			if (memcmp(rd->skb->data + 6, dev->dev_addr, ETH_ALEN)) {
 				if (len > rx_copybreak) {
 					skb = rd->skb;
 					newskb = netdev_alloc_skb(dev, PKT_BUF_SZ);
@@ -720,7 +721,7 @@ static const struct net_device_ops sgiseeq_netdev_ops = {
 
 static int sgiseeq_probe(struct platform_device *pdev)
 {
-	struct sgiseeq_platform_data *pd = dev_get_platdata(&pdev->dev);
+	struct sgiseeq_platform_data *pd = pdev->dev.platform_data;
 	struct hpc3_regs *hpcregs = pd->hpc;
 	struct sgiseeq_init_block *sr;
 	unsigned int irq = pd->irq;
@@ -817,6 +818,7 @@ static int __exit sgiseeq_remove(struct platform_device *pdev)
 	dma_free_noncoherent(&pdev->dev, sizeof(*sp->srings), sp->srings,
 			     sp->srings_dma);
 	free_netdev(dev);
+	platform_set_drvdata(pdev, NULL);
 
 	return 0;
 }

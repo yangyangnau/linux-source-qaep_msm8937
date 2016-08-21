@@ -106,7 +106,8 @@ static int sja1000_probe_chip(struct net_device *dev)
 	struct sja1000_priv *priv = netdev_priv(dev);
 
 	if (priv->reg_base && sja1000_is_absent(priv)) {
-		netdev_err(dev, "probing failed\n");
+		printk(KERN_INFO "%s: probing @0x%lX failed\n",
+		       DRV_NAME, dev->base_addr);
 		return 0;
 	}
 	return -1;
@@ -141,7 +142,6 @@ static void set_normal_mode(struct net_device *dev)
 {
 	struct sja1000_priv *priv = netdev_priv(dev);
 	unsigned char status = priv->read_reg(priv, SJA1000_MOD);
-	u8 mod_reg_val = 0x00;
 	int i;
 
 	for (i = 0; i < 100; i++) {
@@ -159,10 +159,9 @@ static void set_normal_mode(struct net_device *dev)
 
 		/* set chip to normal mode */
 		if (priv->can.ctrlmode & CAN_CTRLMODE_LISTENONLY)
-			mod_reg_val |= MOD_LOM;
-		if (priv->can.ctrlmode & CAN_CTRLMODE_PRESUME_ACK)
-			mod_reg_val |= MOD_STM;
-		priv->write_reg(priv, SJA1000_MOD, mod_reg_val);
+			priv->write_reg(priv, SJA1000_MOD, MOD_LOM);
+		else
+			priv->write_reg(priv, SJA1000_MOD, 0x00);
 
 		udelay(10);
 
@@ -172,35 +171,6 @@ static void set_normal_mode(struct net_device *dev)
 	netdev_err(dev, "setting SJA1000 into normal mode failed!\n");
 }
 
-/*
- * initialize SJA1000 chip:
- *   - reset chip
- *   - set output mode
- *   - set baudrate
- *   - enable interrupts
- *   - start operating mode
- */
-static void chipset_init(struct net_device *dev)
-{
-	struct sja1000_priv *priv = netdev_priv(dev);
-
-	/* set clock divider and output control register */
-	priv->write_reg(priv, SJA1000_CDR, priv->cdr | CDR_PELICAN);
-
-	/* set acceptance filter (accept all) */
-	priv->write_reg(priv, SJA1000_ACCC0, 0x00);
-	priv->write_reg(priv, SJA1000_ACCC1, 0x00);
-	priv->write_reg(priv, SJA1000_ACCC2, 0x00);
-	priv->write_reg(priv, SJA1000_ACCC3, 0x00);
-
-	priv->write_reg(priv, SJA1000_ACCM0, 0xFF);
-	priv->write_reg(priv, SJA1000_ACCM1, 0xFF);
-	priv->write_reg(priv, SJA1000_ACCM2, 0xFF);
-	priv->write_reg(priv, SJA1000_ACCM3, 0xFF);
-
-	priv->write_reg(priv, SJA1000_OCR, priv->ocr | OCR_MODE_NORMAL);
-}
-
 static void sja1000_start(struct net_device *dev)
 {
 	struct sja1000_priv *priv = netdev_priv(dev);
@@ -208,10 +178,6 @@ static void sja1000_start(struct net_device *dev)
 	/* leave reset mode */
 	if (priv->can.state != CAN_STATE_STOPPED)
 		set_reset_mode(dev);
-
-	/* Initialize chip if uninitialized at this stage */
-	if (!(priv->read_reg(priv, SJA1000_CDR) & CDR_PELICAN))
-		chipset_init(dev);
 
 	/* Clear error counters and error code capture */
 	priv->write_reg(priv, SJA1000_TXERR, 0x0);
@@ -270,6 +236,35 @@ static int sja1000_get_berr_counter(const struct net_device *dev,
 }
 
 /*
+ * initialize SJA1000 chip:
+ *   - reset chip
+ *   - set output mode
+ *   - set baudrate
+ *   - enable interrupts
+ *   - start operating mode
+ */
+static void chipset_init(struct net_device *dev)
+{
+	struct sja1000_priv *priv = netdev_priv(dev);
+
+	/* set clock divider and output control register */
+	priv->write_reg(priv, SJA1000_CDR, priv->cdr | CDR_PELICAN);
+
+	/* set acceptance filter (accept all) */
+	priv->write_reg(priv, SJA1000_ACCC0, 0x00);
+	priv->write_reg(priv, SJA1000_ACCC1, 0x00);
+	priv->write_reg(priv, SJA1000_ACCC2, 0x00);
+	priv->write_reg(priv, SJA1000_ACCC3, 0x00);
+
+	priv->write_reg(priv, SJA1000_ACCM0, 0xFF);
+	priv->write_reg(priv, SJA1000_ACCM1, 0xFF);
+	priv->write_reg(priv, SJA1000_ACCM2, 0xFF);
+	priv->write_reg(priv, SJA1000_ACCM3, 0xFF);
+
+	priv->write_reg(priv, SJA1000_OCR, priv->ocr | OCR_MODE_NORMAL);
+}
+
+/*
  * transmit a CAN message
  * message layout in the sk_buff should be like this:
  * xx xx xx xx	 ff	 ll   00 11 22 33 44 55 66 77
@@ -284,7 +279,6 @@ static netdev_tx_t sja1000_start_xmit(struct sk_buff *skb,
 	uint8_t dlc;
 	canid_t id;
 	uint8_t dreg;
-	u8 cmd_reg_val = 0x00;
 	int i;
 
 	if (can_dropped_invalid_skb(dev, skb))
@@ -319,14 +313,9 @@ static netdev_tx_t sja1000_start_xmit(struct sk_buff *skb,
 	can_put_echo_skb(skb, dev, 0);
 
 	if (priv->can.ctrlmode & CAN_CTRLMODE_ONE_SHOT)
-		cmd_reg_val |= CMD_AT;
-
-	if (priv->can.ctrlmode & CAN_CTRLMODE_LOOPBACK)
-		cmd_reg_val |= CMD_SRR;
+		sja1000_write_cmdreg(priv, CMD_TR | CMD_AT);
 	else
-		cmd_reg_val |= CMD_TR;
-
-	sja1000_write_cmdreg(priv, cmd_reg_val);
+		sja1000_write_cmdreg(priv, CMD_TR);
 
 	return NETDEV_TX_OK;
 }
@@ -634,12 +623,9 @@ struct net_device *alloc_sja1000dev(int sizeof_priv)
 	priv->can.do_set_bittiming = sja1000_set_bittiming;
 	priv->can.do_set_mode = sja1000_set_mode;
 	priv->can.do_get_berr_counter = sja1000_get_berr_counter;
-	priv->can.ctrlmode_supported = CAN_CTRLMODE_LOOPBACK |
-				       CAN_CTRLMODE_LISTENONLY |
-				       CAN_CTRLMODE_3_SAMPLES |
-				       CAN_CTRLMODE_ONE_SHOT |
-				       CAN_CTRLMODE_BERR_REPORTING |
-				       CAN_CTRLMODE_PRESUME_ACK;
+	priv->can.ctrlmode_supported = CAN_CTRLMODE_3_SAMPLES |
+		CAN_CTRLMODE_BERR_REPORTING | CAN_CTRLMODE_LISTENONLY |
+		CAN_CTRLMODE_ONE_SHOT;
 
 	spin_lock_init(&priv->cmdreg_lock);
 
@@ -657,10 +643,9 @@ void free_sja1000dev(struct net_device *dev)
 EXPORT_SYMBOL_GPL(free_sja1000dev);
 
 static const struct net_device_ops sja1000_netdev_ops = {
-	.ndo_open	= sja1000_open,
-	.ndo_stop	= sja1000_close,
-	.ndo_start_xmit	= sja1000_start_xmit,
-	.ndo_change_mtu	= can_change_mtu,
+       .ndo_open               = sja1000_open,
+       .ndo_stop               = sja1000_close,
+       .ndo_start_xmit         = sja1000_start_xmit,
 };
 
 int register_sja1000dev(struct net_device *dev)

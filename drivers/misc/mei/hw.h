@@ -22,7 +22,7 @@
 /*
  * Timeouts in Seconds
  */
-#define MEI_HW_READY_TIMEOUT        2  /* Timeout on ready message */
+#define MEI_INTEROP_TIMEOUT         7  /* Timeout on ready message */
 #define MEI_CONNECT_TIMEOUT         3  /* HPS: at least 2 seconds */
 
 #define MEI_CL_CONNECT_TIMEOUT     15  /* HPS: Client Connect Timeout */
@@ -31,20 +31,13 @@
 #define MEI_IAMTHIF_STALL_TIMER    12  /* HPS */
 #define MEI_IAMTHIF_READ_TIMER     10  /* HPS */
 
-#define MEI_PGI_TIMEOUT            1  /* PG Isolation time response 1 sec */
-#define MEI_HBM_TIMEOUT            1   /* 1 second */
 
 /*
  * MEI Version
  */
-#define HBM_MINOR_VERSION                   1
+#define HBM_MINOR_VERSION                   0
 #define HBM_MAJOR_VERSION                   1
-
-/*
- * MEI version with PGI support
- */
-#define HBM_MINOR_VERSION_PGI               1
-#define HBM_MAJOR_VERSION_PGI               1
+#define HBM_TIMEOUT                         1	/* 1 second */
 
 /* Host bus message command opcode */
 #define MEI_HBM_CMD_OP_MSK                  0x7f
@@ -76,11 +69,6 @@
 
 #define MEI_FLOW_CONTROL_CMD                0x08
 
-#define MEI_PG_ISOLATION_ENTRY_REQ_CMD      0x0a
-#define MEI_PG_ISOLATION_ENTRY_RES_CMD      0x8a
-#define MEI_PG_ISOLATION_EXIT_REQ_CMD       0x0b
-#define MEI_PG_ISOLATION_EXIT_RES_CMD       0x8b
-
 /*
  * MEI Stop Reason
  * used by hbm_host_stop_request.reason
@@ -97,52 +85,23 @@ enum mei_stop_reason_types {
 	SYSTEM_S5_ENTRY = 0x08
 };
 
-
-/**
- * enum mei_hbm_status  - mei host bus messages return values
- *
- * @MEI_HBMS_SUCCESS           : status success
- * @MEI_HBMS_CLIENT_NOT_FOUND  : client not found
- * @MEI_HBMS_ALREADY_EXISTS    : connection already established
- * @MEI_HBMS_REJECTED          : connection is rejected
- * @MEI_HBMS_INVALID_PARAMETER : invalid parameter
- * @MEI_HBMS_NOT_ALLOWED       : operation not allowed
- * @MEI_HBMS_ALREADY_STARTED   : system is already started
- * @MEI_HBMS_NOT_STARTED       : system not started
- *
- * @MEI_HBMS_MAX               : sentinel
- */
-enum mei_hbm_status {
-	MEI_HBMS_SUCCESS           = 0,
-	MEI_HBMS_CLIENT_NOT_FOUND  = 1,
-	MEI_HBMS_ALREADY_EXISTS    = 2,
-	MEI_HBMS_REJECTED          = 3,
-	MEI_HBMS_INVALID_PARAMETER = 4,
-	MEI_HBMS_NOT_ALLOWED       = 5,
-	MEI_HBMS_ALREADY_STARTED   = 6,
-	MEI_HBMS_NOT_STARTED       = 7,
-
-	MEI_HBMS_MAX
-};
-
-
 /*
  * Client Connect Status
  * used by hbm_client_connect_response.status
  */
-enum mei_cl_connect_status {
-	MEI_CL_CONN_SUCCESS          = MEI_HBMS_SUCCESS,
-	MEI_CL_CONN_NOT_FOUND        = MEI_HBMS_CLIENT_NOT_FOUND,
-	MEI_CL_CONN_ALREADY_STARTED  = MEI_HBMS_ALREADY_EXISTS,
-	MEI_CL_CONN_OUT_OF_RESOURCES = MEI_HBMS_REJECTED,
-	MEI_CL_CONN_MESSAGE_SMALL    = MEI_HBMS_INVALID_PARAMETER,
+enum client_connect_status_types {
+	CCS_SUCCESS = 0x00,
+	CCS_NOT_FOUND = 0x01,
+	CCS_ALREADY_STARTED = 0x02,
+	CCS_OUT_OF_RESOURCES = 0x03,
+	CCS_MESSAGE_SMALL = 0x04
 };
 
 /*
  * Client Disconnect Status
  */
-enum  mei_cl_disconnect_status {
-	MEI_CL_DISCONN_SUCCESS = MEI_HBMS_SUCCESS
+enum client_disconnect_status_types {
+	CDS_SUCCESS = 0x00
 };
 
 /*
@@ -152,8 +111,7 @@ struct mei_msg_hdr {
 	u32 me_addr:8;
 	u32 host_addr:8;
 	u32 length:9;
-	u32 reserved:5;
-	u32 internal:1;
+	u32 reserved:6;
 	u32 msg_complete:1;
 } __packed;
 
@@ -167,10 +125,10 @@ struct mei_bus_message {
  * struct hbm_cl_cmd - client specific host bus command
  *	CONNECT, DISCONNECT, and FlOW CONTROL
  *
- * @hbm_cmd: bus message command header
- * @me_addr: address of the client in ME
- * @host_addr: address of the client in the driver
- * @data: generic data
+ * @hbm_cmd - bus message command header
+ * @me_addr - address of the client in ME
+ * @host_addr - address of the client in the driver
+ * @data
  */
 struct mei_hbm_cl_cmd {
 	u8 hbm_cmd;
@@ -235,36 +193,26 @@ struct mei_client_properties {
 
 struct hbm_props_request {
 	u8 hbm_cmd;
-	u8 me_addr;
+	u8 address;
 	u8 reserved[2];
 } __packed;
 
+
 struct hbm_props_response {
 	u8 hbm_cmd;
-	u8 me_addr;
+	u8 address;
 	u8 status;
 	u8 reserved[1];
 	struct mei_client_properties client_properties;
 } __packed;
 
 /**
- * struct hbm_power_gate - power gate request/response
- *
- * @hbm_cmd: bus message command header
- * @reserved: reserved
- */
-struct hbm_power_gate {
-	u8 hbm_cmd;
-	u8 reserved[3];
-} __packed;
-
-/**
  * struct hbm_client_connect_request - connect/disconnect request
  *
- * @hbm_cmd: bus message command header
- * @me_addr: address of the client in ME
- * @host_addr: address of the client in the driver
- * @reserved: reserved
+ * @hbm_cmd - bus message command header
+ * @me_addr - address of the client in ME
+ * @host_addr - address of the client in the driver
+ * @reserved
  */
 struct hbm_client_connect_request {
 	u8 hbm_cmd;
@@ -276,10 +224,10 @@ struct hbm_client_connect_request {
 /**
  * struct hbm_client_connect_response - connect/disconnect response
  *
- * @hbm_cmd: bus message command header
- * @me_addr: address of the client in ME
- * @host_addr: address of the client in the driver
- * @status: status of the request
+ * @hbm_cmd - bus message command header
+ * @me_addr - address of the client in ME
+ * @host_addr - address of the client in the driver
+ * @status - status of the request
  */
 struct hbm_client_connect_response {
 	u8 hbm_cmd;

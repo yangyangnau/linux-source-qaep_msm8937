@@ -12,6 +12,10 @@
 
 #include <asm/tlb.h>
 
+/* FIXME - when we get this compiling */
+/* erm, now that it's compiling, what do we do with it? */
+#define _KERNPG_TABLE 0
+
 extern const char bad_pmd_string[];
 
 #define pmd_alloc_one(mm,address)       ({ BUG(); ((pmd_t *)2); })
@@ -55,10 +59,7 @@ static inline pgtable_t pte_alloc_one(struct mm_struct *mm,
 		return NULL;
 
 	clear_highpage(page);
-	if (!pgtable_page_ctor(page)) {
-		__free_page(page);
-		return NULL;
-	}
+	pgtable_page_ctor(page);
 	return page;
 
 }

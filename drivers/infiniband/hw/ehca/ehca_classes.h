@@ -322,7 +322,7 @@ struct ehca_mr_pginfo {
 		} phy;
 		struct { /* type EHCA_MR_PGI_USER section */
 			struct ib_umem *region;
-			struct scatterlist *next_sg;
+			struct ib_umem_chunk *next_chunk;
 			u64 next_nmap;
 		} usr;
 		struct { /* type EHCA_MR_PGI_FMR section */

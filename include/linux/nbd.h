@@ -24,7 +24,8 @@ struct request;
 struct nbd_device {
 	int flags;
 	int harderror;		/* Code of hard error			*/
-	struct socket * sock;	/* If == NULL, device is not ready, yet	*/
+	struct socket * sock;
+	struct file * file; 	/* If == NULL, device is not ready, yet	*/
 	int magic;
 
 	spinlock_t queue_lock;

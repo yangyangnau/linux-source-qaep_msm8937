@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2014, Intel Corp.
+ * Copyright (C) 2000 - 2013, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -75,7 +75,6 @@ acpi_ex_do_debug_object(union acpi_operand_object *source_desc,
 			u32 level, u32 index)
 {
 	u32 i;
-	u32 timer;
 
 	ACPI_FUNCTION_TRACE_PTR(ex_do_debug_object, source_desc);
 
@@ -87,19 +86,11 @@ acpi_ex_do_debug_object(union acpi_operand_object *source_desc,
 	}
 
 	/*
-	 * We will emit the current timer value (in microseconds) with each
-	 * debug output. Only need the lower 26 bits. This allows for 67
-	 * million microseconds or 67 seconds before rollover.
-	 */
-	timer = ((u32)acpi_os_get_timer() / 10);	/* (100 nanoseconds to microseconds) */
-	timer &= 0x03FFFFFF;
-
-	/*
 	 * Print line header as long as we are not in the middle of an
 	 * object display
 	 */
 	if (!((level > 0) && index == 0)) {
-		acpi_os_printf("[ACPI Debug %.8u] %*s", timer, level, " ");
+		acpi_os_printf("[ACPI Debug] %*s", level, " ");
 	}
 
 	/* Display the index for package output only */
@@ -202,7 +193,6 @@ acpi_ex_do_debug_object(union acpi_operand_object *source_desc,
 			return_VOID;
 
 		default:
-
 			break;
 		}
 
@@ -236,7 +226,6 @@ acpi_ex_do_debug_object(union acpi_operand_object *source_desc,
 					break;
 
 				default:
-
 					acpi_ex_do_debug_object((source_desc->
 								 reference.
 								 node)->object,

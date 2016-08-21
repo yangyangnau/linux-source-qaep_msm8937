@@ -15,6 +15,7 @@
 
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/init.h>
 #include <linux/platform_device.h>
 #include <linux/leds.h>
 #include <linux/workqueue.h>
@@ -86,7 +87,7 @@ static int adp5520_led_setup(struct adp5520_led *led)
 
 static int adp5520_led_prepare(struct platform_device *pdev)
 {
-	struct adp5520_leds_platform_data *pdata = dev_get_platdata(&pdev->dev);
+	struct adp5520_leds_platform_data *pdata = pdev->dev.platform_data;
 	struct device *dev = pdev->dev.parent;
 	int ret = 0;
 
@@ -102,7 +103,7 @@ static int adp5520_led_prepare(struct platform_device *pdev)
 
 static int adp5520_led_probe(struct platform_device *pdev)
 {
-	struct adp5520_leds_platform_data *pdata = dev_get_platdata(&pdev->dev);
+	struct adp5520_leds_platform_data *pdata = pdev->dev.platform_data;
 	struct adp5520_led *led, *led_dat;
 	struct led_info *cur_led;
 	int ret, i;
@@ -120,10 +121,13 @@ static int adp5520_led_probe(struct platform_device *pdev)
 
 	led = devm_kzalloc(&pdev->dev, sizeof(*led) * pdata->num_leds,
 				GFP_KERNEL);
-	if (!led)
+	if (led == NULL) {
+		dev_err(&pdev->dev, "failed to alloc memory\n");
 		return -ENOMEM;
+	}
 
 	ret = adp5520_led_prepare(pdev);
+
 	if (ret) {
 		dev_err(&pdev->dev, "failed to write\n");
 		return ret;
@@ -181,7 +185,7 @@ err:
 
 static int adp5520_led_remove(struct platform_device *pdev)
 {
-	struct adp5520_leds_platform_data *pdata = dev_get_platdata(&pdev->dev);
+	struct adp5520_leds_platform_data *pdata = pdev->dev.platform_data;
 	struct adp5520_led *led;
 	int i;
 

@@ -53,6 +53,7 @@ Scott Hill shill@gtcocalcomp.com
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/errno.h>
+#include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/input.h>
 #include <linux/usb.h>
@@ -848,7 +849,7 @@ static int gtco_probe(struct usb_interface *usbinterface,
 	gtco->inputdevice = input_dev;
 
 	/* Save interface information */
-	gtco->usbdev = interface_to_usbdev(usbinterface);
+	gtco->usbdev = usb_get_dev(interface_to_usbdev(usbinterface));
 	gtco->intf = usbinterface;
 
 	/* Allocate some data for incoming reports */

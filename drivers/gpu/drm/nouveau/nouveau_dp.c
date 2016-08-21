@@ -30,6 +30,11 @@
 #include "nouveau_encoder.h"
 #include "nouveau_crtc.h"
 
+#include <core/class.h>
+
+#include <subdev/gpio.h>
+#include <subdev/i2c.h>
+
 static void
 nouveau_dp_probe_oui(struct drm_device *dev, struct nouveau_i2c_port *auxch,
 		     u8 *dpcd)
@@ -50,10 +55,11 @@ nouveau_dp_probe_oui(struct drm_device *dev, struct nouveau_i2c_port *auxch,
 
 }
 
-int
-nouveau_dp_detect(struct nouveau_encoder *nv_encoder)
+bool
+nouveau_dp_detect(struct drm_encoder *encoder)
 {
-	struct drm_device *dev = nv_encoder->base.base.dev;
+	struct nouveau_encoder *nv_encoder = nouveau_encoder(encoder);
+	struct drm_device *dev = encoder->dev;
 	struct nouveau_drm *drm = nouveau_drm(dev);
 	struct nouveau_i2c_port *auxch;
 	u8 *dpcd = nv_encoder->dp.dpcd;
@@ -61,11 +67,11 @@ nouveau_dp_detect(struct nouveau_encoder *nv_encoder)
 
 	auxch = nv_encoder->i2c;
 	if (!auxch)
-		return -ENODEV;
+		return false;
 
 	ret = nv_rdaux(auxch, DP_DPCD_REV, dpcd, 8);
 	if (ret)
-		return ret;
+		return false;
 
 	nv_encoder->dp.link_bw = 27000 * dpcd[1];
 	nv_encoder->dp.link_nr = dpcd[2] & DP_MAX_LANE_COUNT_MASK;
@@ -85,5 +91,6 @@ nouveau_dp_detect(struct nouveau_encoder *nv_encoder)
 		     nv_encoder->dp.link_nr, nv_encoder->dp.link_bw);
 
 	nouveau_dp_probe_oui(dev, auxch, dpcd);
-	return 0;
+
+	return true;
 }

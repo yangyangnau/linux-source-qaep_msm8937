@@ -37,7 +37,7 @@ void br_init_port(struct net_bridge_port *p)
 {
 	p->port_id = br_make_port_id(p->priority, p->port_no);
 	br_become_designated_port(p);
-	br_set_state(p, BR_STATE_BLOCKING);
+	p->state = BR_STATE_BLOCKING;
 	p->topology_change_ack = 0;
 	p->config_pending = 0;
 }
@@ -100,7 +100,7 @@ void br_stp_disable_port(struct net_bridge_port *p)
 
 	wasroot = br_is_root_bridge(br);
 	br_become_designated_port(p);
-	br_set_state(p, BR_STATE_DISABLED);
+	p->state = BR_STATE_DISABLED;
 	p->topology_change_ack = 0;
 	p->config_pending = 0;
 
@@ -194,8 +194,6 @@ void br_stp_change_bridge_id(struct net_bridge *br, const unsigned char *addr)
 
 	wasroot = br_is_root_bridge(br);
 
-	br_fdb_change_mac_address(br, addr);
-
 	memcpy(oldaddr, br->bridge_id.addr, ETH_ALEN);
 	memcpy(br->bridge_id.addr, addr, ETH_ALEN);
 	memcpy(br->dev->dev_addr, addr, ETH_ALEN);
@@ -243,13 +241,12 @@ bool br_stp_recalculate_bridge_id(struct net_bridge *br)
 	return true;
 }
 
-/* Acquires and releases bridge lock */
+/* called under bridge lock */
 void br_stp_set_bridge_priority(struct net_bridge *br, u16 newprio)
 {
 	struct net_bridge_port *p;
 	int wasroot;
 
-	spin_lock_bh(&br->lock);
 	wasroot = br_is_root_bridge(br);
 
 	list_for_each_entry(p, &br->port_list, list) {
@@ -267,7 +264,6 @@ void br_stp_set_bridge_priority(struct net_bridge *br, u16 newprio)
 	br_port_state_selection(br);
 	if (br_is_root_bridge(br) && !wasroot)
 		br_become_root_bridge(br);
-	spin_unlock_bh(&br->lock);
 }
 
 /* called under bridge lock */

@@ -33,7 +33,7 @@
 #include <linux/input/sparse-keymap.h>
 #include <linux/dmi.h>
 #include <linux/fb.h>
-#include <linux/acpi.h>
+#include <acpi/acpi_bus.h>
 
 #include "asus-wmi.h"
 
@@ -145,7 +145,7 @@ static int dmi_matched(const struct dmi_system_id *dmi)
 	return 1;
 }
 
-static const struct dmi_system_id asus_quirks[] = {
+static struct dmi_system_id asus_quirks[] = {
 	{
 		.callback = dmi_matched,
 		.ident = "ASUSTeK Computer INC. 1000H",

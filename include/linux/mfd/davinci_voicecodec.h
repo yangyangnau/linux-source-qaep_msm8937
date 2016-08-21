@@ -21,16 +21,13 @@
  */
 
 #ifndef __LINUX_MFD_DAVINCI_VOICECODEC_H_
-#define __LINUX_MFD_DAVINCI_VOICECODEC_H_
+#define __LINUX_MFD_DAVINIC_VOICECODEC_H_
 
 #include <linux/kernel.h>
 #include <linux/platform_device.h>
 #include <linux/mfd/core.h>
-#include <linux/platform_data/edma.h>
 
-#include <mach/hardware.h>
-
-struct regmap;
+#include <mach/edma.h>
 
 /*
  * Register values.
@@ -115,7 +112,8 @@ struct davinci_vc {
 
 	/* Memory resources */
 	void __iomem *base;
-	struct regmap *regmap;
+	resource_size_t pbase;
+	size_t base_size;
 
 	/* MFD cells */
 	struct mfd_cell cells[DAVINCI_VC_CELLS];

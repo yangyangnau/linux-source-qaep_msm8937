@@ -2,24 +2,14 @@
 #define _LINUX_COMPACTION_H
 
 /* Return values for compact_zone() and try_to_compact_pages() */
-/* compaction didn't start as it was deferred due to past failures */
-#define COMPACT_DEFERRED	0
 /* compaction didn't start as it was not possible or direct reclaim was more suitable */
-#define COMPACT_SKIPPED		1
+#define COMPACT_SKIPPED		0
 /* compaction should continue to another pageblock */
-#define COMPACT_CONTINUE	2
+#define COMPACT_CONTINUE	1
 /* direct compaction partially compacted a zone and there are suitable pages */
-#define COMPACT_PARTIAL		3
+#define COMPACT_PARTIAL		2
 /* The full zone was compacted */
-#define COMPACT_COMPLETE	4
-
-/* Used to signal whether compaction detected need_sched() or lock contention */
-/* No contention detected */
-#define COMPACT_CONTENDED_NONE	0
-/* Either need_sched() was true or fatal signal pending */
-#define COMPACT_CONTENDED_SCHED	1
-/* Zone lock or lru_lock was contended in async compaction */
-#define COMPACT_CONTENDED_LOCK	2
+#define COMPACT_COMPLETE	3
 
 #ifdef CONFIG_COMPACTION
 extern int sysctl_compact_memory;
@@ -32,8 +22,7 @@ extern int sysctl_extfrag_handler(struct ctl_table *table, int write,
 extern int fragmentation_index(struct zone *zone, unsigned int order);
 extern unsigned long try_to_compact_pages(struct zonelist *zonelist,
 			int order, gfp_t gfp_mask, nodemask_t *mask,
-			enum migrate_mode mode, int *contended,
-			struct zone **candidate_zone);
+			bool sync, bool *contended);
 extern void compact_pgdat(pg_data_t *pgdat, int order);
 extern void reset_isolation_suitable(pg_data_t *pgdat);
 extern unsigned long compaction_suitable(struct zone *zone, int order);
@@ -73,22 +62,6 @@ static inline bool compaction_deferred(struct zone *zone, int order)
 	return zone->compact_considered < defer_limit;
 }
 
-/*
- * Update defer tracking counters after successful compaction of given order,
- * which means an allocation either succeeded (alloc_success == true) or is
- * expected to succeed.
- */
-static inline void compaction_defer_reset(struct zone *zone, int order,
-		bool alloc_success)
-{
-	if (alloc_success) {
-		zone->compact_considered = 0;
-		zone->compact_defer_shift = 0;
-	}
-	if (order >= zone->compact_order_failed)
-		zone->compact_order_failed = order + 1;
-}
-
 /* Returns true if restarting compaction after many failures */
 static inline bool compaction_restarting(struct zone *zone, int order)
 {
@@ -102,8 +75,7 @@ static inline bool compaction_restarting(struct zone *zone, int order)
 #else
 static inline unsigned long try_to_compact_pages(struct zonelist *zonelist,
 			int order, gfp_t gfp_mask, nodemask_t *nodemask,
-			enum migrate_mode mode, int *contended,
-			struct zone **candidate_zone)
+			bool sync, bool *contended)
 {
 	return COMPACT_CONTINUE;
 }

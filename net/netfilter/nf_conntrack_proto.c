@@ -92,6 +92,12 @@ nf_ct_l3proto_find_get(u_int16_t l3proto)
 }
 EXPORT_SYMBOL_GPL(nf_ct_l3proto_find_get);
 
+void nf_ct_l3proto_put(struct nf_conntrack_l3proto *p)
+{
+	module_put(p->me);
+}
+EXPORT_SYMBOL_GPL(nf_ct_l3proto_put);
+
 int
 nf_ct_l3proto_try_module_get(unsigned short l3proto)
 {
@@ -275,7 +281,7 @@ void nf_ct_l3proto_pernet_unregister(struct net *net,
 	nf_ct_l3proto_unregister_sysctl(net, proto);
 
 	/* Remove all contrack entries for this protocol */
-	nf_ct_iterate_cleanup(net, kill_l3proto, proto, 0, 0);
+	nf_ct_iterate_cleanup(net, kill_l3proto, proto);
 }
 EXPORT_SYMBOL_GPL(nf_ct_l3proto_pernet_unregister);
 
@@ -470,7 +476,7 @@ void nf_ct_l4proto_pernet_unregister(struct net *net,
 	nf_ct_l4proto_unregister_sysctl(net, pn, l4proto);
 
 	/* Remove all contrack entries for this protocol */
-	nf_ct_iterate_cleanup(net, kill_l4proto, l4proto, 0, 0);
+	nf_ct_iterate_cleanup(net, kill_l4proto, l4proto);
 }
 EXPORT_SYMBOL_GPL(nf_ct_l4proto_pernet_unregister);
 

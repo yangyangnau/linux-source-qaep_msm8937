@@ -32,6 +32,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/init.h>
 #include <linux/i2c.h>
 #include <linux/string.h>
 #include <linux/list.h>
@@ -85,6 +86,7 @@ static ssize_t ds1682_store(struct device *dev, struct device_attribute *attr,
 {
 	struct sensor_device_attribute_2 *sattr = to_sensor_dev_attr_2(attr);
 	struct i2c_client *client = to_i2c_client(dev);
+	char *endp;
 	u64 val;
 	__le32 val_le;
 	int rc;
@@ -92,8 +94,8 @@ static ssize_t ds1682_store(struct device *dev, struct device_attribute *attr,
 	dev_dbg(dev, "ds1682_store() called on %s\n", attr->attr.name);
 
 	/* Decode input */
-	rc = kstrtoull(buf, 0, &val);
-	if (rc < 0) {
+	val = simple_strtoull(buf, &endp, 0);
+	if (buf == endp) {
 		dev_dbg(dev, "input string not a number\n");
 		return -EINVAL;
 	}

@@ -19,6 +19,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/sched.h>
 #include <linux/wait.h>
@@ -319,7 +320,7 @@ static int ucb1400_ts_detect_irq(struct ucb1400_ts *ucb,
 
 static int ucb1400_ts_probe(struct platform_device *pdev)
 {
-	struct ucb1400_ts *ucb = dev_get_platdata(&pdev->dev);
+	struct ucb1400_ts *ucb = pdev->dev.platform_data;
 	int error, x_res, y_res;
 	u16 fcsr;
 
@@ -398,7 +399,7 @@ err:
 
 static int ucb1400_ts_remove(struct platform_device *pdev)
 {
-	struct ucb1400_ts *ucb = dev_get_platdata(&pdev->dev);
+	struct ucb1400_ts *ucb = pdev->dev.platform_data;
 
 	free_irq(ucb->irq, ucb);
 	input_unregister_device(ucb->ts_idev);
@@ -409,7 +410,7 @@ static int ucb1400_ts_remove(struct platform_device *pdev)
 #ifdef CONFIG_PM_SLEEP
 static int ucb1400_ts_suspend(struct device *dev)
 {
-	struct ucb1400_ts *ucb = dev_get_platdata(dev);
+	struct ucb1400_ts *ucb = dev->platform_data;
 	struct input_dev *idev = ucb->ts_idev;
 
 	mutex_lock(&idev->mutex);
@@ -423,7 +424,7 @@ static int ucb1400_ts_suspend(struct device *dev)
 
 static int ucb1400_ts_resume(struct device *dev)
 {
-	struct ucb1400_ts *ucb = dev_get_platdata(dev);
+	struct ucb1400_ts *ucb = dev->platform_data;
 	struct input_dev *idev = ucb->ts_idev;
 
 	mutex_lock(&idev->mutex);

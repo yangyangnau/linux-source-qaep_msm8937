@@ -10,7 +10,6 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
-#include <linux/compiler.h>
 #include <linux/sched.h>
 #include <linux/mm.h>
 #include <linux/dma-mapping.h>
@@ -24,7 +23,6 @@
 #include <asm/thread_info.h>
 #include <asm/memory.h>
 #include <asm/procinfo.h>
-#include <asm/suspend.h>
 #include <asm/hardware/cache-l2x0.h>
 #include <linux/kbuild.h>
 
@@ -40,19 +38,10 @@
  * GCC 3.2.x: miscompiles NEW_AUX_ENT in fs/binfmt_elf.c
  *            (http://gcc.gnu.org/PR8896) and incorrect structure
  *	      initialisation in fs/jffs2/erase.c
- * GCC 4.8.0-4.8.2: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=58854
- *	      miscompiles find_get_entry(), and can result in EXT3 and EXT4
- *	      filesystem corruption (possibly other FS too).
  */
-#ifdef __GNUC__
 #if (__GNUC__ == 3 && __GNUC_MINOR__ < 3)
 #error Your compiler is too buggy; it is known to miscompile kernels.
-#error    Known good compilers: 3.3, 4.x
-#endif
-#if GCC_VERSION >= 40800 && GCC_VERSION < 40803
-#error Your compiler is too buggy; it is known to miscompile kernels
-#error and result in filesystem corruption and oopses.
-#endif
+#error    Known good compilers: 3.3
 #endif
 
 int main(void)
@@ -156,11 +145,6 @@ int main(void)
 #ifdef MULTI_CACHE
   DEFINE(CACHE_FLUSH_KERN_ALL,	offsetof(struct cpu_cache_fns, flush_kern_all));
 #endif
-#ifdef CONFIG_ARM_CPU_SUSPEND
-  DEFINE(SLEEP_SAVE_SP_SZ,	sizeof(struct sleep_save_sp));
-  DEFINE(SLEEP_SAVE_SP_PHYS,	offsetof(struct sleep_save_sp, save_ptr_stash_phys));
-  DEFINE(SLEEP_SAVE_SP_VIRT,	offsetof(struct sleep_save_sp, save_ptr_stash));
-#endif
   BLANK();
   DEFINE(DMA_BIDIRECTIONAL,	DMA_BIDIRECTIONAL);
   DEFINE(DMA_TO_DEVICE,		DMA_TO_DEVICE);
@@ -184,7 +168,6 @@ int main(void)
   DEFINE(VCPU_FIQ_REGS,		offsetof(struct kvm_vcpu, arch.regs.fiq_regs));
   DEFINE(VCPU_PC,		offsetof(struct kvm_vcpu, arch.regs.usr_regs.ARM_pc));
   DEFINE(VCPU_CPSR,		offsetof(struct kvm_vcpu, arch.regs.usr_regs.ARM_cpsr));
-  DEFINE(VCPU_HCR,		offsetof(struct kvm_vcpu, arch.hcr));
   DEFINE(VCPU_IRQ_LINES,	offsetof(struct kvm_vcpu, arch.irq_lines));
   DEFINE(VCPU_HSR,		offsetof(struct kvm_vcpu, arch.fault.hsr));
   DEFINE(VCPU_HxFAR,		offsetof(struct kvm_vcpu, arch.fault.hxfar));
@@ -192,13 +175,13 @@ int main(void)
   DEFINE(VCPU_HYP_PC,		offsetof(struct kvm_vcpu, arch.fault.hyp_pc));
 #ifdef CONFIG_KVM_ARM_VGIC
   DEFINE(VCPU_VGIC_CPU,		offsetof(struct kvm_vcpu, arch.vgic_cpu));
-  DEFINE(VGIC_V2_CPU_HCR,	offsetof(struct vgic_cpu, vgic_v2.vgic_hcr));
-  DEFINE(VGIC_V2_CPU_VMCR,	offsetof(struct vgic_cpu, vgic_v2.vgic_vmcr));
-  DEFINE(VGIC_V2_CPU_MISR,	offsetof(struct vgic_cpu, vgic_v2.vgic_misr));
-  DEFINE(VGIC_V2_CPU_EISR,	offsetof(struct vgic_cpu, vgic_v2.vgic_eisr));
-  DEFINE(VGIC_V2_CPU_ELRSR,	offsetof(struct vgic_cpu, vgic_v2.vgic_elrsr));
-  DEFINE(VGIC_V2_CPU_APR,	offsetof(struct vgic_cpu, vgic_v2.vgic_apr));
-  DEFINE(VGIC_V2_CPU_LR,	offsetof(struct vgic_cpu, vgic_v2.vgic_lr));
+  DEFINE(VGIC_CPU_HCR,		offsetof(struct vgic_cpu, vgic_hcr));
+  DEFINE(VGIC_CPU_VMCR,		offsetof(struct vgic_cpu, vgic_vmcr));
+  DEFINE(VGIC_CPU_MISR,		offsetof(struct vgic_cpu, vgic_misr));
+  DEFINE(VGIC_CPU_EISR,		offsetof(struct vgic_cpu, vgic_eisr));
+  DEFINE(VGIC_CPU_ELRSR,	offsetof(struct vgic_cpu, vgic_elrsr));
+  DEFINE(VGIC_CPU_APR,		offsetof(struct vgic_cpu, vgic_apr));
+  DEFINE(VGIC_CPU_LR,		offsetof(struct vgic_cpu, vgic_lr));
   DEFINE(VGIC_CPU_NR_LR,	offsetof(struct vgic_cpu, nr_lr));
 #ifdef CONFIG_KVM_ARM_TIMER
   DEFINE(VCPU_TIMER_CNTV_CTL,	offsetof(struct kvm_vcpu, arch.timer_cpu.cntv_ctl));

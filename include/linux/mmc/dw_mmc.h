@@ -15,7 +15,6 @@
 #define LINUX_MMC_DW_MMC_H
 
 #include <linux/scatterlist.h>
-#include <linux/mmc/core.h>
 
 #define MAX_MCI_SLOTS	2
 
@@ -26,8 +25,6 @@ enum dw_mci_state {
 	STATE_DATA_BUSY,
 	STATE_SENDING_STOP,
 	STATE_DATA_ERROR,
-	STATE_SENDING_CMD11,
-	STATE_WAITING_CMD11_DONE,
 };
 
 enum {
@@ -132,9 +129,6 @@ struct dw_mci {
 	struct mmc_request	*mrq;
 	struct mmc_command	*cmd;
 	struct mmc_data		*data;
-	struct mmc_command	stop_abort;
-	unsigned int		prev_blksz;
-	unsigned char		timing;
 	struct workqueue_struct	*card_workqueue;
 
 	/* DMA interface members*/
@@ -190,7 +184,7 @@ struct dw_mci {
 	/* Workaround flags */
 	u32			quirks;
 
-	bool			vqmmc_enabled;
+	struct regulator	*vmmc;	/* Power regulator */
 	unsigned long		irq_flags; /* IRQ flags */
 	int			irq;
 };
@@ -215,8 +209,6 @@ struct dw_mci_dma_ops {
 #define DW_MCI_QUIRK_HIGHSPEED			BIT(2)
 /* Unreliable card detection */
 #define DW_MCI_QUIRK_BROKEN_CARD_DETECTION	BIT(3)
-/* No write protect */
-#define DW_MCI_QUIRK_NO_WRITE_PROTECT		BIT(4)
 
 /* Slot level quirks */
 /* This slot has no write protect */
@@ -251,6 +243,20 @@ struct dw_mci_board {
 
 	/* delay in mS before detecting cards after interrupt */
 	u32 detect_delay_ms;
+
+	int (*init)(u32 slot_id, irq_handler_t , void *);
+	int (*get_ro)(u32 slot_id);
+	int (*get_cd)(u32 slot_id);
+	int (*get_ocr)(u32 slot_id);
+	int (*get_bus_wd)(u32 slot_id);
+	/*
+	 * Enable power to selected slot and set voltage to desired level.
+	 * Voltage levels are specified using MMC_VDD_xxx defines defined
+	 * in linux/mmc/host.h file.
+	 */
+	void (*setpower)(u32 slot_id, u32 volt);
+	void (*exit)(u32 slot_id);
+	void (*select_slot)(u32 slot_id);
 
 	struct dw_mci_dma_ops *dma_ops;
 	struct dma_pdata *data;

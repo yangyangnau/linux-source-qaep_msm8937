@@ -11,6 +11,10 @@
  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
  * more details.
  *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110, USA
+ *
  * The full GNU General Public License is included in this distribution in the
  * file called LICENSE.
  *
@@ -26,10 +30,8 @@
 #ifndef __RTL8723E_SW_H__
 #define __RTL8723E_SW_H__
 
-int rtl8723e_init_sw_vars(struct ieee80211_hw *hw);
-void rtl8723e_deinit_sw_vars(struct ieee80211_hw *hw);
-void rtl8723e_init_var_map(struct ieee80211_hw *hw);
-bool rtl8723e_get_btc_status(void);
-
+int rtl8723ae_init_sw_vars(struct ieee80211_hw *hw);
+void rtl8723ae_deinit_sw_vars(struct ieee80211_hw *hw);
+void rtl8723ae_init_var_map(struct ieee80211_hw *hw);
 
 #endif

@@ -23,8 +23,6 @@
 #define PXA2XX_CS_ASSERT (0x01)
 #define PXA2XX_CS_DEASSERT (0x02)
 
-struct dma_chan;
-
 /* device.platform_data for SSP controller devices */
 struct pxa2xx_spi_master {
 	u32 clock_enable;
@@ -32,9 +30,10 @@ struct pxa2xx_spi_master {
 	u8 enable_dma;
 
 	/* DMA engine specific config */
-	bool (*dma_filter)(struct dma_chan *chan, void *param);
-	void *tx_param;
-	void *rx_param;
+	int rx_chan_id;
+	int tx_chan_id;
+	int rx_slave_id;
+	int tx_slave_id;
 
 	/* For non-PXA arches */
 	struct ssp_device ssp;

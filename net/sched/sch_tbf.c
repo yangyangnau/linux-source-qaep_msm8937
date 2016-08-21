@@ -101,11 +101,12 @@
 struct tbf_sched_data {
 /* Parameters */
 	u32		limit;		/* Maximal length of backlog: bytes */
-	u32		max_size;
 	s64		buffer;		/* Token bucket depth/rate: MUST BE >= MTU/B */
 	s64		mtu;
+	u32		max_size;
 	struct psched_ratecfg rate;
 	struct psched_ratecfg peak;
+	bool peak_present;
 
 /* Variables */
 	s64	tokens;			/* Current number of B tokens */
@@ -115,93 +116,18 @@ struct tbf_sched_data {
 	struct qdisc_watchdog watchdog;	/* Watchdog timer */
 };
 
-
-/* Time to Length, convert time in ns to length in bytes
- * to determinate how many bytes can be sent in given time.
- */
-static u64 psched_ns_t2l(const struct psched_ratecfg *r,
-			 u64 time_in_ns)
-{
-	/* The formula is :
-	 * len = (time_in_ns * r->rate_bytes_ps) / NSEC_PER_SEC
-	 */
-	u64 len = time_in_ns * r->rate_bytes_ps;
-
-	do_div(len, NSEC_PER_SEC);
-
-	if (unlikely(r->linklayer == TC_LINKLAYER_ATM)) {
-		do_div(len, 53);
-		len = len * 48;
-	}
-
-	if (len > r->overhead)
-		len -= r->overhead;
-	else
-		len = 0;
-
-	return len;
-}
-
-/*
- * Return length of individual segments of a gso packet,
- * including all headers (MAC, IP, TCP/UDP)
- */
-static unsigned int skb_gso_mac_seglen(const struct sk_buff *skb)
-{
-	unsigned int hdr_len = skb_transport_header(skb) - skb_mac_header(skb);
-	return hdr_len + skb_gso_transport_seglen(skb);
-}
-
-/* GSO packet is too big, segment it so that tbf can transmit
- * each segment in time
- */
-static int tbf_segment(struct sk_buff *skb, struct Qdisc *sch)
-{
-	struct tbf_sched_data *q = qdisc_priv(sch);
-	struct sk_buff *segs, *nskb;
-	netdev_features_t features = netif_skb_features(skb);
-	int ret, nb;
-
-	segs = skb_gso_segment(skb, features & ~NETIF_F_GSO_MASK);
-
-	if (IS_ERR_OR_NULL(segs))
-		return qdisc_reshape_fail(skb, sch);
-
-	nb = 0;
-	while (segs) {
-		nskb = segs->next;
-		segs->next = NULL;
-		qdisc_skb_cb(segs)->pkt_len = segs->len;
-		ret = qdisc_enqueue(segs, q->qdisc);
-		if (ret != NET_XMIT_SUCCESS) {
-			if (net_xmit_drop_count(ret))
-				qdisc_qstats_drop(sch);
-		} else {
-			nb++;
-		}
-		segs = nskb;
-	}
-	sch->q.qlen += nb;
-	if (nb > 1)
-		qdisc_tree_decrease_qlen(sch, 1 - nb);
-	consume_skb(skb);
-	return nb > 0 ? NET_XMIT_SUCCESS : NET_XMIT_DROP;
-}
-
 static int tbf_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 {
 	struct tbf_sched_data *q = qdisc_priv(sch);
 	int ret;
 
-	if (qdisc_pkt_len(skb) > q->max_size) {
-		if (skb_is_gso(skb) && skb_gso_mac_seglen(skb) <= q->max_size)
-			return tbf_segment(skb, sch);
+	if (qdisc_pkt_len(skb) > q->max_size)
 		return qdisc_reshape_fail(skb, sch);
-	}
+
 	ret = qdisc_enqueue(skb, q->qdisc);
 	if (ret != NET_XMIT_SUCCESS) {
 		if (net_xmit_drop_count(ret))
-			qdisc_qstats_drop(sch);
+			sch->qstats.drops++;
 		return ret;
 	}
 
@@ -216,14 +142,9 @@ static unsigned int tbf_drop(struct Qdisc *sch)
 
 	if (q->qdisc->ops->drop && (len = q->qdisc->ops->drop(q->qdisc)) != 0) {
 		sch->q.qlen--;
-		qdisc_qstats_drop(sch);
+		sch->qstats.drops++;
 	}
 	return len;
-}
-
-static bool tbf_peak_present(const struct tbf_sched_data *q)
-{
-	return q->peak.rate_bytes_ps;
 }
 
 static struct sk_buff *tbf_dequeue(struct Qdisc *sch)
@@ -239,10 +160,10 @@ static struct sk_buff *tbf_dequeue(struct Qdisc *sch)
 		s64 ptoks = 0;
 		unsigned int len = qdisc_pkt_len(skb);
 
-		now = ktime_get_ns();
+		now = ktime_to_ns(ktime_get());
 		toks = min_t(s64, now - q->t_c, q->buffer);
 
-		if (tbf_peak_present(q)) {
+		if (q->peak_present) {
 			ptoks = toks + q->ptokens;
 			if (ptoks > q->mtu)
 				ptoks = q->mtu;
@@ -268,8 +189,7 @@ static struct sk_buff *tbf_dequeue(struct Qdisc *sch)
 		}
 
 		qdisc_watchdog_schedule_ns(&q->watchdog,
-					   now + max_t(long, -toks, -ptoks),
-					   true);
+					   now + max_t(long, -toks, -ptoks));
 
 		/* Maybe we have a shorter packet in the queue,
 		   which can be sent now. It sounds cool,
@@ -282,7 +202,7 @@ static struct sk_buff *tbf_dequeue(struct Qdisc *sch)
 		   (cf. CSZ, HPFQ, HFSC)
 		 */
 
-		qdisc_qstats_overlimit(sch);
+		sch->qstats.overlimits++;
 	}
 	return NULL;
 }
@@ -293,7 +213,7 @@ static void tbf_reset(struct Qdisc *sch)
 
 	qdisc_reset(q->qdisc);
 	sch->q.qlen = 0;
-	q->t_c = ktime_get_ns();
+	q->t_c = ktime_to_ns(ktime_get());
 	q->tokens = q->buffer;
 	q->ptokens = q->mtu;
 	qdisc_watchdog_cancel(&q->watchdog);
@@ -303,26 +223,20 @@ static const struct nla_policy tbf_policy[TCA_TBF_MAX + 1] = {
 	[TCA_TBF_PARMS]	= { .len = sizeof(struct tc_tbf_qopt) },
 	[TCA_TBF_RTAB]	= { .type = NLA_BINARY, .len = TC_RTAB_SIZE },
 	[TCA_TBF_PTAB]	= { .type = NLA_BINARY, .len = TC_RTAB_SIZE },
-	[TCA_TBF_RATE64]	= { .type = NLA_U64 },
-	[TCA_TBF_PRATE64]	= { .type = NLA_U64 },
-	[TCA_TBF_BURST] = { .type = NLA_U32 },
-	[TCA_TBF_PBURST] = { .type = NLA_U32 },
 };
 
 static int tbf_change(struct Qdisc *sch, struct nlattr *opt)
 {
 	int err;
 	struct tbf_sched_data *q = qdisc_priv(sch);
-	struct nlattr *tb[TCA_TBF_MAX + 1];
+	struct nlattr *tb[TCA_TBF_PTAB + 1];
 	struct tc_tbf_qopt *qopt;
+	struct qdisc_rate_table *rtab = NULL;
+	struct qdisc_rate_table *ptab = NULL;
 	struct Qdisc *child = NULL;
-	struct psched_ratecfg rate;
-	struct psched_ratecfg peak;
-	u64 max_size;
-	s64 buffer, mtu;
-	u64 rate64 = 0, prate64 = 0;
+	int max_size, n;
 
-	err = nla_parse_nested(tb, TCA_TBF_MAX, opt, tbf_policy);
+	err = nla_parse_nested(tb, TCA_TBF_PTAB, opt, tbf_policy);
 	if (err < 0)
 		return err;
 
@@ -331,59 +245,33 @@ static int tbf_change(struct Qdisc *sch, struct nlattr *opt)
 		goto done;
 
 	qopt = nla_data(tb[TCA_TBF_PARMS]);
-	if (qopt->rate.linklayer == TC_LINKLAYER_UNAWARE)
-		qdisc_put_rtab(qdisc_get_rtab(&qopt->rate,
-					      tb[TCA_TBF_RTAB]));
-
-	if (qopt->peakrate.linklayer == TC_LINKLAYER_UNAWARE)
-			qdisc_put_rtab(qdisc_get_rtab(&qopt->peakrate,
-						      tb[TCA_TBF_PTAB]));
-
-	buffer = min_t(u64, PSCHED_TICKS2NS(qopt->buffer), ~0U);
-	mtu = min_t(u64, PSCHED_TICKS2NS(qopt->mtu), ~0U);
-
-	if (tb[TCA_TBF_RATE64])
-		rate64 = nla_get_u64(tb[TCA_TBF_RATE64]);
-	psched_ratecfg_precompute(&rate, &qopt->rate, rate64);
-
-	if (tb[TCA_TBF_BURST]) {
-		max_size = nla_get_u32(tb[TCA_TBF_BURST]);
-		buffer = psched_l2t_ns(&rate, max_size);
-	} else {
-		max_size = min_t(u64, psched_ns_t2l(&rate, buffer), ~0U);
-	}
+	rtab = qdisc_get_rtab(&qopt->rate, tb[TCA_TBF_RTAB]);
+	if (rtab == NULL)
+		goto done;
 
 	if (qopt->peakrate.rate) {
-		if (tb[TCA_TBF_PRATE64])
-			prate64 = nla_get_u64(tb[TCA_TBF_PRATE64]);
-		psched_ratecfg_precompute(&peak, &qopt->peakrate, prate64);
-		if (peak.rate_bytes_ps <= rate.rate_bytes_ps) {
-			pr_warn_ratelimited("sch_tbf: peakrate %llu is lower than or equals to rate %llu !\n",
-					peak.rate_bytes_ps, rate.rate_bytes_ps);
-			err = -EINVAL;
+		if (qopt->peakrate.rate > qopt->rate.rate)
+			ptab = qdisc_get_rtab(&qopt->peakrate, tb[TCA_TBF_PTAB]);
+		if (ptab == NULL)
 			goto done;
-		}
-
-		if (tb[TCA_TBF_PBURST]) {
-			u32 pburst = nla_get_u32(tb[TCA_TBF_PBURST]);
-			max_size = min_t(u32, max_size, pburst);
-			mtu = psched_l2t_ns(&peak, pburst);
-		} else {
-			max_size = min_t(u64, max_size, psched_ns_t2l(&peak, mtu));
-		}
-	} else {
-		memset(&peak, 0, sizeof(peak));
 	}
 
-	if (max_size < psched_mtu(qdisc_dev(sch)))
-		pr_warn_ratelimited("sch_tbf: burst %llu is lower than device %s mtu (%u) !\n",
-				    max_size, qdisc_dev(sch)->name,
-				    psched_mtu(qdisc_dev(sch)));
+	for (n = 0; n < 256; n++)
+		if (rtab->data[n] > qopt->buffer)
+			break;
+	max_size = (n << qopt->rate.cell_log) - 1;
+	if (ptab) {
+		int size;
 
-	if (!max_size) {
-		err = -EINVAL;
+		for (n = 0; n < 256; n++)
+			if (ptab->data[n] > qopt->mtu)
+				break;
+		size = (n << qopt->peakrate.cell_log) - 1;
+		if (size < max_size)
+			max_size = size;
+	}
+	if (max_size < 0)
 		goto done;
-	}
 
 	if (q->qdisc != &noop_qdisc) {
 		err = fifo_set_limit(q->qdisc, qopt->limit);
@@ -404,24 +292,27 @@ static int tbf_change(struct Qdisc *sch, struct nlattr *opt)
 		q->qdisc = child;
 	}
 	q->limit = qopt->limit;
-	if (tb[TCA_TBF_PBURST])
-		q->mtu = mtu;
-	else
-		q->mtu = PSCHED_TICKS2NS(qopt->mtu);
+	q->mtu = PSCHED_TICKS2NS(qopt->mtu);
 	q->max_size = max_size;
-	if (tb[TCA_TBF_BURST])
-		q->buffer = buffer;
-	else
-		q->buffer = PSCHED_TICKS2NS(qopt->buffer);
+	q->buffer = PSCHED_TICKS2NS(qopt->buffer);
 	q->tokens = q->buffer;
 	q->ptokens = q->mtu;
 
-	memcpy(&q->rate, &rate, sizeof(struct psched_ratecfg));
-	memcpy(&q->peak, &peak, sizeof(struct psched_ratecfg));
+	psched_ratecfg_precompute(&q->rate, &rtab->rate);
+	if (ptab) {
+		psched_ratecfg_precompute(&q->peak, &ptab->rate);
+		q->peak_present = true;
+	} else {
+		q->peak_present = false;
+	}
 
 	sch_tree_unlock(sch);
 	err = 0;
 done:
+	if (rtab)
+		qdisc_put_rtab(rtab);
+	if (ptab)
+		qdisc_put_rtab(ptab);
 	return err;
 }
 
@@ -432,7 +323,7 @@ static int tbf_init(struct Qdisc *sch, struct nlattr *opt)
 	if (opt == NULL)
 		return -EINVAL;
 
-	q->t_c = ktime_get_ns();
+	q->t_c = ktime_to_ns(ktime_get());
 	qdisc_watchdog_init(&q->watchdog, sch);
 	q->qdisc = &noop_qdisc;
 
@@ -460,7 +351,7 @@ static int tbf_dump(struct Qdisc *sch, struct sk_buff *skb)
 
 	opt.limit = q->limit;
 	psched_ratecfg_getrate(&opt.rate, &q->rate);
-	if (tbf_peak_present(q))
+	if (q->peak_present)
 		psched_ratecfg_getrate(&opt.peakrate, &q->peak);
 	else
 		memset(&opt.peakrate, 0, sizeof(opt.peakrate));
@@ -468,15 +359,9 @@ static int tbf_dump(struct Qdisc *sch, struct sk_buff *skb)
 	opt.buffer = PSCHED_NS2TICKS(q->buffer);
 	if (nla_put(skb, TCA_TBF_PARMS, sizeof(opt), &opt))
 		goto nla_put_failure;
-	if (q->rate.rate_bytes_ps >= (1ULL << 32) &&
-	    nla_put_u64(skb, TCA_TBF_RATE64, q->rate.rate_bytes_ps))
-		goto nla_put_failure;
-	if (tbf_peak_present(q) &&
-	    q->peak.rate_bytes_ps >= (1ULL << 32) &&
-	    nla_put_u64(skb, TCA_TBF_PRATE64, q->peak.rate_bytes_ps))
-		goto nla_put_failure;
 
-	return nla_nest_end(skb, nest);
+	nla_nest_end(skb, nest);
+	return skb->len;
 
 nla_put_failure:
 	nla_nest_cancel(skb, nest);

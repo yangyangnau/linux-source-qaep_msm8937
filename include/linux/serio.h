@@ -23,7 +23,6 @@ struct serio {
 
 	char name[32];
 	char phys[32];
-	char firmware_id[128];
 
 	bool manual_bind;
 

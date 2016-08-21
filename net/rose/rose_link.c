@@ -160,8 +160,7 @@ void rose_link_rx_restart(struct sk_buff *skb, struct rose_neigh *neigh, unsigne
 		break;
 
 	case ROSE_DIAGNOSTIC:
-		pr_warn("ROSE: received diagnostic #%d - %3ph\n", skb->data[3],
-			skb->data + 4);
+		printk(KERN_WARNING "ROSE: received diagnostic #%d - %02X %02X %02X\n", skb->data[3], skb->data[4], skb->data[5], skb->data[6]);
 		break;
 
 	default:

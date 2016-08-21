@@ -30,8 +30,7 @@
 #include <asm/machdep.h>
 #include <asm/vdso_datapage.h>
 #include <asm/xics.h>
-#include <asm/plpar_wrappers.h>
-
+#include "plpar_wrappers.h"
 #include "offline_states.h"
 
 /* This version can't take the spinlock, because it never returns */
@@ -88,13 +87,12 @@ void set_default_offline_state(int cpu)
 
 static void rtas_stop_self(void)
 {
-	static struct rtas_args args = {
+	struct rtas_args args = {
+		.token = cpu_to_be32(rtas_stop_self_token),
 		.nargs = 0,
-		.nret = cpu_to_be32(1),
+		.nret = 1,
 		.rets = &args.args[0],
 	};
-
-	args.token = cpu_to_be32(rtas_stop_self_token);
 
 	local_irq_disable();
 
@@ -125,7 +123,7 @@ static void pseries_mach_cpu_die(void)
 		cede_latency_hint = 2;
 
 		get_lppaca()->idle = 1;
-		if (!lppaca_shared_proc(get_lppaca()))
+		if (!get_lppaca()->shared_proc)
 			get_lppaca()->donate_dedicated_cpu = 1;
 
 		while (get_preferred_offline_state(cpu) == CPU_STATE_INACTIVE) {
@@ -139,7 +137,7 @@ static void pseries_mach_cpu_die(void)
 
 		local_irq_disable();
 
-		if (!lppaca_shared_proc(get_lppaca()))
+		if (!get_lppaca()->shared_proc)
 			get_lppaca()->donate_dedicated_cpu = 0;
 		get_lppaca()->idle = 0;
 
@@ -247,7 +245,7 @@ static int pseries_add_processor(struct device_node *np)
 	unsigned int cpu;
 	cpumask_var_t candidate_mask, tmp;
 	int err = -ENOSPC, len, nthreads, i;
-	const __be32 *intserv;
+	const u32 *intserv;
 
 	intserv = of_get_property(np, "ibm,ppc-interrupt-server#s", &len);
 	if (!intserv)
@@ -293,7 +291,7 @@ static int pseries_add_processor(struct device_node *np)
 	for_each_cpu(cpu, tmp) {
 		BUG_ON(cpu_present(cpu));
 		set_cpu_present(cpu, true);
-		set_hard_smp_processor_id(cpu, be32_to_cpu(*intserv++));
+		set_hard_smp_processor_id(cpu, *intserv++);
 	}
 	err = 0;
 out_unlock:
@@ -312,8 +310,7 @@ static void pseries_remove_processor(struct device_node *np)
 {
 	unsigned int cpu;
 	int len, nthreads, i;
-	const __be32 *intserv;
-	u32 thread;
+	const u32 *intserv;
 
 	intserv = of_get_property(np, "ibm,ppc-interrupt-server#s", &len);
 	if (!intserv)
@@ -323,9 +320,8 @@ static void pseries_remove_processor(struct device_node *np)
 
 	cpu_maps_update_begin();
 	for (i = 0; i < nthreads; i++) {
-		thread = be32_to_cpu(intserv[i]);
 		for_each_present_cpu(cpu) {
-			if (get_hard_smp_processor_id(cpu) != thread)
+			if (get_hard_smp_processor_id(cpu) != intserv[i])
 				continue;
 			BUG_ON(cpu_online(cpu));
 			set_cpu_present(cpu, false);
@@ -334,7 +330,7 @@ static void pseries_remove_processor(struct device_node *np)
 		}
 		if (cpu >= nr_cpu_ids)
 			printk(KERN_WARNING "Could not find cpu to remove "
-			       "with physical id 0x%x\n", thread);
+			       "with physical id 0x%x\n", intserv[i]);
 	}
 	cpu_maps_update_done();
 }
@@ -423,4 +419,4 @@ static int __init pseries_cpu_hotplug_init(void)
 
 	return 0;
 }
-machine_arch_initcall(pseries, pseries_cpu_hotplug_init);
+arch_initcall(pseries_cpu_hotplug_init);

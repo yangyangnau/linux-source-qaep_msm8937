@@ -12,7 +12,8 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, see <http://www.gnu.org/licenses/>.
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  *
  * Copyright (C) IBM Corporation, 2003, 2010
  *
@@ -138,6 +139,7 @@ struct ibmveth_adapter {
     struct napi_struct napi;
     struct net_device_stats stats;
     unsigned int mcastFilterSize;
+    unsigned long mac_addr;
     void * buffer_list_addr;
     void * filter_list_addr;
     dma_addr_t buffer_list_dma;
@@ -162,26 +164,14 @@ struct ibmveth_adapter {
     u64 tx_send_failed;
 };
 
-/*
- * We pass struct ibmveth_buf_desc_fields to the hypervisor in registers,
- * so we don't need to byteswap the two elements. However since we use
- * a union (ibmveth_buf_desc) to convert from the struct to a u64 we
- * do end up with endian specific ordering of the elements and that
- * needs correcting.
- */
 struct ibmveth_buf_desc_fields {
-#ifdef __BIG_ENDIAN
 	u32 flags_len;
-	u32 address;
-#else
-	u32 address;
-	u32 flags_len;
-#endif
 #define IBMVETH_BUF_VALID	0x80000000
 #define IBMVETH_BUF_TOGGLE	0x40000000
 #define IBMVETH_BUF_NO_CSUM	0x02000000
 #define IBMVETH_BUF_CSUM_GOOD	0x01000000
 #define IBMVETH_BUF_LEN_MASK	0x00FFFFFF
+	u32 address;
 };
 
 union ibmveth_buf_desc {
@@ -190,7 +180,7 @@ union ibmveth_buf_desc {
 };
 
 struct ibmveth_rx_q_entry {
-	__be32 flags_off;
+	u32 flags_off;
 #define IBMVETH_RXQ_TOGGLE		0x80000000
 #define IBMVETH_RXQ_TOGGLE_SHIFT	31
 #define IBMVETH_RXQ_VALID		0x40000000
@@ -198,8 +188,7 @@ struct ibmveth_rx_q_entry {
 #define IBMVETH_RXQ_CSUM_GOOD		0x01000000
 #define IBMVETH_RXQ_OFF_MASK		0x0000FFFF
 
-	__be32 length;
-	/* correlator is only used by the OS, no need to byte swap */
+	u32 length;
 	u64 correlator;
 };
 

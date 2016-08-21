@@ -26,9 +26,8 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <sys/time.h>
-#include <poll.h>
+#include <sys/poll.h>
 #include <limits.h>
-#include <err.h>
 
 #define DATASIZE 100
 
@@ -51,6 +50,12 @@ struct receiver_context {
 	int wakefd;
 };
 
+static void barf(const char *msg)
+{
+	fprintf(stderr, "%s (error: %s)\n", msg, strerror(errno));
+	exit(1);
+}
+
 static void fdpair(int fds[2])
 {
 	if (use_pipes) {
@@ -61,7 +66,7 @@ static void fdpair(int fds[2])
 			return;
 	}
 
-	err(EXIT_FAILURE, use_pipes ? "pipe()" : "socketpair()");
+	barf(use_pipes ? "pipe()" : "socketpair()");
 }
 
 /* Block until we're ready to go */
@@ -72,11 +77,11 @@ static void ready(int ready_out, int wakefd)
 
 	/* Tell them we're ready. */
 	if (write(ready_out, &dummy, 1) != 1)
-		err(EXIT_FAILURE, "CLIENT: ready write");
+		barf("CLIENT: ready write");
 
 	/* Wait for "GO" signal */
 	if (poll(&pollfd, 1, -1) != 1)
-		err(EXIT_FAILURE, "poll");
+		barf("poll");
 }
 
 /* Sender sprays loops messages down each file descriptor */
@@ -96,7 +101,7 @@ again:
 			ret = write(ctx->out_fds[j], data + done,
 				    sizeof(data)-done);
 			if (ret < 0)
-				err(EXIT_FAILURE, "SENDER: write");
+				barf("SENDER: write");
 			done += ret;
 			if (done < DATASIZE)
 				goto again;
@@ -126,7 +131,7 @@ static void *receiver(struct receiver_context* ctx)
 again:
 		ret = read(ctx->in_fds[0], data + done, DATASIZE - done);
 		if (ret < 0)
-			err(EXIT_FAILURE, "SERVER: read");
+			barf("SERVER: read");
 		done += ret;
 		if (done < DATASIZE)
 			goto again;
@@ -139,14 +144,14 @@ static pthread_t create_worker(void *ctx, void *(*func)(void *))
 {
 	pthread_attr_t attr;
 	pthread_t childid;
-	int ret;
+	int err;
 
 	if (!thread_mode) {
 		/* process mode */
 		/* Fork the receiver. */
 		switch (fork()) {
 		case -1:
-			err(EXIT_FAILURE, "fork()");
+			barf("fork()");
 			break;
 		case 0:
 			(*func) (ctx);
@@ -160,17 +165,19 @@ static pthread_t create_worker(void *ctx, void *(*func)(void *))
 	}
 
 	if (pthread_attr_init(&attr) != 0)
-		err(EXIT_FAILURE, "pthread_attr_init:");
+		barf("pthread_attr_init:");
 
 #ifndef __ia64__
 	if (pthread_attr_setstacksize(&attr, PTHREAD_STACK_MIN) != 0)
-		err(EXIT_FAILURE, "pthread_attr_setstacksize");
+		barf("pthread_attr_setstacksize");
 #endif
 
-	ret = pthread_create(&childid, &attr, func, ctx);
-	if (ret != 0)
-		err(EXIT_FAILURE, "pthread_create failed");
-
+	err = pthread_create(&childid, &attr, func, ctx);
+	if (err != 0) {
+		fprintf(stderr, "pthread_create failed: %s (%d)\n",
+			strerror(err), err);
+		exit(-1);
+	}
 	return childid;
 }
 
@@ -200,14 +207,14 @@ static unsigned int group(pthread_t *pth,
 			+ num_fds * sizeof(int));
 
 	if (!snd_ctx)
-		err(EXIT_FAILURE, "malloc()");
+		barf("malloc()");
 
 	for (i = 0; i < num_fds; i++) {
 		int fds[2];
 		struct receiver_context *ctx = malloc(sizeof(*ctx));
 
 		if (!ctx)
-			err(EXIT_FAILURE, "malloc()");
+			barf("malloc()");
 
 
 		/* Create the pipe between client and server */
@@ -274,7 +281,7 @@ int bench_sched_messaging(int argc, const char **argv,
 
 	pth_tab = malloc(num_fds * 2 * num_groups * sizeof(pthread_t));
 	if (!pth_tab)
-		err(EXIT_FAILURE, "main:malloc()");
+		barf("main:malloc()");
 
 	fdpair(readyfds);
 	fdpair(wakefds);
@@ -287,13 +294,13 @@ int bench_sched_messaging(int argc, const char **argv,
 	/* Wait for everyone to be ready */
 	for (i = 0; i < total_children; i++)
 		if (read(readyfds[0], &dummy, 1) != 1)
-			err(EXIT_FAILURE, "Reading for readyfds");
+			barf("Reading for readyfds");
 
 	gettimeofday(&start, NULL);
 
 	/* Kick them off */
 	if (write(wakefds[1], &dummy, 1) != 1)
-		err(EXIT_FAILURE, "Writing to start them");
+		barf("Writing to start them");
 
 	/* Reap them all */
 	for (i = 0; i < total_children; i++)
@@ -324,8 +331,6 @@ int bench_sched_messaging(int argc, const char **argv,
 		exit(1);
 		break;
 	}
-
-	free(pth_tab);
 
 	return 0;
 }

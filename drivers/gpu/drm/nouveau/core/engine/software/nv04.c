@@ -23,6 +23,7 @@
  */
 
 #include <core/os.h>
+#include <core/class.h>
 #include <core/engctx.h>
 
 #include <engine/software.h>
@@ -134,8 +135,8 @@ nv04_software_ctor(struct nouveau_object *parent, struct nouveau_object *engine,
 	return 0;
 }
 
-struct nouveau_oclass *
-nv04_software_oclass = &(struct nouveau_oclass) {
+struct nouveau_oclass
+nv04_software_oclass = {
 	.handle = NV_ENGINE(SW, 0x04),
 	.ofuncs = &(struct nouveau_ofuncs) {
 		.ctor = nv04_software_ctor,

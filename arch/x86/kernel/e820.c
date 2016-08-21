@@ -682,14 +682,15 @@ void __init parse_e820_ext(u64 phys_addr, u32 data_len)
  * hibernation (32 bit) or software suspend and suspend to RAM (64 bit).
  *
  * This function requires the e820 map to be sorted and without any
- * overlapping entries.
+ * overlapping entries and assumes the first e820 area to be RAM.
  */
 void __init e820_mark_nosave_regions(unsigned long limit_pfn)
 {
 	int i;
-	unsigned long pfn = 0;
+	unsigned long pfn;
 
-	for (i = 0; i < e820.nr_map; i++) {
+	pfn = PFN_DOWN(e820.map[0].addr + e820.map[0].size);
+	for (i = 1; i < e820.nr_map; i++) {
 		struct e820entry *ei = &e820.map[i];
 
 		if (pfn < PFN_UP(ei->addr))
@@ -1119,7 +1120,7 @@ void __init memblock_find_dma_reserve(void)
 		nr_pages += end_pfn - start_pfn;
 	}
 
-	for_each_free_mem_range(u, NUMA_NO_NODE, &start, &end, NULL) {
+	for_each_free_mem_range(u, MAX_NUMNODES, &start, &end, NULL) {
 		start_pfn = min_t(unsigned long, PFN_UP(start), MAX_DMA_PFN);
 		end_pfn = min_t(unsigned long, PFN_DOWN(end), MAX_DMA_PFN);
 		if (start_pfn < end_pfn)

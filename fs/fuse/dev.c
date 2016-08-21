@@ -643,8 +643,9 @@ struct fuse_copy_state {
 	unsigned long seglen;
 	unsigned long addr;
 	struct page *pg;
+	void *mapaddr;
+	void *buf;
 	unsigned len;
-	unsigned offset;
 	unsigned move_pages:1;
 };
 
@@ -665,17 +666,23 @@ static void fuse_copy_finish(struct fuse_copy_state *cs)
 	if (cs->currbuf) {
 		struct pipe_buffer *buf = cs->currbuf;
 
-		if (cs->write)
+		if (!cs->write) {
+			buf->ops->unmap(cs->pipe, buf, cs->mapaddr);
+		} else {
+			kunmap(buf->page);
 			buf->len = PAGE_SIZE - cs->len;
+		}
 		cs->currbuf = NULL;
-	} else if (cs->pg) {
+		cs->mapaddr = NULL;
+	} else if (cs->mapaddr) {
+		kunmap(cs->pg);
 		if (cs->write) {
 			flush_dcache_page(cs->pg);
 			set_page_dirty_lock(cs->pg);
 		}
 		put_page(cs->pg);
+		cs->mapaddr = NULL;
 	}
-	cs->pg = NULL;
 }
 
 /*
@@ -684,7 +691,7 @@ static void fuse_copy_finish(struct fuse_copy_state *cs)
  */
 static int fuse_copy_fill(struct fuse_copy_state *cs)
 {
-	struct page *page;
+	unsigned long offset;
 	int err;
 
 	unlock_request(cs->fc, cs->req);
@@ -699,12 +706,14 @@ static int fuse_copy_fill(struct fuse_copy_state *cs)
 
 			BUG_ON(!cs->nr_segs);
 			cs->currbuf = buf;
-			cs->pg = buf->page;
-			cs->offset = buf->offset;
+			cs->mapaddr = buf->ops->map(cs->pipe, buf, 0);
 			cs->len = buf->len;
+			cs->buf = cs->mapaddr + buf->offset;
 			cs->pipebufs++;
 			cs->nr_segs--;
 		} else {
+			struct page *page;
+
 			if (cs->nr_segs == cs->pipe->buffers)
 				return -EIO;
 
@@ -717,8 +726,8 @@ static int fuse_copy_fill(struct fuse_copy_state *cs)
 			buf->len = 0;
 
 			cs->currbuf = buf;
-			cs->pg = page;
-			cs->offset = 0;
+			cs->mapaddr = kmap(page);
+			cs->buf = cs->mapaddr;
 			cs->len = PAGE_SIZE;
 			cs->pipebufs++;
 			cs->nr_segs++;
@@ -731,13 +740,14 @@ static int fuse_copy_fill(struct fuse_copy_state *cs)
 			cs->iov++;
 			cs->nr_segs--;
 		}
-		err = get_user_pages_fast(cs->addr, 1, cs->write, &page);
+		err = get_user_pages_fast(cs->addr, 1, cs->write, &cs->pg);
 		if (err < 0)
 			return err;
 		BUG_ON(err != 1);
-		cs->pg = page;
-		cs->offset = cs->addr % PAGE_SIZE;
-		cs->len = min(PAGE_SIZE - cs->offset, cs->seglen);
+		offset = cs->addr % PAGE_SIZE;
+		cs->mapaddr = kmap(cs->pg);
+		cs->buf = cs->mapaddr + offset;
+		cs->len = min(PAGE_SIZE - offset, cs->seglen);
 		cs->seglen -= cs->len;
 		cs->addr += cs->len;
 	}
@@ -750,20 +760,15 @@ static int fuse_copy_do(struct fuse_copy_state *cs, void **val, unsigned *size)
 {
 	unsigned ncpy = min(*size, cs->len);
 	if (val) {
-		void *pgaddr = kmap_atomic(cs->pg);
-		void *buf = pgaddr + cs->offset;
-
 		if (cs->write)
-			memcpy(buf, *val, ncpy);
+			memcpy(cs->buf, *val, ncpy);
 		else
-			memcpy(*val, buf, ncpy);
-
-		kunmap_atomic(pgaddr);
+			memcpy(*val, cs->buf, ncpy);
 		*val += ncpy;
 	}
 	*size -= ncpy;
 	cs->len -= ncpy;
-	cs->offset += ncpy;
+	cs->buf += ncpy;
 	return ncpy;
 }
 
@@ -814,8 +819,8 @@ static int fuse_try_move_page(struct fuse_copy_state *cs, struct page **pagep)
 
 	newpage = buf->page;
 
-	if (!PageUptodate(newpage))
-		SetPageUptodate(newpage);
+	if (WARN_ON(!PageUptodate(newpage)))
+		return -EIO;
 
 	ClearPageMappedToDisk(newpage);
 
@@ -869,8 +874,8 @@ static int fuse_try_move_page(struct fuse_copy_state *cs, struct page **pagep)
 out_fallback_unlock:
 	unlock_page(newpage);
 out_fallback:
-	cs->pg = buf->page;
-	cs->offset = buf->offset;
+	cs->mapaddr = buf->ops->map(cs->pipe, buf, 1);
+	cs->buf = cs->mapaddr + buf->offset;
 
 	err = lock_request(cs->fc, cs->req);
 	if (err)
@@ -1582,8 +1587,7 @@ static int fuse_notify_store(struct fuse_conn *fc, unsigned int size,
 
 		this_num = min_t(unsigned, num, PAGE_CACHE_SIZE - offset);
 		err = fuse_copy_page(cs, &page, offset, this_num, 0);
-		if (!err && offset == 0 &&
-		    (this_num == PAGE_CACHE_SIZE || file_size == end))
+		if (!err && offset == 0 && (num != 0 || file_size == end))
 			SetPageUptodate(page);
 		unlock_page(page);
 		page_cache_release(page);
@@ -1609,7 +1613,7 @@ out_finish:
 
 static void fuse_retrieve_end(struct fuse_conn *fc, struct fuse_req *req)
 {
-	release_pages(req->pages, req->num_pages, false);
+	release_pages(req->pages, req->num_pages, 0);
 }
 
 static int fuse_retrieve(struct fuse_conn *fc, struct inode *inode,
@@ -1721,9 +1725,6 @@ copy_finish:
 static int fuse_notify(struct fuse_conn *fc, enum fuse_notify_code code,
 		       unsigned int size, struct fuse_copy_state *cs)
 {
-	/* Don't try to move pages (yet) */
-	cs->move_pages = 0;
-
 	switch (code) {
 	case FUSE_NOTIFY_POLL:
 		return fuse_notify_poll(fc, size, cs);
@@ -1752,9 +1753,11 @@ static int fuse_notify(struct fuse_conn *fc, enum fuse_notify_code code,
 /* Look up request on processing list by unique ID */
 static struct fuse_req *request_find(struct fuse_conn *fc, u64 unique)
 {
-	struct fuse_req *req;
+	struct list_head *entry;
 
-	list_for_each_entry(req, &fc->processing, list) {
+	list_for_each(entry, &fc->processing) {
+		struct fuse_req *req;
+		req = list_entry(entry, struct fuse_req, list);
 		if (req->in.h.unique == unique || req->intr_unique == unique)
 			return req;
 	}

@@ -441,9 +441,10 @@ retry:
 
 	err = ubi_io_read_data(ubi, buf, pnum, offset, len);
 	if (err) {
-		if (err == UBI_IO_BITFLIPS)
+		if (err == UBI_IO_BITFLIPS) {
 			scrub = 1;
-		else if (mtd_is_eccerr(err)) {
+			err = 0;
+		} else if (mtd_is_eccerr(err)) {
 			if (vol->vol_type == UBI_DYNAMIC_VOLUME)
 				goto out_unlock;
 			scrub = 1;
@@ -1361,8 +1362,7 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 				 * during re-size.
 				 */
 				ubi_move_aeb_to_list(av, aeb, &ai->erase);
-			else
-				vol->eba_tbl[aeb->lnum] = aeb->pnum;
+			vol->eba_tbl[aeb->lnum] = aeb->pnum;
 		}
 	}
 

@@ -17,6 +17,7 @@
 #include <linux/types.h>
 #include <linux/delay.h>
 #include <linux/i2c.h>
+#include <linux/init.h>
 #include <linux/clk.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
@@ -244,7 +245,7 @@ static int puv3_i2c_remove(struct platform_device *pdev)
 	return 0;
 }
 
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_PM
 static int puv3_i2c_suspend(struct device *dev)
 {
 	int poll_count;

@@ -123,6 +123,7 @@ static enum dlm_status __dlmconvert_master(struct dlm_ctxt *dlm,
 					   int *kick_thread)
 {
 	enum dlm_status status = DLM_NORMAL;
+	struct list_head *iter;
 	struct dlm_lock *tmplock=NULL;
 
 	assert_spin_locked(&res->spinlock);
@@ -184,14 +185,16 @@ static enum dlm_status __dlmconvert_master(struct dlm_ctxt *dlm,
 
 	/* upconvert from here on */
 	status = DLM_NORMAL;
-	list_for_each_entry(tmplock, &res->granted, list) {
+	list_for_each(iter, &res->granted) {
+		tmplock = list_entry(iter, struct dlm_lock, list);
 		if (tmplock == lock)
 			continue;
 		if (!dlm_lock_compatible(tmplock->ml.type, type))
 			goto switch_queues;
 	}
 
-	list_for_each_entry(tmplock, &res->converting, list) {
+	list_for_each(iter, &res->converting) {
+		tmplock = list_entry(iter, struct dlm_lock, list);
 		if (!dlm_lock_compatible(tmplock->ml.type, type))
 			goto switch_queues;
 		/* existing conversion requests take precedence */
@@ -421,8 +424,8 @@ int dlm_convert_lock_handler(struct o2net_msg *msg, u32 len, void *data,
 	struct dlm_ctxt *dlm = data;
 	struct dlm_convert_lock *cnv = (struct dlm_convert_lock *)msg->buf;
 	struct dlm_lock_resource *res = NULL;
+	struct list_head *iter;
 	struct dlm_lock *lock = NULL;
-	struct dlm_lock *tmp_lock;
 	struct dlm_lockstatus *lksb;
 	enum dlm_status status = DLM_NORMAL;
 	u32 flags;
@@ -468,13 +471,14 @@ int dlm_convert_lock_handler(struct o2net_msg *msg, u32 len, void *data,
 		dlm_error(status);
 		goto leave;
 	}
-	list_for_each_entry(tmp_lock, &res->granted, list) {
-		if (tmp_lock->ml.cookie == cnv->cookie &&
-		    tmp_lock->ml.node == cnv->node_idx) {
-			lock = tmp_lock;
+	list_for_each(iter, &res->granted) {
+		lock = list_entry(iter, struct dlm_lock, list);
+		if (lock->ml.cookie == cnv->cookie &&
+		    lock->ml.node == cnv->node_idx) {
 			dlm_lock_get(lock);
 			break;
 		}
+		lock = NULL;
 	}
 	spin_unlock(&res->spinlock);
 	if (!lock) {

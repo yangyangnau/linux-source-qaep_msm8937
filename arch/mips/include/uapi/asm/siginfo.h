@@ -25,15 +25,12 @@ struct siginfo;
 /*
  * Careful to keep union _sifields from shifting ...
  */
-#if _MIPS_SZLONG == 32
+#ifdef CONFIG_32BIT
 #define __ARCH_SI_PREAMBLE_SIZE (3 * sizeof(int))
-#elif _MIPS_SZLONG == 64
-#define __ARCH_SI_PREAMBLE_SIZE (4 * sizeof(int))
-#else
-#error _MIPS_SZLONG neither 32 nor 64
 #endif
-
-#define __ARCH_SIGSYS
+#ifdef CONFIG_64BIT
+#define __ARCH_SI_PREAMBLE_SIZE (4 * sizeof(int))
+#endif
 
 #include <asm-generic/siginfo.h>
 
@@ -99,13 +96,6 @@ typedef struct siginfo {
 			__ARCH_SI_BAND_T _band; /* POLL_IN, POLL_OUT, POLL_MSG */
 			int _fd;
 		} _sigpoll;
-
-		/* SIGSYS */
-		struct {
-			void __user *_call_addr; /* calling user insn */
-			int _syscall;	/* triggering system call number */
-			unsigned int _arch;	/* AUDIT_ARCH_* of syscall */
-		} _sigsys;
 	} _sifields;
 } siginfo_t;
 

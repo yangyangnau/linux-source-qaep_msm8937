@@ -899,7 +899,6 @@ lcs_send_lancmd(struct lcs_card *card, struct lcs_buffer *buffer,
 	add_timer(&timer);
 	wait_event(reply->wait_q, reply->received);
 	del_timer_sync(&timer);
-	destroy_timer_on_stack(&timer);
 	LCS_DBF_TEXT_(4, trace, "rc:%d",reply->rc);
 	rc = reply->rc;
 	lcs_put_reply(reply);
@@ -1943,16 +1942,14 @@ static ssize_t
 lcs_portno_store (struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
         struct lcs_card *card;
-	int value, rc;
+        int value;
 
 	card = dev_get_drvdata(dev);
 
         if (!card)
                 return 0;
 
-	rc = sscanf(buf, "%d", &value);
-	if (rc != 1)
-		return -EINVAL;
+        sscanf(buf, "%u", &value);
         /* TODO: sanity checks */
         card->portno = value;
 
@@ -1999,17 +1996,14 @@ static ssize_t
 lcs_timeout_store (struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
         struct lcs_card *card;
-	unsigned int value;
-	int rc;
+        int value;
 
 	card = dev_get_drvdata(dev);
 
         if (!card)
                 return 0;
 
-	rc = sscanf(buf, "%u", &value);
-	if (rc != 1)
-		return -EINVAL;
+        sscanf(buf, "%u", &value);
         /* TODO: sanity checks */
         card->lancmd_timeout = value;
 
@@ -2447,7 +2441,7 @@ __init lcs_init_module(void)
 	if (rc)
 		goto out_err;
 	lcs_root_dev = root_device_register("lcs");
-	rc = PTR_ERR_OR_ZERO(lcs_root_dev);
+	rc = IS_ERR(lcs_root_dev) ? PTR_ERR(lcs_root_dev) : 0;
 	if (rc)
 		goto register_err;
 	rc = ccw_driver_register(&lcs_ccw_driver);

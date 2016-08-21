@@ -57,7 +57,7 @@ int indicate_status(int card, int event, ulong Channel, char *Data)
 			memcpy(&cmd.parm.setup, Data, sizeof(cmd.parm.setup));
 			break;
 		default:
-			strlcpy(cmd.parm.num, Data, sizeof(cmd.parm.num));
+			strcpy(cmd.parm.num, Data);
 		}
 	}
 

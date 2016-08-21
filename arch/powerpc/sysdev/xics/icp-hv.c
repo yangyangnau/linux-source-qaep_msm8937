@@ -12,6 +12,7 @@
 #include <linux/irq.h>
 #include <linux/smp.h>
 #include <linux/interrupt.h>
+#include <linux/init.h>
 #include <linux/cpu.h>
 #include <linux/of.h>
 

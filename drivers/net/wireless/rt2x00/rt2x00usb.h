@@ -13,7 +13,9 @@
 	GNU General Public License for more details.
 
 	You should have received a copy of the GNU General Public License
-	along with this program; if not, see <http://www.gnu.org/licenses/>.
+	along with this program; if not, write to the
+	Free Software Foundation, Inc.,
+	59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
 
 /*
@@ -93,7 +95,6 @@ enum rt2x00usb_mode_offset {
 	USB_MODE_SLEEP = 7,	/* RT73USB */
 	USB_MODE_FIRMWARE = 8,	/* RT73USB */
 	USB_MODE_WAKEUP = 9,	/* RT73USB */
-	USB_MODE_AUTORUN = 17, /* RT2800USB */
 };
 
 /**

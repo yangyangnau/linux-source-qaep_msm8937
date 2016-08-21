@@ -10,7 +10,6 @@
 #include <linux/platform_device.h>
 #include <linux/bcma/bcma.h>
 #include <linux/slab.h>
-#include <linux/of_address.h>
 
 MODULE_DESCRIPTION("Broadcom's specific AMBA driver");
 MODULE_LICENSE("GPL");
@@ -31,37 +30,28 @@ static ssize_t manuf_show(struct device *dev, struct device_attribute *attr, cha
 	struct bcma_device *core = container_of(dev, struct bcma_device, dev);
 	return sprintf(buf, "0x%03X\n", core->id.manuf);
 }
-static DEVICE_ATTR_RO(manuf);
-
 static ssize_t id_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct bcma_device *core = container_of(dev, struct bcma_device, dev);
 	return sprintf(buf, "0x%03X\n", core->id.id);
 }
-static DEVICE_ATTR_RO(id);
-
 static ssize_t rev_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct bcma_device *core = container_of(dev, struct bcma_device, dev);
 	return sprintf(buf, "0x%02X\n", core->id.rev);
 }
-static DEVICE_ATTR_RO(rev);
-
 static ssize_t class_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct bcma_device *core = container_of(dev, struct bcma_device, dev);
 	return sprintf(buf, "0x%X\n", core->id.class);
 }
-static DEVICE_ATTR_RO(class);
-
-static struct attribute *bcma_device_attrs[] = {
-	&dev_attr_manuf.attr,
-	&dev_attr_id.attr,
-	&dev_attr_rev.attr,
-	&dev_attr_class.attr,
-	NULL,
+static struct device_attribute bcma_device_attrs[] = {
+	__ATTR_RO(manuf),
+	__ATTR_RO(id),
+	__ATTR_RO(rev),
+	__ATTR_RO(class),
+	__ATTR_NULL,
 };
-ATTRIBUTE_GROUPS(bcma_device);
 
 static struct bus_type bcma_bus_type = {
 	.name		= "bcma",
@@ -69,7 +59,7 @@ static struct bus_type bcma_bus_type = {
 	.probe		= bcma_device_probe,
 	.remove		= bcma_device_remove,
 	.uevent		= bcma_device_uevent,
-	.dev_groups	= bcma_device_groups,
+	.dev_attrs	= bcma_device_attrs,
 };
 
 static u16 bcma_cc_core_id(struct bcma_bus *bus)
@@ -78,6 +68,18 @@ static u16 bcma_cc_core_id(struct bcma_bus *bus)
 		return BCMA_CORE_4706_CHIPCOMMON;
 	return BCMA_CORE_CHIPCOMMON;
 }
+
+struct bcma_device *bcma_find_core(struct bcma_bus *bus, u16 coreid)
+{
+	struct bcma_device *core;
+
+	list_for_each_entry(core, &bus->cores, list) {
+		if (core->id.id == coreid)
+			return core;
+	}
+	return NULL;
+}
+EXPORT_SYMBOL_GPL(bcma_find_core);
 
 struct bcma_device *bcma_find_core_unit(struct bcma_bus *bus, u16 coreid,
 					u8 unit)
@@ -90,26 +92,6 @@ struct bcma_device *bcma_find_core_unit(struct bcma_bus *bus, u16 coreid,
 	}
 	return NULL;
 }
-EXPORT_SYMBOL_GPL(bcma_find_core_unit);
-
-bool bcma_wait_value(struct bcma_device *core, u16 reg, u32 mask, u32 value,
-		     int timeout)
-{
-	unsigned long deadline = jiffies + timeout;
-	u32 val;
-
-	do {
-		val = bcma_read32(core, reg);
-		if ((val & mask) == value)
-			return true;
-		cpu_relax();
-		udelay(10);
-	} while (!time_after_eq(jiffies, deadline));
-
-	bcma_warn(core->bus, "Timeout waiting for register 0x%04X!\n", reg);
-
-	return false;
-}
 
 static void bcma_release_core_dev(struct device *dev)
 {
@@ -121,121 +103,55 @@ static void bcma_release_core_dev(struct device *dev)
 	kfree(core);
 }
 
-static bool bcma_is_core_needed_early(u16 core_id)
-{
-	switch (core_id) {
-	case BCMA_CORE_NS_NAND:
-	case BCMA_CORE_NS_QSPI:
-		return true;
-	}
-
-	return false;
-}
-
-#if defined(CONFIG_OF) && defined(CONFIG_OF_ADDRESS)
-static struct device_node *bcma_of_find_child_device(struct platform_device *parent,
-						     struct bcma_device *core)
-{
-	struct device_node *node;
-	u64 size;
-	const __be32 *reg;
-
-	if (!parent || !parent->dev.of_node)
-		return NULL;
-
-	for_each_child_of_node(parent->dev.of_node, node) {
-		reg = of_get_address(node, 0, &size, NULL);
-		if (!reg)
-			continue;
-		if (of_translate_address(node, reg) == core->addr)
-			return node;
-	}
-	return NULL;
-}
-
-static void bcma_of_fill_device(struct platform_device *parent,
-				struct bcma_device *core)
-{
-	struct device_node *node;
-
-	node = bcma_of_find_child_device(parent, core);
-	if (node)
-		core->dev.of_node = node;
-}
-#else
-static void bcma_of_fill_device(struct platform_device *parent,
-				struct bcma_device *core)
-{
-}
-#endif /* CONFIG_OF */
-
-static void bcma_register_core(struct bcma_bus *bus, struct bcma_device *core)
-{
-	int err;
-
-	core->dev.release = bcma_release_core_dev;
-	core->dev.bus = &bcma_bus_type;
-	dev_set_name(&core->dev, "bcma%d:%d", bus->num, core->core_index);
-
-	switch (bus->hosttype) {
-	case BCMA_HOSTTYPE_PCI:
-		core->dev.parent = &bus->host_pci->dev;
-		core->dma_dev = &bus->host_pci->dev;
-		core->irq = bus->host_pci->irq;
-		break;
-	case BCMA_HOSTTYPE_SOC:
-		core->dev.dma_mask = &core->dev.coherent_dma_mask;
-		if (bus->host_pdev) {
-			core->dma_dev = &bus->host_pdev->dev;
-			core->dev.parent = &bus->host_pdev->dev;
-			bcma_of_fill_device(bus->host_pdev, core);
-		} else {
-			core->dma_dev = &core->dev;
-		}
-		break;
-	case BCMA_HOSTTYPE_SDIO:
-		break;
-	}
-
-	err = device_register(&core->dev);
-	if (err) {
-		bcma_err(bus, "Could not register dev for core 0x%03X\n",
-			 core->id.id);
-		put_device(&core->dev);
-		return;
-	}
-	core->dev_registered = true;
-}
-
-static int bcma_register_devices(struct bcma_bus *bus)
+static int bcma_register_cores(struct bcma_bus *bus)
 {
 	struct bcma_device *core;
-	int err;
+	int err, dev_id = 0;
 
 	list_for_each_entry(core, &bus->cores, list) {
 		/* We support that cores ourself */
 		switch (core->id.id) {
 		case BCMA_CORE_4706_CHIPCOMMON:
 		case BCMA_CORE_CHIPCOMMON:
-		case BCMA_CORE_NS_CHIPCOMMON_B:
 		case BCMA_CORE_PCI:
 		case BCMA_CORE_PCIE:
-		case BCMA_CORE_PCIE2:
 		case BCMA_CORE_MIPS_74K:
 		case BCMA_CORE_4706_MAC_GBIT_COMMON:
 			continue;
 		}
-
-		/* Early cores were already registered */
-		if (bcma_is_core_needed_early(core->id.id))
-			continue;
 
 		/* Only first GMAC core on BCM4706 is connected and working */
 		if (core->id.id == BCMA_CORE_4706_MAC_GBIT &&
 		    core->core_unit > 0)
 			continue;
 
-		bcma_register_core(bus, core);
+		core->dev.release = bcma_release_core_dev;
+		core->dev.bus = &bcma_bus_type;
+		dev_set_name(&core->dev, "bcma%d:%d", bus->num, dev_id);
+
+		switch (bus->hosttype) {
+		case BCMA_HOSTTYPE_PCI:
+			core->dev.parent = &bus->host_pci->dev;
+			core->dma_dev = &bus->host_pci->dev;
+			core->irq = bus->host_pci->irq;
+			break;
+		case BCMA_HOSTTYPE_SOC:
+			core->dev.dma_mask = &core->dev.coherent_dma_mask;
+			core->dma_dev = &core->dev;
+			break;
+		case BCMA_HOSTTYPE_SDIO:
+			break;
+		}
+
+		err = device_register(&core->dev);
+		if (err) {
+			bcma_err(bus,
+				 "Could not register dev for core 0x%03X\n",
+				 core->id.id);
+			continue;
+		}
+		core->dev_registered = true;
+		dev_id++;
 	}
 
 #ifdef CONFIG_BCMA_DRIVER_MIPS
@@ -302,7 +218,7 @@ int bcma_bus_register(struct bcma_bus *bus)
 	err = bcma_bus_scan(bus);
 	if (err) {
 		bcma_err(bus, "Failed to scan: %d\n", err);
-		return err;
+		return -1;
 	}
 
 	/* Early init CC core */
@@ -310,12 +226,6 @@ int bcma_bus_register(struct bcma_bus *bus)
 	if (core) {
 		bus->drv_cc.core = core;
 		bcma_core_chipcommon_early_init(&bus->drv_cc);
-	}
-
-	/* Cores providing flash access go before SPROM init */
-	list_for_each_entry(core, &bus->cores, list) {
-		if (bcma_is_core_needed_early(core->id.id))
-			bcma_register_core(bus, core);
 	}
 
 	/* Try to get SPROM */
@@ -330,13 +240,6 @@ int bcma_bus_register(struct bcma_bus *bus)
 	if (core) {
 		bus->drv_cc.core = core;
 		bcma_core_chipcommon_init(&bus->drv_cc);
-	}
-
-	/* Init CC core */
-	core = bcma_find_core(bus, BCMA_CORE_NS_CHIPCOMMON_B);
-	if (core) {
-		bus->drv_cc_b.core = core;
-		bcma_core_chipcommon_b_init(&bus->drv_cc_b);
 	}
 
 	/* Init MIPS core */
@@ -360,13 +263,6 @@ int bcma_bus_register(struct bcma_bus *bus)
 		bcma_core_pci_init(&bus->drv_pci[1]);
 	}
 
-	/* Init PCIe Gen 2 core */
-	core = bcma_find_core_unit(bus, BCMA_CORE_PCIE2, 0);
-	if (core) {
-		bus->drv_pcie2.core = core;
-		bcma_core_pcie2_init(&bus->drv_pcie2);
-	}
-
 	/* Init GBIT MAC COMMON core */
 	core = bcma_find_core(bus, BCMA_CORE_4706_MAC_GBIT_COMMON);
 	if (core) {
@@ -375,7 +271,7 @@ int bcma_bus_register(struct bcma_bus *bus)
 	}
 
 	/* Register found cores */
-	bcma_register_devices(bus);
+	bcma_register_cores(bus);
 
 	bcma_info(bus, "Bus registered\n");
 
@@ -392,8 +288,6 @@ void bcma_bus_unregister(struct bcma_bus *bus)
 		bcma_err(bus, "Some GPIOs are still in use.\n");
 	else if (err)
 		bcma_err(bus, "Can not unregister GPIO driver: %i\n", err);
-
-	bcma_core_chipcommon_b_free(&bus->drv_cc_b);
 
 	cores[0] = bcma_find_core(bus, BCMA_CORE_MIPS_74K);
 	cores[1] = bcma_find_core(bus, BCMA_CORE_PCIE);
@@ -413,6 +307,8 @@ int __init bcma_bus_early_register(struct bcma_bus *bus,
 	int err;
 	struct bcma_device *core;
 	struct bcma_device_id match;
+
+	bcma_init_bus(bus);
 
 	match.manuf = BCMA_MANUF_BCM;
 	match.id = bcma_cc_core_id(bus);
@@ -572,11 +468,6 @@ static int __init bcma_modinit(void)
 	if (err)
 		return err;
 
-	err = bcma_host_soc_register_driver();
-	if (err) {
-		pr_err("SoC host initialization failed\n");
-		err = 0;
-	}
 #ifdef CONFIG_BCMA_HOST_PCI
 	err = bcma_host_pci_init();
 	if (err) {
@@ -594,7 +485,6 @@ static void __exit bcma_modexit(void)
 #ifdef CONFIG_BCMA_HOST_PCI
 	bcma_host_pci_exit();
 #endif
-	bcma_host_soc_unregister_driver();
 	bus_unregister(&bcma_bus_type);
 }
 module_exit(bcma_modexit)

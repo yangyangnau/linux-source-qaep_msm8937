@@ -217,7 +217,7 @@ static int snd_emu10k1_init(struct snd_emu10k1 *emu, int enable_ir, int resume)
 	}
 	if (emu->card_capabilities->ca0108_chip) { /* audigy2 Value */
 		/* Hacks for Alice3 to work independent of haP16V driver */
-		dev_info(emu->card->dev, "Audigy2 value: Special config.\n");
+		snd_printk(KERN_INFO "Audigy2 value: Special config.\n");
 		/* Setup SRCMulti_I2S SamplingRate */
 		tmp = snd_emu10k1_ptr_read(emu, A_SPDIF_SAMPLERATE, 0);
 		tmp &= 0xfffff1ff;
@@ -282,7 +282,7 @@ static int snd_emu10k1_init(struct snd_emu10k1 *emu, int enable_ir, int resume)
 	snd_emu10k1_ptr_write(emu, TCB, 0, 0);	/* taken from original driver */
 	snd_emu10k1_ptr_write(emu, TCBS, 0, 4);	/* taken from original driver */
 
-	silent_page = (emu->silent_page.addr << emu->address_mode) | (emu->address_mode ? MAP_PTI_MASK1 : MAP_PTI_MASK0);
+	silent_page = (emu->silent_page.addr << 1) | MAP_PTI_MASK;
 	for (ch = 0; ch < NUM_G; ch++) {
 		snd_emu10k1_ptr_write(emu, MAPA, ch, silent_page);
 		snd_emu10k1_ptr_write(emu, MAPB, ch, silent_page);
@@ -346,11 +346,6 @@ static int snd_emu10k1_init(struct snd_emu10k1 *emu, int enable_ir, int resume)
 	} else if (emu->audigy) {	/* enable analog output */
 		unsigned int reg = inl(emu->port + A_IOCFG);
 		outl(reg | A_IOCFG_GPOUT0, emu->port + A_IOCFG);
-	}
-
-	if (emu->address_mode == 0) {
-		/* use 16M in 4G */
-		outl(inl(emu->port + HCFG) | HCFG_EXPANDED_MEM, emu->port + HCFG);
 	}
 
 	return 0;
@@ -728,8 +723,7 @@ static int emu1010_firmware_thread(void *data)
 		if (reg & EMU_HANA_OPTION_DOCK_OFFLINE) {
 			/* Audio Dock attached */
 			/* Return to Audio Dock programming mode */
-			dev_info(emu->card->dev,
-				 "emu1010: Loading Audio Dock Firmware\n");
+			snd_printk(KERN_INFO "emu1010: Loading Audio Dock Firmware\n");
 			snd_emu1010_fpga_write(emu, EMU_HANA_FPGA_CONFIG, EMU_HANA_FPGA_CONFIG_AUDIODOCK);
 
 			if (!emu->dock_fw) {
@@ -762,25 +756,19 @@ static int emu1010_firmware_thread(void *data)
 
 			snd_emu1010_fpga_write(emu, EMU_HANA_FPGA_CONFIG, 0);
 			snd_emu1010_fpga_read(emu, EMU_HANA_IRQ_STATUS, &reg);
-			dev_info(emu->card->dev,
-				 "emu1010: EMU_HANA+DOCK_IRQ_STATUS = 0x%x\n",
-				 reg);
+			snd_printk(KERN_INFO "emu1010: EMU_HANA+DOCK_IRQ_STATUS = 0x%x\n", reg);
 			/* ID, should read & 0x7f = 0x55 when FPGA programmed. */
 			snd_emu1010_fpga_read(emu, EMU_HANA_ID, &reg);
-			dev_info(emu->card->dev,
-				 "emu1010: EMU_HANA+DOCK_ID = 0x%x\n", reg);
+			snd_printk(KERN_INFO "emu1010: EMU_HANA+DOCK_ID = 0x%x\n", reg);
 			if ((reg & 0x1f) != 0x15) {
 				/* FPGA failed to be programmed */
-				dev_info(emu->card->dev,
-					 "emu1010: Loading Audio Dock Firmware file failed, reg = 0x%x\n",
-					 reg);
+				snd_printk(KERN_INFO "emu1010: Loading Audio Dock Firmware file failed, reg = 0x%x\n", reg);
 				continue;
 			}
-			dev_info(emu->card->dev,
-				 "emu1010: Audio Dock Firmware loaded\n");
+			snd_printk(KERN_INFO "emu1010: Audio Dock Firmware loaded\n");
 			snd_emu1010_fpga_read(emu, EMU_DOCK_MAJOR_REV, &tmp);
 			snd_emu1010_fpga_read(emu, EMU_DOCK_MINOR_REV, &tmp2);
-			dev_info(emu->card->dev, "Audio Dock ver: %u.%u\n",
+			snd_printk(KERN_INFO "Audio Dock ver: %u.%u\n",
 				   tmp, tmp2);
 			/* Sync clocking between 1010 and Dock */
 			/* Allow DLL to settle */
@@ -789,7 +777,7 @@ static int emu1010_firmware_thread(void *data)
 			snd_emu1010_fpga_write(emu, EMU_HANA_UNMUTE, EMU_UNMUTE);
 		}
 	}
-	dev_info(emu->card->dev, "emu1010: firmware thread stopping\n");
+	snd_printk(KERN_INFO "emu1010: firmware thread stopping\n");
 	return 0;
 }
 
@@ -830,7 +818,7 @@ static int snd_emu10k1_emu1010_init(struct snd_emu10k1 *emu)
 	u32 tmp, tmp2, reg;
 	int err;
 
-	dev_info(emu->card->dev, "emu1010: Special config.\n");
+	snd_printk(KERN_INFO "emu1010: Special config.\n");
 	/* AC97 2.1, Any 16Meg of 4Gig address, Auto-Mute, EMU32 Slave,
 	 * Lock Sound Memory Cache, Lock Tank Memory Cache,
 	 * Mute all codecs.
@@ -855,7 +843,7 @@ static int snd_emu10k1_emu1010_init(struct snd_emu10k1 *emu)
 
 	/* ID, should read & 0x7f = 0x55. (Bit 7 is the IRQ bit) */
 	snd_emu1010_fpga_read(emu, EMU_HANA_ID, &reg);
-	dev_dbg(emu->card->dev, "reg1 = 0x%x\n", reg);
+	snd_printdd("reg1 = 0x%x\n", reg);
 	if ((reg & 0x3f) == 0x15) {
 		/* FPGA netlist already present so clear it */
 		/* Return to programming mode */
@@ -863,14 +851,13 @@ static int snd_emu10k1_emu1010_init(struct snd_emu10k1 *emu)
 		snd_emu1010_fpga_write(emu, EMU_HANA_FPGA_CONFIG, 0x02);
 	}
 	snd_emu1010_fpga_read(emu, EMU_HANA_ID, &reg);
-	dev_dbg(emu->card->dev, "reg2 = 0x%x\n", reg);
+	snd_printdd("reg2 = 0x%x\n", reg);
 	if ((reg & 0x3f) == 0x15) {
 		/* FPGA failed to return to programming mode */
-		dev_info(emu->card->dev,
-			 "emu1010: FPGA failed to return to programming mode\n");
+		snd_printk(KERN_INFO "emu1010: FPGA failed to return to programming mode\n");
 		return -ENODEV;
 	}
-	dev_info(emu->card->dev, "emu1010: EMU_HANA_ID = 0x%x\n", reg);
+	snd_printk(KERN_INFO "emu1010: EMU_HANA_ID = 0x%x\n", reg);
 
 	if (!emu->firmware) {
 		const char *filename;
@@ -893,19 +880,16 @@ static int snd_emu10k1_emu1010_init(struct snd_emu10k1 *emu)
 
 		err = request_firmware(&emu->firmware, filename, &emu->pci->dev);
 		if (err != 0) {
-			dev_info(emu->card->dev,
-				 "emu1010: firmware: %s not found. Err = %d\n",
-				 filename, err);
+			snd_printk(KERN_ERR "emu1010: firmware: %s not found. Err = %d\n", filename, err);
 			return err;
 		}
-		dev_info(emu->card->dev,
-			 "emu1010: firmware file = %s, size = 0x%zx\n",
+		snd_printk(KERN_INFO "emu1010: firmware file = %s, size = 0x%zx\n",
 			   filename, emu->firmware->size);
 	}
 
 	err = snd_emu1010_load_firmware(emu, emu->firmware);
 	if (err != 0) {
-		dev_info(emu->card->dev, "emu1010: Loading Firmware failed\n");
+		snd_printk(KERN_INFO "emu1010: Loading Firmware failed\n");
 		return err;
 	}
 
@@ -913,23 +897,21 @@ static int snd_emu10k1_emu1010_init(struct snd_emu10k1 *emu)
 	snd_emu1010_fpga_read(emu, EMU_HANA_ID, &reg);
 	if ((reg & 0x3f) != 0x15) {
 		/* FPGA failed to be programmed */
-		dev_info(emu->card->dev,
-			 "emu1010: Loading Hana Firmware file failed, reg = 0x%x\n",
-			 reg);
+		snd_printk(KERN_INFO "emu1010: Loading Hana Firmware file failed, reg = 0x%x\n", reg);
 		return -ENODEV;
 	}
 
-	dev_info(emu->card->dev, "emu1010: Hana Firmware loaded\n");
+	snd_printk(KERN_INFO "emu1010: Hana Firmware loaded\n");
 	snd_emu1010_fpga_read(emu, EMU_HANA_MAJOR_REV, &tmp);
 	snd_emu1010_fpga_read(emu, EMU_HANA_MINOR_REV, &tmp2);
-	dev_info(emu->card->dev, "emu1010: Hana version: %u.%u\n", tmp, tmp2);
+	snd_printk(KERN_INFO "emu1010: Hana version: %u.%u\n", tmp, tmp2);
 	/* Enable 48Volt power to Audio Dock */
 	snd_emu1010_fpga_write(emu, EMU_HANA_DOCK_PWR, EMU_HANA_DOCK_PWR_ON);
 
 	snd_emu1010_fpga_read(emu, EMU_HANA_OPTION_CARDS, &reg);
-	dev_info(emu->card->dev, "emu1010: Card options = 0x%x\n", reg);
+	snd_printk(KERN_INFO "emu1010: Card options = 0x%x\n", reg);
 	snd_emu1010_fpga_read(emu, EMU_HANA_OPTION_CARDS, &reg);
-	dev_info(emu->card->dev, "emu1010: Card options = 0x%x\n", reg);
+	snd_printk(KERN_INFO "emu1010: Card options = 0x%x\n", reg);
 	snd_emu1010_fpga_read(emu, EMU_HANA_OPTICAL_TYPE, &tmp);
 	/* Optical -> ADAT I/O  */
 	/* 0 : SPDIF
@@ -968,7 +950,7 @@ static int snd_emu10k1_emu1010_init(struct snd_emu10k1 *emu)
 	snd_emu1010_fpga_write(emu, EMU_HANA_IRQ_ENABLE, 0x00);
 
 	snd_emu1010_fpga_read(emu, EMU_HANA_OPTION_CARDS, &reg);
-	dev_info(emu->card->dev, "emu1010: Card options3 = 0x%x\n", reg);
+	snd_printk(KERN_INFO "emu1010: Card options3 = 0x%x\n", reg);
 	/* Default WCLK set to 48kHz. */
 	snd_emu1010_fpga_write(emu, EMU_HANA_DEFCLOCK, 0x00);
 	/* Word Clock source, Internal 48kHz x1 */
@@ -1429,7 +1411,7 @@ static struct snd_emu_chip_details emu_chip_details[] = {
 	 *
 	 */
 	{.vendor = 0x1102, .device = 0x0008, .subsystem = 0x20011102,
-	 .driver = "Audigy2", .name = "Audigy 2 ZS Notebook [SB0530]",
+	 .driver = "Audigy2", .name = "SB Audigy 2 ZS Notebook [SB0530]",
 	 .id = "Audigy2",
 	 .emu10k2_chip = 1,
 	 .ca0108_chip = 1,
@@ -1579,7 +1561,7 @@ static struct snd_emu_chip_details emu_chip_details[] = {
 	 .adc_1361t = 1,  /* 24 bit capture instead of 16bit */
 	 .ac97_chip = 1} ,
 	{.vendor = 0x1102, .device = 0x0004, .subsystem = 0x10051102,
-	 .driver = "Audigy2", .name = "Audigy 2 Platinum EX [SB0280]",
+	 .driver = "Audigy2", .name = "SB Audigy 2 Platinum EX [SB0280]",
 	 .id = "Audigy2",
 	 .emu10k2_chip = 1,
 	 .ca0102_chip = 1,
@@ -1826,9 +1808,7 @@ int snd_emu10k1_create(struct snd_card *card,
 	emu->revision = pci->revision;
 	pci_read_config_dword(pci, PCI_SUBSYSTEM_VENDOR_ID, &emu->serial);
 	pci_read_config_word(pci, PCI_SUBSYSTEM_ID, &emu->model);
-	dev_dbg(card->dev,
-		"vendor = 0x%x, device = 0x%x, subsystem_vendor_id = 0x%x, subsystem_id = 0x%x\n",
-		pci->vendor, pci->device, emu->serial, emu->model);
+	snd_printdd("vendor = 0x%x, device = 0x%x, subsystem_vendor_id = 0x%x, subsystem_id = 0x%x\n", pci->vendor, pci->device, emu->serial, emu->model);
 
 	for (c = emu_chip_details; c->vendor; c++) {
 		if (c->vendor == pci->vendor && c->device == pci->device) {
@@ -1847,21 +1827,21 @@ int snd_emu10k1_create(struct snd_card *card,
 		}
 	}
 	if (c->vendor == 0) {
-		dev_err(card->dev, "emu10k1: Card not recognised\n");
+		snd_printk(KERN_ERR "emu10k1: Card not recognised\n");
 		kfree(emu);
 		pci_disable_device(pci);
 		return -ENOENT;
 	}
 	emu->card_capabilities = c;
 	if (c->subsystem && !subsystem)
-		dev_dbg(card->dev, "Sound card name = %s\n", c->name);
+		snd_printdd("Sound card name = %s\n", c->name);
 	else if (subsystem)
-		dev_dbg(card->dev, "Sound card name = %s, "
+		snd_printdd("Sound card name = %s, "
 			"vendor = 0x%x, device = 0x%x, subsystem = 0x%x. "
 			"Forced to subsystem = 0x%x\n",	c->name,
 			pci->vendor, pci->device, emu->serial, c->subsystem);
 	else
-		dev_dbg(card->dev, "Sound card name = %s, "
+		snd_printdd("Sound card name = %s, "
 			"vendor = 0x%x, device = 0x%x, subsystem = 0x%x.\n",
 			c->name, pci->vendor, pci->device,
 			emu->serial);
@@ -1885,15 +1865,11 @@ int snd_emu10k1_create(struct snd_card *card,
 
 	is_audigy = emu->audigy = c->emu10k2_chip;
 
-	/* set addressing mode */
-	emu->address_mode = is_audigy ? 0 : 1;
 	/* set the DMA transfer mask */
-	emu->dma_mask = emu->address_mode ? EMU10K1_DMA_MASK : AUDIGY_DMA_MASK;
+	emu->dma_mask = is_audigy ? AUDIGY_DMA_MASK : EMU10K1_DMA_MASK;
 	if (pci_set_dma_mask(pci, emu->dma_mask) < 0 ||
 	    pci_set_consistent_dma_mask(pci, emu->dma_mask) < 0) {
-		dev_err(card->dev,
-			"architecture does not support PCI busmaster DMA with mask 0x%lx\n",
-			emu->dma_mask);
+		snd_printk(KERN_ERR "architecture does not support PCI busmaster DMA with mask 0x%lx\n", emu->dma_mask);
 		kfree(emu);
 		pci_disable_device(pci);
 		return -ENXIO;
@@ -1913,7 +1889,7 @@ int snd_emu10k1_create(struct snd_card *card,
 
 	emu->max_cache_pages = max_cache_bytes >> PAGE_SHIFT;
 	if (snd_dma_alloc_pages(SNDRV_DMA_TYPE_DEV, snd_dma_pci_data(pci),
-				(emu->address_mode ? 32 : 16) * 1024, &emu->ptb_pages) < 0) {
+				32 * 1024, &emu->ptb_pages) < 0) {
 		err = -ENOMEM;
 		goto error;
 	}
@@ -2012,8 +1988,8 @@ int snd_emu10k1_create(struct snd_card *card,
 
 	/* Clear silent pages and set up pointers */
 	memset(emu->silent_page.area, 0, PAGE_SIZE);
-	silent_page = emu->silent_page.addr << emu->address_mode;
-	for (idx = 0; idx < (emu->address_mode ? MAXPAGES1 : MAXPAGES0); idx++)
+	silent_page = emu->silent_page.addr << 1;
+	for (idx = 0; idx < MAXPAGES; idx++)
 		((u32 *)emu->ptb_pages.area)[idx] = cpu_to_le32(silent_page | idx);
 
 	/* set up voice indices */
@@ -2045,6 +2021,7 @@ int snd_emu10k1_create(struct snd_card *card,
 	snd_emu10k1_proc_init(emu);
 #endif
 
+	snd_card_set_dev(card, &pci->dev);
 	*remu = emu;
 	return 0;
 

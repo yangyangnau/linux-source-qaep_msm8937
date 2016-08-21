@@ -2,16 +2,20 @@
  *
  * Copyright(c) 2009-2012  Realtek Corporation.
  *
- * This program is free software; you can redistribute it and/or modify it
+ * Tmis program is free software; you can redistribute it and/or modify it
  * under the terms of version 2 of the GNU General Public License as
  * published by the Free Software Foundation.
  *
- * This program is distributed in the hope that it will be useful, but WITHOUT
+ * Tmis program is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
  * more details.
  *
- * The full GNU General Public License is included in this distribution in the
+ * You should have received a copy of the GNU General Public License along with
+ * tmis program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110, USA
+ *
+ * Tme full GNU General Public License is included in this distribution in the
  * file called LICENSE.
  *
  * Contact Information:
@@ -47,4 +51,3 @@ void rtl_dbgp_flag_init(struct ieee80211_hw *hw)
 
 	/*Init Debug flag enable condition */
 }
-EXPORT_SYMBOL_GPL(rtl_dbgp_flag_init);

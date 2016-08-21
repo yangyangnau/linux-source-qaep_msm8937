@@ -13,6 +13,7 @@
 #include <linux/types.h>
 #include <linux/slab.h>
 #include <linux/kernel.h>
+#include <linux/init.h>
 #include <linux/platform_device.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/map.h>
@@ -48,7 +49,7 @@ static const char * const probes[] = { "RedBoot", "cmdlinepart", NULL };
 
 static int pxa2xx_flash_probe(struct platform_device *pdev)
 {
-	struct flash_platform_data *flash = dev_get_platdata(&pdev->dev);
+	struct flash_platform_data *flash = pdev->dev.platform_data;
 	struct pxa2xx_flash_info *info;
 	struct resource *res;
 
@@ -60,7 +61,7 @@ static int pxa2xx_flash_probe(struct platform_device *pdev)
 	if (!info)
 		return -ENOMEM;
 
-	info->map.name = flash->name;
+	info->map.name = (char *) flash->name;
 	info->map.bankwidth = flash->width;
 	info->map.phys = res->start;
 	info->map.size = resource_size(res);
@@ -72,7 +73,7 @@ static int pxa2xx_flash_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 	info->map.cached =
-		ioremap_cache(info->map.phys, info->map.size);
+		ioremap_cached(info->map.phys, info->map.size);
 	if (!info->map.cached)
 		printk(KERN_WARNING "Failed to ioremap cached %s\n",
 		       info->map.name);
@@ -105,6 +106,8 @@ static int pxa2xx_flash_probe(struct platform_device *pdev)
 static int pxa2xx_flash_remove(struct platform_device *dev)
 {
 	struct pxa2xx_flash_info *info = platform_get_drvdata(dev);
+
+	platform_set_drvdata(dev, NULL);
 
 	mtd_device_unregister(info->mtd);
 

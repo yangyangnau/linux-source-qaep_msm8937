@@ -359,7 +359,6 @@ dasd_diag_check_device(struct dasd_device *device)
 	}
 
 	device->default_expires = DIAG_TIMEOUT;
-	device->default_retries = DIAG_MAX_RETRIES;
 
 	/* Figure out position of label block */
 	switch (private->rdc_data.vdev_class) {
@@ -504,7 +503,7 @@ static struct dasd_ccw_req *dasd_diag_build_cp(struct dasd_device *memdev,
 	struct dasd_diag_req *dreq;
 	struct dasd_diag_bio *dbio;
 	struct req_iterator iter;
-	struct bio_vec bv;
+	struct bio_vec *bv;
 	char *dst;
 	unsigned int count, datasize;
 	sector_t recid, first_rec, last_rec;
@@ -525,10 +524,10 @@ static struct dasd_ccw_req *dasd_diag_build_cp(struct dasd_device *memdev,
 	/* Check struct bio and count the number of blocks for the request. */
 	count = 0;
 	rq_for_each_segment(bv, req, iter) {
-		if (bv.bv_len & (blksize - 1))
+		if (bv->bv_len & (blksize - 1))
 			/* Fba can only do full blocks. */
 			return ERR_PTR(-EINVAL);
-		count += bv.bv_len >> (block->s2b_shift + 9);
+		count += bv->bv_len >> (block->s2b_shift + 9);
 	}
 	/* Paranoia. */
 	if (count != last_rec - first_rec + 1)
@@ -545,8 +544,8 @@ static struct dasd_ccw_req *dasd_diag_build_cp(struct dasd_device *memdev,
 	dbio = dreq->bio;
 	recid = first_rec;
 	rq_for_each_segment(bv, req, iter) {
-		dst = page_address(bv.bv_page) + bv.bv_offset;
-		for (off = 0; off < bv.bv_len; off += blksize) {
+		dst = page_address(bv->bv_page) + bv->bv_offset;
+		for (off = 0; off < bv->bv_len; off += blksize) {
 			memset(dbio, 0, sizeof (struct dasd_diag_bio));
 			dbio->type = rw_cmd;
 			dbio->block_number = recid + 1;
@@ -556,7 +555,7 @@ static struct dasd_ccw_req *dasd_diag_build_cp(struct dasd_device *memdev,
 			recid++;
 		}
 	}
-	cqr->retries = memdev->default_retries;
+	cqr->retries = DIAG_MAX_RETRIES;
 	cqr->buildclk = get_tod_clock();
 	if (blk_noretry_request(req) ||
 	    block->base->features & DASD_FEATURE_FAILFAST)
@@ -583,10 +582,7 @@ dasd_diag_free_cp(struct dasd_ccw_req *cqr, struct request *req)
 
 static void dasd_diag_handle_terminated_request(struct dasd_ccw_req *cqr)
 {
-	if (cqr->retries < 0)
-		cqr->status = DASD_CQR_FAILED;
-	else
-		cqr->status = DASD_CQR_FILLED;
+	cqr->status = DASD_CQR_FILLED;
 };
 
 /* Fill in IOCTL data for device. */
@@ -645,8 +641,8 @@ dasd_diag_init(void)
 	}
 	ASCEBC(dasd_diag_discipline.ebcname, 4);
 
-	irq_subclass_register(IRQ_SUBCLASS_SERVICE_SIGNAL);
-	register_external_irq(EXT_IRQ_CP_SERVICE, dasd_ext_handler);
+	service_subclass_irq_register();
+	register_external_interrupt(0x2603, dasd_ext_handler);
 	dasd_diag_discipline_pointer = &dasd_diag_discipline;
 	return 0;
 }
@@ -654,8 +650,8 @@ dasd_diag_init(void)
 static void __exit
 dasd_diag_cleanup(void)
 {
-	unregister_external_irq(EXT_IRQ_CP_SERVICE, dasd_ext_handler);
-	irq_subclass_unregister(IRQ_SUBCLASS_SERVICE_SIGNAL);
+	unregister_external_interrupt(0x2603, dasd_ext_handler);
+	service_subclass_irq_unregister();
 	dasd_diag_discipline_pointer = NULL;
 }
 

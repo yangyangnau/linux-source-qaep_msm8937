@@ -160,6 +160,7 @@ struct _adapter {
 	s32	bSurpriseRemoved;
 	u32	IsrContent;
 	u32	ImrContent;
+	bool	fw_found;
 	u8	EepromAddressSize;
 	u8	hw_init_completed;
 	struct task_struct *cmdThread;
@@ -167,13 +168,13 @@ struct _adapter {
 	struct task_struct *xmitThread;
 	pid_t recvThread;
 	uint(*dvobj_init)(struct _adapter *adapter);
-	void (*dvobj_deinit)(struct _adapter *adapter);
+	void  (*dvobj_deinit)(struct _adapter *adapter);
 	struct net_device *pnetdev;
 	int bup;
 	struct net_device_stats stats;
 	struct iw_statistics iwstats;
 	int pid; /*process id from UI*/
-	struct work_struct wkFilterRxFF0;
+	_workitem wkFilterRxFF0;
 	u8 blnEnableRxFF0Filter;
 	spinlock_t lockRxFF0Filter;
 	const struct firmware *fw;

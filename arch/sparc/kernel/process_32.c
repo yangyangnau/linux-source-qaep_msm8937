@@ -10,7 +10,6 @@
 
 #include <stdarg.h>
 
-#include <linux/elfcore.h>
 #include <linux/errno.h>
 #include <linux/module.h>
 #include <linux/sched.h>
@@ -23,8 +22,8 @@
 #include <linux/reboot.h>
 #include <linux/delay.h>
 #include <linux/pm.h>
+#include <linux/init.h>
 #include <linux/slab.h>
-#include <linux/cpu.h>
 
 #include <asm/auxio.h>
 #include <asm/oplib.h>
@@ -39,8 +38,6 @@
 #include <asm/prom.h>
 #include <asm/unistd.h>
 #include <asm/setup.h>
-
-#include "kernel.h"
 
 /* 
  * Power management idle function 
@@ -106,12 +103,8 @@ void machine_restart(char * cmd)
 void machine_power_off(void)
 {
 	if (auxio_power_register &&
-	    (strcmp(of_console_device->type, "serial") || scons_pwroff)) {
-		u8 power_register = sbus_readb(auxio_power_register);
-		power_register |= AUXIO_POWER_OFF;
-		sbus_writeb(power_register, auxio_power_register);
-	}
-
+	    (strcmp(of_console_device->type, "serial") || scons_pwroff))
+		*auxio_power_register |= AUXIO_POWER_OFF;
 	machine_halt();
 }
 

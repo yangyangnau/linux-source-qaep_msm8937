@@ -88,8 +88,6 @@
  * interrupt source to the GPIO pin. Tada, we hid the interrupt. :)
  */
 
-#include <linux/of_address.h>
-#include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/dma-mapping.h>
 #include <linux/miscdevice.h>
@@ -101,6 +99,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/poll.h>
+#include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/kref.h>
 #include <linux/io.h>
@@ -632,7 +631,8 @@ static int data_submit_dma(struct fpga_device *priv, struct data_buf *buf)
 	struct dma_async_tx_descriptor *tx;
 	dma_cookie_t cookie;
 	dma_addr_t dst, src;
-	unsigned long dma_flags = 0;
+	unsigned long dma_flags = DMA_COMPL_SKIP_DEST_UNMAP |
+				  DMA_COMPL_SKIP_SRC_UNMAP;
 
 	dst_sg = buf->vb.sglist;
 	dst_nents = buf->vb.sglen;
@@ -954,7 +954,10 @@ static int data_debugfs_init(struct fpga_device *priv)
 {
 	priv->dbg_entry = debugfs_create_file(drv_name, S_IRUGO, NULL, priv,
 					      &data_debug_fops);
-	return PTR_ERR_OR_ZERO(priv->dbg_entry);
+	if (IS_ERR(priv->dbg_entry))
+		return PTR_ERR(priv->dbg_entry);
+
+	return 0;
 }
 
 static void data_debugfs_exit(struct fpga_device *priv)
@@ -999,10 +1002,10 @@ static ssize_t data_en_set(struct device *dev, struct device_attribute *attr,
 	unsigned long enable;
 	int ret;
 
-	ret = kstrtoul(buf, 0, &enable);
+	ret = strict_strtoul(buf, 0, &enable);
 	if (ret) {
 		dev_err(priv->dev, "unable to parse enable input\n");
-		return ret;
+		return -EINVAL;
 	}
 
 	/* protect against concurrent enable/disable */
@@ -1293,7 +1296,7 @@ static int data_of_probe(struct platform_device *op)
 		goto out_return;
 	}
 
-	platform_set_drvdata(op, priv);
+	dev_set_drvdata(&op->dev, priv);
 	priv->dev = &op->dev;
 	kref_init(&priv->ref);
 	mutex_init(&priv->mutex);
@@ -1397,7 +1400,7 @@ out_return:
 
 static int data_of_remove(struct platform_device *op)
 {
-	struct fpga_device *priv = platform_get_drvdata(op);
+	struct fpga_device *priv = dev_get_drvdata(&op->dev);
 	struct device *this_device = priv->miscdev.this_device;
 
 	/* remove all sysfs files, now the device cannot be re-enabled */

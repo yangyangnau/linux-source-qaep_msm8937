@@ -4,9 +4,6 @@
  * Ryan Wilson <hap9@epoch.ncsc.mil>
  * Chris Bookholt <hap10@epoch.ncsc.mil>
  */
-
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/rwsem.h>
@@ -133,7 +130,7 @@ static void pcistub_device_release(struct kref *kref)
 	xen_pcibk_config_free_dyn_fields(dev);
 	xen_pcibk_config_free_dev(dev);
 
-	pci_clear_dev_assigned(dev);
+	dev->dev_flags &= ~PCI_DEV_FLAGS_ASSIGNED;
 	pci_dev_put(dev);
 
 	kfree(psdev);
@@ -242,15 +239,6 @@ struct pci_dev *pcistub_get_pci_dev(struct xen_pcibk_device *pdev,
 	return found_dev;
 }
 
-/*
- * Called when:
- *  - XenBus state has been reconfigure (pci unplug). See xen_pcibk_remove_device
- *  - XenBus state has been disconnected (guest shutdown). See xen_pcibk_xenbus_remove
- *  - 'echo BDF > unbind' on pciback module with no guest attached. See pcistub_remove
- *  - 'echo BDF > unbind' with a guest still using it. See pcistub_remove
- *
- *  As such we have to be careful.
- */
 void pcistub_put_pci_dev(struct pci_dev *dev)
 {
 	struct pcistub_device *psdev, *found_psdev = NULL;
@@ -281,16 +269,16 @@ void pcistub_put_pci_dev(struct pci_dev *dev)
 	 * and want to inhibit the user from fiddling with 'reset'
 	 */
 	pci_reset_function(dev);
-	pci_restore_state(dev);
+	pci_restore_state(psdev->dev);
 
 	/* This disables the device. */
-	xen_pcibk_reset_device(dev);
+	xen_pcibk_reset_device(found_psdev->dev);
 
 	/* And cleanup up our emulated fields. */
-	xen_pcibk_config_reset_dev(dev);
-	xen_pcibk_config_free_dyn_fields(dev);
+	xen_pcibk_config_free_dyn_fields(found_psdev->dev);
+	xen_pcibk_config_reset_dev(found_psdev->dev);
 
-	xen_unregister_device_domain_owner(dev);
+	xen_unregister_device_domain_owner(found_psdev->dev);
 
 	spin_lock_irqsave(&found_psdev->lock, flags);
 	found_psdev->pdev = NULL;
@@ -413,7 +401,7 @@ static int pcistub_init_device(struct pci_dev *dev)
 	dev_dbg(&dev->dev, "reset device\n");
 	xen_pcibk_reset_device(dev);
 
-	pci_set_dev_assigned(dev);
+	dev->dev_flags |= PCI_DEV_FLAGS_ASSIGNED;
 	return 0;
 
 config_release:
@@ -436,6 +424,8 @@ static int __init pcistub_init_devices_late(void)
 	struct pcistub_device *psdev;
 	unsigned long flags;
 	int err = 0;
+
+	pr_debug(DRV_NAME ": pcistub_init_devices_late\n");
 
 	spin_lock_irqsave(&pcistub_devices_lock, flags);
 
@@ -502,8 +492,6 @@ static int pcistub_seize(struct pci_dev *dev)
 	return err;
 }
 
-/* Called when 'bind'. This means we must _NOT_ call pci_reset_function or
- * other functions that take the sysfs lock. */
 static int pcistub_probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
 	int err = 0;
@@ -531,8 +519,6 @@ out:
 	return err;
 }
 
-/* Called when 'unbind'. This means we must _NOT_ call pci_reset_function or
- * other functions that take the sysfs lock. */
 static void pcistub_remove(struct pci_dev *dev)
 {
 	struct pcistub_device *psdev, *found_psdev = NULL;
@@ -558,14 +544,16 @@ static void pcistub_remove(struct pci_dev *dev)
 			found_psdev->pdev);
 
 		if (found_psdev->pdev) {
-			pr_warn("****** removing device %s while still in-use! ******\n",
+			printk(KERN_WARNING DRV_NAME ": ****** removing device "
+			       "%s while still in-use! ******\n",
 			       pci_name(found_psdev->dev));
-			pr_warn("****** driver domain may still access this device's i/o resources!\n");
-			pr_warn("****** shutdown driver domain before binding device\n");
-			pr_warn("****** to other drivers or domains\n");
+			printk(KERN_WARNING DRV_NAME ": ****** driver domain may"
+			       " still access this device's i/o resources!\n");
+			printk(KERN_WARNING DRV_NAME ": ****** shutdown driver "
+			       "domain before binding device\n");
+			printk(KERN_WARNING DRV_NAME ": ****** to other drivers "
+			       "or domains\n");
 
-			/* N.B. This ends up calling pcistub_put_pci_dev which ends up
-			 * doing the FLR. */
 			xen_pcibk_release_pci_dev(found_psdev->pdev,
 						found_psdev->dev);
 		}
@@ -579,7 +567,7 @@ static void pcistub_remove(struct pci_dev *dev)
 	}
 }
 
-static const struct pci_device_id pcistub_ids[] = {
+static DEFINE_PCI_DEVICE_TABLE(pcistub_ids) = {
 	{
 	 .vendor = PCI_ANY_ID,
 	 .device = PCI_ANY_ID,
@@ -1030,7 +1018,7 @@ static int pcistub_device_id_add(int domain, int bus, int slot, int func)
 	pci_dev_id->bus = bus;
 	pci_dev_id->devfn = devfn;
 
-	pr_debug("wants to seize %04x:%02x:%02x.%d\n",
+	pr_debug(DRV_NAME ": wants to seize %04x:%02x:%02x.%d\n",
 		 domain, bus, slot, func);
 
 	spin_lock_irqsave(&device_ids_lock, flags);
@@ -1060,8 +1048,8 @@ static int pcistub_device_id_remove(int domain, int bus, int slot, int func)
 
 			err = 0;
 
-			pr_debug("removed %04x:%02x:%02x.%d from seize list\n",
-				 domain, bus, slot, func);
+			pr_debug(DRV_NAME ": removed %04x:%02x:%02x.%d from "
+				 "seize list\n", domain, bus, slot, func);
 		}
 	}
 	spin_unlock_irqrestore(&device_ids_lock, flags);
@@ -1208,23 +1196,19 @@ static ssize_t pcistub_irq_handler_switch(struct device_driver *drv,
 	struct pcistub_device *psdev;
 	struct xen_pcibk_dev_data *dev_data;
 	int domain, bus, slot, func;
-	int err;
+	int err = -ENOENT;
 
 	err = str_to_slot(buf, &domain, &bus, &slot, &func);
 	if (err)
 		return err;
 
 	psdev = pcistub_device_find(domain, bus, slot, func);
-	if (!psdev) {
-		err = -ENOENT;
+	if (!psdev)
 		goto out;
-	}
 
 	dev_data = pci_get_drvdata(psdev->dev);
-	if (!dev_data) {
-		err = -ENOENT;
+	if (!dev_data)
 		goto out;
-	}
 
 	dev_dbg(&psdev->dev->dev, "%s fake irq handler: %d->%d\n",
 		dev_data->irq_name, dev_data->isr_on,
@@ -1486,7 +1470,7 @@ out:
 	return err;
 
 parse_error:
-	pr_err("Error parsing pci_devs_to_hide at \"%s\"\n",
+	printk(KERN_ERR DRV_NAME ": Error parsing pci_devs_to_hide at \"%s\"\n",
 	       pci_devs_to_hide + pos);
 	return -EINVAL;
 }

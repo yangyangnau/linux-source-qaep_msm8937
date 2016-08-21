@@ -415,7 +415,6 @@ static int synaptics_rmi4_report_device(struct synaptics_rmi4_data *pdata,
 	int touch = 0;
 	struct	i2c_client *client = pdata->i2c_client;
 	static int num_error_reports;
-
 	if (rfi->fn_number != SYNAPTICS_RMI4_TOUCHPAD_FUNC_NUM) {
 		num_error_reports++;
 		if (num_error_reports < MAX_ERROR_REPORT)
@@ -486,7 +485,6 @@ static irqreturn_t synaptics_rmi4_irq(int irq, void *data)
 {
 	struct synaptics_rmi4_data *pdata = data;
 	int touch_count;
-
 	do {
 		touch_count = synaptics_rmi4_sensor_report(pdata);
 		if (touch_count)
@@ -913,6 +911,8 @@ static int synaptics_rmi4_probe
 
 	rmi4_data->input_dev = input_allocate_device();
 	if (rmi4_data->input_dev == NULL) {
+		dev_err(&client->dev, "%s:input device alloc failed\n",
+						__func__);
 		retval = -ENOMEM;
 		goto err_input;
 	}

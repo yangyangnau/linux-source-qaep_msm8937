@@ -14,6 +14,10 @@
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 */
 
 /*
@@ -30,9 +34,10 @@ Configuration Options:
 
 */
 
-#include <linux/module.h>
 #include "../comedidev.h"
+#include <linux/ioport.h>
 
+#define AIO_IIRO_16_SIZE	0x08
 #define AIO_IIRO_16_RELAY_0_7	0x00
 #define AIO_IIRO_16_INPUT_0_7	0x01
 #define AIO_IIRO_16_IRQ		0x02
@@ -44,7 +49,9 @@ static int aio_iiro_16_dio_insn_bits_write(struct comedi_device *dev,
 					   struct comedi_insn *insn,
 					   unsigned int *data)
 {
-	if (comedi_dio_update_state(s, data)) {
+	if (data[0]) {
+		s->state &= ~data[0];
+		s->state |= data[0] & data[1];
 		outb(s->state & 0xff, dev->iobase + AIO_IIRO_16_RELAY_0_7);
 		outb((s->state >> 8) & 0xff,
 		     dev->iobase + AIO_IIRO_16_RELAY_8_15);
@@ -73,7 +80,7 @@ static int aio_iiro_16_attach(struct comedi_device *dev,
 	struct comedi_subdevice *s;
 	int ret;
 
-	ret = comedi_request_region(dev, it->options[0], 0x8);
+	ret = comedi_request_region(dev, it->options[0], AIO_IIRO_16_SIZE);
 	if (ret)
 		return ret;
 
@@ -97,7 +104,7 @@ static int aio_iiro_16_attach(struct comedi_device *dev,
 	s->range_table = &range_digital;
 	s->insn_bits = aio_iiro_16_dio_insn_bits_read;
 
-	return 0;
+	return 1;
 }
 
 static struct comedi_driver aio_iiro_16_driver = {

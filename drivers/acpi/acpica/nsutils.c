@@ -6,7 +6,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2014, Intel Corp.
+ * Copyright (C) 2000 - 2013, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -419,12 +419,10 @@ acpi_ns_externalize_name(u32 internal_name_length,
 
 	switch (internal_name[0]) {
 	case AML_ROOT_PREFIX:
-
 		prefix_length = 1;
 		break;
 
 	case AML_PARENT_PREFIX:
-
 		for (i = 0; i < internal_name_length; i++) {
 			if (ACPI_IS_PARENT_PREFIX(internal_name[i])) {
 				prefix_length = i + 1;
@@ -440,7 +438,6 @@ acpi_ns_externalize_name(u32 internal_name_length,
 		break;
 
 	default:
-
 		break;
 	}
 
@@ -593,25 +590,23 @@ struct acpi_namespace_node *acpi_ns_validate_handle(acpi_handle handle)
 
 void acpi_ns_terminate(void)
 {
-	acpi_status status;
+	union acpi_operand_object *obj_desc;
 
 	ACPI_FUNCTION_TRACE(ns_terminate);
 
 	/*
-	 * Free the entire namespace -- all nodes and all objects
-	 * attached to the nodes
+	 * 1) Free the entire namespace -- all nodes and objects
+	 *
+	 * Delete all object descriptors attached to namepsace nodes
 	 */
 	acpi_ns_delete_namespace_subtree(acpi_gbl_root_node);
 
-	/* Delete any objects attached to the root node */
+	/* Detach any objects attached to the root */
 
-	status = acpi_ut_acquire_mutex(ACPI_MTX_NAMESPACE);
-	if (ACPI_FAILURE(status)) {
-		return_VOID;
+	obj_desc = acpi_ns_get_attached_object(acpi_gbl_root_node);
+	if (obj_desc) {
+		acpi_ns_detach_object(acpi_gbl_root_node);
 	}
-
-	acpi_ns_delete_node(acpi_gbl_root_node);
-	(void)acpi_ut_release_mutex(ACPI_MTX_NAMESPACE);
 
 	ACPI_DEBUG_PRINT((ACPI_DB_INFO, "Namespace freed\n"));
 	return_VOID;
@@ -724,7 +719,7 @@ acpi_ns_get_node(struct acpi_namespace_node *prefix_node,
 
 	(void)acpi_ut_release_mutex(ACPI_MTX_NAMESPACE);
 
-cleanup:
+      cleanup:
 	ACPI_FREE(internal_path);
 	return_ACPI_STATUS(status);
 }

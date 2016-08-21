@@ -29,7 +29,6 @@
 #include <xen/interface/io/fbif.h>
 #include <xen/interface/io/kbdif.h>
 #include <xen/xenbus.h>
-#include <xen/platform_pci.h>
 
 struct xenkbd_info {
 	struct input_dev *kbd;
@@ -285,7 +284,7 @@ static int xenkbd_connect_backend(struct xenbus_device *dev,
  error_evtchan:
 	xenbus_free_evtchn(dev, evtchn);
  error_grant:
-	gnttab_end_foreign_access(info->gref, 0, 0UL);
+	gnttab_end_foreign_access_ref(info->gref, 0);
 	info->gref = -1;
 	return ret;
 }
@@ -296,7 +295,7 @@ static void xenkbd_disconnect_backend(struct xenkbd_info *info)
 		unbind_from_irqhandler(info->irq, info);
 	info->irq = -1;
 	if (info->gref >= 0)
-		gnttab_end_foreign_access(info->gref, 0, 0UL);
+		gnttab_end_foreign_access_ref(info->gref, 0);
 	info->gref = -1;
 }
 
@@ -365,13 +364,12 @@ static const struct xenbus_device_id xenkbd_ids[] = {
 	{ "" }
 };
 
-static struct xenbus_driver xenkbd_driver = {
-	.ids = xenkbd_ids,
+static DEFINE_XENBUS_DRIVER(xenkbd, ,
 	.probe = xenkbd_probe,
 	.remove = xenkbd_remove,
 	.resume = xenkbd_resume,
 	.otherend_changed = xenkbd_backend_changed,
-};
+);
 
 static int __init xenkbd_init(void)
 {
@@ -380,9 +378,6 @@ static int __init xenkbd_init(void)
 
 	/* Nothing to do if running in dom0. */
 	if (xen_initial_domain())
-		return -ENODEV;
-
-	if (!xen_has_pv_devices())
 		return -ENODEV;
 
 	return xenbus_register_frontend(&xenkbd_driver);

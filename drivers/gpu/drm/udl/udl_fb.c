@@ -393,6 +393,19 @@ static struct fb_ops udlfb_ops = {
 	.fb_release = udl_fb_release,
 };
 
+static void udl_crtc_fb_gamma_set(struct drm_crtc *crtc, u16 red, u16 green,
+			   u16 blue, int regno)
+{
+}
+
+static void udl_crtc_fb_gamma_get(struct drm_crtc *crtc, u16 *red, u16 *green,
+			     u16 *blue, int regno)
+{
+	*red = 0;
+	*green = 0;
+	*blue = 0;
+}
+
 static int udl_user_framebuffer_dirty(struct drm_framebuffer *fb,
 				      struct drm_file *file,
 				      unsigned flags, unsigned color,
@@ -403,17 +416,15 @@ static int udl_user_framebuffer_dirty(struct drm_framebuffer *fb,
 	int i;
 	int ret = 0;
 
-	drm_modeset_lock_all(fb->dev);
-
 	if (!ufb->active_16)
-		goto unlock;
+		return 0;
 
 	if (ufb->obj->base.import_attach) {
 		ret = dma_buf_begin_cpu_access(ufb->obj->base.import_attach->dmabuf,
 					       0, ufb->obj->base.size,
 					       DMA_FROM_DEVICE);
 		if (ret)
-			goto unlock;
+			return ret;
 	}
 
 	for (i = 0; i < num_clips; i++) {
@@ -429,10 +440,6 @@ static int udl_user_framebuffer_dirty(struct drm_framebuffer *fb,
 				       0, ufb->obj->base.size,
 				       DMA_FROM_DEVICE);
 	}
-
- unlock:
-	drm_modeset_unlock_all(fb->dev);
-
 	return ret;
 }
 
@@ -472,8 +479,7 @@ udl_framebuffer_init(struct drm_device *dev,
 static int udlfb_create(struct drm_fb_helper *helper,
 			struct drm_fb_helper_surface_size *sizes)
 {
-	struct udl_fbdev *ufbdev =
-		container_of(helper, struct udl_fbdev, helper);
+	struct udl_fbdev *ufbdev = (struct udl_fbdev *)helper;
 	struct drm_device *dev = ufbdev->helper.dev;
 	struct fb_info *info;
 	struct device *device = dev->dev;
@@ -551,7 +557,9 @@ out:
 	return ret;
 }
 
-static const struct drm_fb_helper_funcs udl_fb_helper_funcs = {
+static struct drm_fb_helper_funcs udl_fb_helper_funcs = {
+	.gamma_set = udl_crtc_fb_gamma_set,
+	.gamma_get = udl_crtc_fb_gamma_get,
 	.fb_probe = udlfb_create,
 };
 
@@ -584,8 +592,7 @@ int udl_fbdev_init(struct drm_device *dev)
 		return -ENOMEM;
 
 	udl->fbdev = ufbdev;
-
-	drm_fb_helper_prepare(dev, &ufbdev->helper, &udl_fb_helper_funcs);
+	ufbdev->helper.funcs = &udl_fb_helper_funcs;
 
 	ret = drm_fb_helper_init(dev, &ufbdev->helper,
 				 1, 1);

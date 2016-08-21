@@ -25,8 +25,6 @@
 #define _VIA_DRV_H_
 
 #include <drm/drm_mm.h>
-#include <drm/drm_legacy.h>
-
 #define DRIVER_AUTHOR	"Various"
 
 #define DRIVER_NAME		"via"
@@ -116,7 +114,7 @@ enum via_family {
 #define VIA_READ8(reg)		DRM_READ8(VIA_BASE, reg)
 #define VIA_WRITE8(reg, val)	DRM_WRITE8(VIA_BASE, reg, val)
 
-extern const struct drm_ioctl_desc via_ioctls[];
+extern struct drm_ioctl_desc via_ioctls[];
 extern int via_max_ioctl;
 
 extern int via_fb_init(struct drm_device *dev, void *data, struct drm_file *file_priv);
@@ -140,7 +138,7 @@ extern u32 via_get_vblank_counter(struct drm_device *dev, int crtc);
 extern int via_enable_vblank(struct drm_device *dev, int crtc);
 extern void via_disable_vblank(struct drm_device *dev, int crtc);
 
-extern irqreturn_t via_driver_irq_handler(int irq, void *arg);
+extern irqreturn_t via_driver_irq_handler(DRM_IRQ_ARGS);
 extern void via_driver_irq_preinstall(struct drm_device *dev);
 extern int via_driver_irq_postinstall(struct drm_device *dev);
 extern void via_driver_irq_uninstall(struct drm_device *dev);

@@ -26,12 +26,16 @@
 #include "ttype.h"
 #include "card.h"
 
+/*---------------------  Export Classes  ----------------------------*/
+
 typedef struct tagSChannelTblElement {
 	unsigned char byChannelNumber;
 	unsigned int uFrequency;
 	bool bValid;
 	unsigned char byMAP;
 } SChannelTblElement, *PSChannelTblElement;
+
+/*---------------------  Export Functions  --------------------------*/
 
 bool is_channel_valid(unsigned int CountryCode);
 void init_channel_table(void *pDeviceHandler);

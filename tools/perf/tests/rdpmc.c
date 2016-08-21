@@ -2,13 +2,14 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <sys/mman.h>
-#include <linux/types.h>
+#include "types.h"
 #include "perf.h"
 #include "debug.h"
 #include "tests.h"
-#include "cloexec.h"
 
 #if defined(__x86_64__) || defined(__i386__)
+
+#define barrier() asm volatile("" ::: "memory")
 
 static u64 rdpmc(unsigned int counter)
 {
@@ -100,25 +101,22 @@ static int __test__rdpmc(void)
 	};
 	u64 delta_sum = 0;
         struct sigaction sa;
-	char sbuf[STRERR_BUFSIZE];
 
 	sigfillset(&sa.sa_mask);
 	sa.sa_sigaction = segfault_handler;
 	sigaction(SIGSEGV, &sa, NULL);
 
-	fd = sys_perf_event_open(&attr, 0, -1, -1,
-				 perf_event_open_cloexec_flag());
+	fd = sys_perf_event_open(&attr, 0, -1, -1, 0);
 	if (fd < 0) {
 		pr_err("Error: sys_perf_event_open() syscall returned "
-		       "with %d (%s)\n", fd,
-		       strerror_r(errno, sbuf, sizeof(sbuf)));
+		       "with %d (%s)\n", fd, strerror(errno));
 		return -1;
 	}
 
 	addr = mmap(NULL, page_size, PROT_READ, MAP_SHARED, fd, 0);
 	if (addr == (void *)(-1)) {
 		pr_err("Error: mmap() syscall returned with (%s)\n",
-		       strerror_r(errno, sbuf, sizeof(sbuf)));
+		       strerror(errno));
 		goto out_close;
 	}
 

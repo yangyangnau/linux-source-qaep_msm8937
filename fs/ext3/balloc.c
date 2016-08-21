@@ -1727,7 +1727,10 @@ allocated:
 	percpu_counter_sub(&sbi->s_freeblocks_counter, num);
 
 	BUFFER_TRACE(gdp_bh, "journal_dirty_metadata for group descriptor");
-	fatal = ext3_journal_dirty_metadata(handle, gdp_bh);
+	err = ext3_journal_dirty_metadata(handle, gdp_bh);
+	if (!fatal)
+		fatal = err;
+
 	if (fatal)
 		goto out;
 

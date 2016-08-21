@@ -41,7 +41,6 @@ irqreturn_t no_action(int cpl, void *dev_id)
 {
 	return IRQ_NONE;
 }
-EXPORT_SYMBOL_GPL(no_action);
 
 static void warn_no_thread(unsigned int irq, struct irqaction *action)
 {
@@ -52,7 +51,7 @@ static void warn_no_thread(unsigned int irq, struct irqaction *action)
 	       "but no thread function available.", irq, action->name);
 }
 
-void __irq_wake_thread(struct irq_desc *desc, struct irqaction *action)
+static void irq_wake_thread(struct irq_desc *desc, struct irqaction *action)
 {
 	/*
 	 * In case the thread crashed and was killed we just pretend that
@@ -158,7 +157,7 @@ handle_irq_event_percpu(struct irq_desc *desc, struct irqaction *action)
 				break;
 			}
 
-			__irq_wake_thread(desc, action);
+			irq_wake_thread(desc, action);
 
 			/* Fall through to add to randomness */
 		case IRQ_HANDLED:

@@ -1,13 +1,14 @@
 /*
  * Linker script for x32 vDSO.
  * We #include the file to define the layout details.
+ * Here we only choose the prelinked virtual address.
  *
  * This file defines the version script giving the user-exported symbols in
- * the DSO.
+ * the DSO.  We can define local symbols here called VDSO* to make their
+ * values visible using the asm-x86/vdso.h macros from the kernel proper.
  */
 
-#define BUILD_VDSOX32
-
+#define VDSO_PRELINK 0
 #include "vdso-layout.lds.S"
 
 /*
@@ -23,3 +24,5 @@ VERSION {
 	local: *;
 	};
 }
+
+VDSOX32_PRELINK = VDSO_PRELINK;

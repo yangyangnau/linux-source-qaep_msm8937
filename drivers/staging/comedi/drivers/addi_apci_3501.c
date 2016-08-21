@@ -20,9 +20,15 @@
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
  * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
  * more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+ *
+ * You should also find the complete GPL in the COPYING file accompanying
+ * this source code.
  */
 
-#include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/interrupt.h>
 #include <linux/sched.h>
@@ -104,9 +110,9 @@ static int apci3501_ao_insn_write(struct comedi_device *dev,
 {
 	unsigned int chan = CR_CHAN(insn->chanspec);
 	unsigned int range = CR_RANGE(insn->chanspec);
-	unsigned int cfg = APCI3501_AO_DATA_CHAN(chan);
-	int ret;
+	unsigned int val = 0;
 	int i;
+	int ret;
 
 	/*
 	 * All analog output channels have the same output range.
@@ -117,14 +123,14 @@ static int apci3501_ao_insn_write(struct comedi_device *dev,
 	if (range) {
 		outl(0, dev->iobase + APCI3501_AO_CTRL_STATUS_REG);
 	} else {
-		cfg |= APCI3501_AO_DATA_BIPOLAR;
+		val |= APCI3501_AO_DATA_BIPOLAR;
 		outl(APCI3501_AO_CTRL_BIPOLAR,
 		     dev->iobase + APCI3501_AO_CTRL_STATUS_REG);
 	}
 
-	for (i = 0; i < insn->n; i++) {
-		unsigned int val = data[i];
+	val |= APCI3501_AO_DATA_CHAN(chan);
 
+	for (i = 0; i < insn->n; i++) {
 		if (range == 1) {
 			if (data[i] > 0x1fff) {
 				dev_err(dev->class_dev,
@@ -137,10 +143,8 @@ static int apci3501_ao_insn_write(struct comedi_device *dev,
 		if (ret)
 			return ret;
 
-		outl(cfg | APCI3501_AO_DATA_VAL(val),
+		outl(val | APCI3501_AO_DATA_VAL(data[i]),
 		     dev->iobase + APCI3501_AO_DATA_REG);
-
-		s->readback[chan] = val;
 	}
 
 	return insn->n;
@@ -163,10 +167,16 @@ static int apci3501_do_insn_bits(struct comedi_device *dev,
 				 struct comedi_insn *insn,
 				 unsigned int *data)
 {
-	s->state = inl(dev->iobase + APCI3501_DO_REG);
+	unsigned int mask = data[0];
+	unsigned int bits = data[1];
 
-	if (comedi_dio_update_state(s, data))
+	s->state = inl(dev->iobase + APCI3501_DO_REG);
+	if (mask) {
+		s->state &= ~mask;
+		s->state |= (bits & mask);
+
 		outl(s->state, dev->iobase + APCI3501_DO_REG);
+	}
 
 	data[1] = s->state;
 
@@ -276,7 +286,7 @@ static irqreturn_t apci3501_interrupt(int irq, void *d)
 
 	ui_Timer_AOWatchdog = inl(dev->iobase + APCI3501_TIMER_IRQ_REG) & 0x1;
 	if ((!ui_Timer_AOWatchdog)) {
-		dev_err(dev->class_dev, "IRQ from unknown source\n");
+		comedi_error(dev, "IRQ from unknown source");
 		return IRQ_NONE;
 	}
 
@@ -329,9 +339,10 @@ static int apci3501_auto_attach(struct comedi_device *dev,
 	int ao_n_chan;
 	int ret;
 
-	devpriv = comedi_alloc_devpriv(dev, sizeof(*devpriv));
+	devpriv = kzalloc(sizeof(*devpriv), GFP_KERNEL);
 	if (!devpriv)
 		return -ENOMEM;
+	dev->private = devpriv;
 
 	ret = comedi_pci_enable(dev);
 	if (ret)
@@ -362,11 +373,6 @@ static int apci3501_auto_attach(struct comedi_device *dev,
 		s->maxdata	= 0x3fff;
 		s->range_table	= &apci3501_ao_range;
 		s->insn_write	= apci3501_ao_insn_write;
-		s->insn_read	= comedi_readback_insn_read;
-
-		ret = comedi_alloc_subdev_readback(s);
-		if (ret)
-			return ret;
 	} else {
 		s->type		= COMEDI_SUBD_UNUSED;
 	}
@@ -397,9 +403,9 @@ static int apci3501_auto_attach(struct comedi_device *dev,
 	s->maxdata = 0;
 	s->len_chanlist = 1;
 	s->range_table = &range_digital;
-	s->insn_write = apci3501_write_insn_timer;
-	s->insn_read = apci3501_read_insn_timer;
-	s->insn_config = apci3501_config_insn_timer;
+	s->insn_write = i_APCI3501_StartStopWriteTimerCounterWatchdog;
+	s->insn_read = i_APCI3501_ReadTimerCounterWatchdog;
+	s->insn_config = i_APCI3501_ConfigTimerCounterWatchdog;
 
 	/* Initialize the eeprom subdevice */
 	s = &dev->subdevices[4];
@@ -417,7 +423,9 @@ static void apci3501_detach(struct comedi_device *dev)
 {
 	if (dev->iobase)
 		apci3501_reset(dev);
-	comedi_pci_detach(dev);
+	if (dev->irq)
+		free_irq(dev->irq, dev);
+	comedi_pci_disable(dev);
 }
 
 static struct comedi_driver apci3501_driver = {
@@ -433,7 +441,7 @@ static int apci3501_pci_probe(struct pci_dev *dev,
 	return comedi_pci_auto_config(dev, &apci3501_driver, id->driver_data);
 }
 
-static const struct pci_device_id apci3501_pci_table[] = {
+static DEFINE_PCI_DEVICE_TABLE(apci3501_pci_table) = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_ADDIDATA, 0x3001) },
 	{ 0 }
 };

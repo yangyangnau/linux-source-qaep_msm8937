@@ -281,7 +281,21 @@ fail:
 	return ret;
 }
 
-static const struct drm_fb_helper_funcs omap_fb_helper_funcs = {
+static void omap_crtc_fb_gamma_set(struct drm_crtc *crtc,
+		u16 red, u16 green, u16 blue, int regno)
+{
+	DBG("fbdev: set gamma");
+}
+
+static void omap_crtc_fb_gamma_get(struct drm_crtc *crtc,
+		u16 *red, u16 *green, u16 *blue, int regno)
+{
+	DBG("fbdev: get gamma");
+}
+
+static struct drm_fb_helper_funcs omap_fb_helper_funcs = {
+	.gamma_set = omap_crtc_fb_gamma_set,
+	.gamma_get = omap_crtc_fb_gamma_get,
 	.fb_probe = omap_fbdev_create,
 };
 
@@ -325,7 +339,7 @@ struct drm_fb_helper *omap_fbdev_init(struct drm_device *dev)
 
 	helper = &fbdev->base;
 
-	drm_fb_helper_prepare(dev, helper, &omap_fb_helper_funcs);
+	helper->funcs = &omap_fb_helper_funcs;
 
 	ret = drm_fb_helper_init(dev, helper,
 			priv->num_crtcs, priv->num_connectors);
@@ -370,9 +384,6 @@ void omap_fbdev_free(struct drm_device *dev)
 	drm_fb_helper_fini(helper);
 
 	fbdev = to_omap_fbdev(priv->fbdev);
-
-	/* release the ref taken in omap_fbdev_create() */
-	omap_gem_put_paddr(fbdev->bo);
 
 	/* this will free the backing object */
 	if (fbdev->fb) {

@@ -1,7 +1,6 @@
 #ifndef _LINUX_VIRTIO_RING_H
 #define _LINUX_VIRTIO_RING_H
 
-#include <asm/barrier.h>
 #include <linux/irqreturn.h>
 #include <uapi/linux/virtio_ring.h>
 
@@ -71,7 +70,7 @@ struct virtqueue *vring_new_virtqueue(unsigned int index,
 				      struct virtio_device *vdev,
 				      bool weak_barriers,
 				      void *pages,
-				      bool (*notify)(struct virtqueue *vq),
+				      void (*notify)(struct virtqueue *vq),
 				      void (*callback)(struct virtqueue *vq),
 				      const char *name);
 void vring_del_virtqueue(struct virtqueue *vq);

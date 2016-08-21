@@ -3,7 +3,6 @@
 
 #include <linux/device.h>
 #include <linux/uuid.h>
-#include <linux/mod_devicetable.h>
 
 struct mei_cl_device;
 

@@ -59,7 +59,6 @@
 #include <linux/crypto.h>
 #include <linux/sunrpc/gss_krb5.h>
 #include <linux/sunrpc/xdr.h>
-#include <linux/lcm.h>
 
 #ifdef RPC_DEBUG
 # define RPCDBG_FACILITY        RPCDBG_AUTH
@@ -73,7 +72,7 @@
 static void krb5_nfold(u32 inbits, const u8 *in,
 		       u32 outbits, u8 *out)
 {
-	unsigned long ulcm;
+	int a, b, c, lcm;
 	int byte, i, msbit;
 
 	/* the code below is more readable if I make these bytes
@@ -83,7 +82,17 @@ static void krb5_nfold(u32 inbits, const u8 *in,
 	outbits >>= 3;
 
 	/* first compute lcm(n,k) */
-	ulcm = lcm(inbits, outbits);
+
+	a = outbits;
+	b = inbits;
+
+	while (b != 0) {
+		c = b;
+		b = a%b;
+		a = c;
+	}
+
+	lcm = outbits*inbits/a;
 
 	/* now do the real work */
 
@@ -92,7 +101,7 @@ static void krb5_nfold(u32 inbits, const u8 *in,
 
 	/* this will end up cycling through k lcm(k,n)/k times, which
 	   is correct */
-	for (i = ulcm-1; i >= 0; i--) {
+	for (i = lcm-1; i >= 0; i--) {
 		/* compute the msbit in k which gets added into this byte */
 		msbit = (
 			/* first, start with the msbit in the first,

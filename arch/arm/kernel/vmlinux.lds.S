@@ -70,6 +70,10 @@ SECTIONS
 		ARM_EXIT_DISCARD(EXIT_TEXT)
 		ARM_EXIT_DISCARD(EXIT_DATA)
 		EXIT_CALL
+#ifndef CONFIG_HOTPLUG
+		*(.ARM.exidx.devexit.text)
+		*(.ARM.extab.devexit.text)
+#endif
 #ifndef CONFIG_MMU
 		*(.fixup)
 		*(__ex_table)
@@ -219,8 +223,8 @@ SECTIONS
 	__data_loc = ALIGN(4);		/* location in binary */
 	. = PAGE_OFFSET + TEXT_OFFSET;
 #else
-	. = ALIGN(THREAD_SIZE);
 	__init_end = .;
+	. = ALIGN(THREAD_SIZE);
 	__data_loc = .;
 #endif
 
@@ -318,6 +322,7 @@ SECTIONS
 	_end = .;
 
 	STABS_DEBUG
+	.comment 0 : { *(.comment) }
 }
 
 /*

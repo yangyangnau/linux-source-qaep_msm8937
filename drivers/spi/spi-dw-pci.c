@@ -1,7 +1,7 @@
 /*
  * PCI interface driver for DW SPI Core
  *
- * Copyright (c) 2009, 2014 Intel Corporation.
+ * Copyright (c) 2009, Intel Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -11,6 +11,10 @@
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
  * more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation,
+ * Inc., 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
 #include <linux/interrupt.h>
@@ -28,100 +32,126 @@ struct dw_spi_pci {
 	struct dw_spi	dws;
 };
 
-struct spi_pci_desc {
-	int	(*setup)(struct dw_spi *);
-};
-
-static struct spi_pci_desc spi_pci_mid_desc = {
-	.setup = dw_spi_mid_init,
-};
-
-static int spi_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
+static int spi_pci_probe(struct pci_dev *pdev,
+	const struct pci_device_id *ent)
 {
 	struct dw_spi_pci *dwpci;
 	struct dw_spi *dws;
-	struct spi_pci_desc *desc = (struct spi_pci_desc *)ent->driver_data;
 	int pci_bar = 0;
 	int ret;
 
-	ret = pcim_enable_device(pdev);
+	printk(KERN_INFO "DW: found PCI SPI controller(ID: %04x:%04x)\n",
+		pdev->vendor, pdev->device);
+
+	ret = pci_enable_device(pdev);
 	if (ret)
 		return ret;
 
-	dwpci = devm_kzalloc(&pdev->dev, sizeof(struct dw_spi_pci),
-			GFP_KERNEL);
-	if (!dwpci)
-		return -ENOMEM;
+	dwpci = kzalloc(sizeof(struct dw_spi_pci), GFP_KERNEL);
+	if (!dwpci) {
+		ret = -ENOMEM;
+		goto err_disable;
+	}
 
 	dwpci->pdev = pdev;
 	dws = &dwpci->dws;
 
 	/* Get basic io resource and map it */
 	dws->paddr = pci_resource_start(pdev, pci_bar);
+	dws->iolen = pci_resource_len(pdev, pci_bar);
 
-	ret = pcim_iomap_regions(pdev, 1 << pci_bar, pci_name(pdev));
+	ret = pci_request_region(pdev, pci_bar, dev_name(&pdev->dev));
 	if (ret)
-		return ret;
+		goto err_kfree;
 
-	dws->regs = pcim_iomap_table(pdev)[pci_bar];
+	dws->regs = ioremap_nocache((unsigned long)dws->paddr,
+				pci_resource_len(pdev, pci_bar));
+	if (!dws->regs) {
+		ret = -ENOMEM;
+		goto err_release_reg;
+	}
 
+	dws->parent_dev = &pdev->dev;
 	dws->bus_num = 0;
 	dws->num_cs = 4;
 	dws->irq = pdev->irq;
 
 	/*
-	 * Specific handling for paltforms, like dma setup,
+	 * Specific handling for Intel MID paltforms, like dma setup,
 	 * clock rate, FIFO depth.
 	 */
-	if (desc && desc->setup) {
-		ret = desc->setup(dws);
+	if (pdev->device == 0x0800) {
+		ret = dw_spi_mid_init(dws);
 		if (ret)
-			return ret;
+			goto err_unmap;
 	}
 
-	ret = dw_spi_add_host(&pdev->dev, dws);
+	ret = dw_spi_add_host(dws);
 	if (ret)
-		return ret;
+		goto err_unmap;
 
 	/* PCI hook and SPI hook use the same drv data */
 	pci_set_drvdata(pdev, dwpci);
-
-	dev_info(&pdev->dev, "found PCI SPI controller(ID: %04x:%04x)\n",
-		pdev->vendor, pdev->device);
-
 	return 0;
+
+err_unmap:
+	iounmap(dws->regs);
+err_release_reg:
+	pci_release_region(pdev, pci_bar);
+err_kfree:
+	kfree(dwpci);
+err_disable:
+	pci_disable_device(pdev);
+	return ret;
 }
 
 static void spi_pci_remove(struct pci_dev *pdev)
 {
 	struct dw_spi_pci *dwpci = pci_get_drvdata(pdev);
 
+	pci_set_drvdata(pdev, NULL);
 	dw_spi_remove_host(&dwpci->dws);
+	iounmap(dwpci->dws.regs);
+	pci_release_region(pdev, 0);
+	kfree(dwpci);
+	pci_disable_device(pdev);
 }
 
-#ifdef CONFIG_PM_SLEEP
-static int spi_suspend(struct device *dev)
+#ifdef CONFIG_PM
+static int spi_suspend(struct pci_dev *pdev, pm_message_t state)
 {
-	struct pci_dev *pdev = to_pci_dev(dev);
 	struct dw_spi_pci *dwpci = pci_get_drvdata(pdev);
+	int ret;
 
-	return dw_spi_suspend_host(&dwpci->dws);
+	ret = dw_spi_suspend_host(&dwpci->dws);
+	if (ret)
+		return ret;
+	pci_save_state(pdev);
+	pci_disable_device(pdev);
+	pci_set_power_state(pdev, pci_choose_state(pdev, state));
+	return ret;
 }
 
-static int spi_resume(struct device *dev)
+static int spi_resume(struct pci_dev *pdev)
 {
-	struct pci_dev *pdev = to_pci_dev(dev);
 	struct dw_spi_pci *dwpci = pci_get_drvdata(pdev);
+	int ret;
 
+	pci_set_power_state(pdev, PCI_D0);
+	pci_restore_state(pdev);
+	ret = pci_enable_device(pdev);
+	if (ret)
+		return ret;
 	return dw_spi_resume_host(&dwpci->dws);
 }
+#else
+#define spi_suspend	NULL
+#define spi_resume	NULL
 #endif
 
-static SIMPLE_DEV_PM_OPS(dw_spi_pm_ops, spi_suspend, spi_resume);
-
-static const struct pci_device_id pci_ids[] = {
+static DEFINE_PCI_DEVICE_TABLE(pci_ids) = {
 	/* Intel MID platform SPI controller 0 */
-	{ PCI_VDEVICE(INTEL, 0x0800), (kernel_ulong_t)&spi_pci_mid_desc},
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x0800) },
 	{},
 };
 
@@ -130,9 +160,8 @@ static struct pci_driver dw_spi_driver = {
 	.id_table =	pci_ids,
 	.probe =	spi_pci_probe,
 	.remove =	spi_pci_remove,
-	.driver         = {
-		.pm     = &dw_spi_pm_ops,
-	},
+	.suspend =	spi_suspend,
+	.resume	=	spi_resume,
 };
 
 module_pci_driver(dw_spi_driver);

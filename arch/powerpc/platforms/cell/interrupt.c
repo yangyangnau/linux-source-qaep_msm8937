@@ -163,7 +163,7 @@ static unsigned int iic_get_irq(void)
 
 void iic_setup_cpu(void)
 {
-	out_be64(&this_cpu_ptr(&cpu_iic)->regs->prio, 0xff);
+	out_be64(&__get_cpu_var(cpu_iic).regs->prio, 0xff);
 }
 
 u8 iic_get_target_id(int cpu)
@@ -215,7 +215,7 @@ void iic_request_IPIs(void)
 {
 	iic_request_ipi(PPC_MSG_CALL_FUNCTION);
 	iic_request_ipi(PPC_MSG_RESCHEDULE);
-	iic_request_ipi(PPC_MSG_TICK_BROADCAST);
+	iic_request_ipi(PPC_MSG_CALL_FUNC_SINGLE);
 	iic_request_ipi(PPC_MSG_DEBUGGER_BREAK);
 }
 

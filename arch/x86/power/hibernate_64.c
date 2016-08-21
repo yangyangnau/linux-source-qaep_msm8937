@@ -17,27 +17,29 @@
 #include <asm/page.h>
 #include <asm/pgtable.h>
 #include <asm/mtrr.h>
-#include <asm/sections.h>
 #include <asm/suspend.h>
 
+/* References to section boundaries */
+extern const void __nosave_begin, __nosave_end;
+
 /* Defined in hibernate_asm_64.S */
-extern asmlinkage __visible int restore_image(void);
+extern int restore_image(void);
 
 /*
  * Address to jump to in the last phase of restore in order to get to the image
  * kernel's text (this value is passed in the image header).
  */
-unsigned long restore_jump_address __visible;
+unsigned long restore_jump_address;
 
 /*
  * Value of the cr3 register from before the hibernation (this value is passed
  * in the image header).
  */
-unsigned long restore_cr3 __visible;
+unsigned long restore_cr3;
 
-pgd_t *temp_level4_pgt __visible;
+pgd_t *temp_level4_pgt;
 
-void *relocated_restore_code __visible;
+void *relocated_restore_code;
 
 static void *alloc_pgt_page(void *context)
 {

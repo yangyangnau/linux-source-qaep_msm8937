@@ -327,15 +327,13 @@ struct pv_mmu_ops {
 };
 
 struct arch_spinlock;
-#ifdef CONFIG_SMP
-#include <asm/spinlock_types.h>
-#else
-typedef u16 __ticket_t;
-#endif
-
 struct pv_lock_ops {
-	struct paravirt_callee_save lock_spinning;
-	void (*unlock_kick)(struct arch_spinlock *lock, __ticket_t ticket);
+	int (*spin_is_locked)(struct arch_spinlock *lock);
+	int (*spin_is_contended)(struct arch_spinlock *lock);
+	void (*spin_lock)(struct arch_spinlock *lock);
+	void (*spin_lock_flags)(struct arch_spinlock *lock, unsigned long flags);
+	int (*spin_trylock)(struct arch_spinlock *lock);
+	void (*spin_unlock)(struct arch_spinlock *lock);
 };
 
 /* This contains all the paravirt structures: we get a convenient
@@ -388,11 +386,9 @@ extern struct pv_lock_ops pv_lock_ops;
 	_paravirt_alt(insn_string, "%c[paravirt_typenum]", "%c[paravirt_clobber]")
 
 /* Simple instruction patching code. */
-#define NATIVE_LABEL(a,x,b) "\n\t.globl " a #x "_" #b "\n" a #x "_" #b ":\n\t"
-
-#define DEF_NATIVE(ops, name, code)					\
-	__visible extern const char start_##ops##_##name[], end_##ops##_##name[];	\
-	asm(NATIVE_LABEL("start_", ops, name) code NATIVE_LABEL("end_", ops, name))
+#define DEF_NATIVE(ops, name, code) 					\
+	extern const char start_##ops##_##name[], end_##ops##_##name[];	\
+	asm("start_" #ops "_" #name ": " code "; end_" #ops "_" #name ":")
 
 unsigned paravirt_patch_nop(void);
 unsigned paravirt_patch_ident_32(void *insnbuf, unsigned len);

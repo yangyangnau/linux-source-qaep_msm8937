@@ -23,7 +23,6 @@
 #include <linux/init.h>
 #include <linux/platform_device.h>
 #include <linux/interrupt.h>
-#include <linux/delay.h>
 #include <linux/rtc.h>
 #include <linux/slab.h>
 #include <linux/of_device.h>
@@ -120,39 +119,24 @@ static void stmp3xxx_wdt_register(struct platform_device *rtc_pdev)
 }
 #endif /* CONFIG_STMP3XXX_RTC_WATCHDOG */
 
-static int stmp3xxx_wait_time(struct stmp3xxx_rtc_data *rtc_data)
+static void stmp3xxx_wait_time(struct stmp3xxx_rtc_data *rtc_data)
 {
-	int timeout = 5000; /* 3ms according to i.MX28 Ref Manual */
 	/*
-	 * The i.MX28 Applications Processor Reference Manual, Rev. 1, 2010
-	 * states:
-	 * | The order in which registers are updated is
-	 * | Persistent 0, 1, 2, 3, 4, 5, Alarm, Seconds.
-	 * | (This list is in bitfield order, from LSB to MSB, as they would
-	 * | appear in the STALE_REGS and NEW_REGS bitfields of the HW_RTC_STAT
-	 * | register. For example, the Seconds register corresponds to
-	 * | STALE_REGS or NEW_REGS containing 0x80.)
+	 * The datasheet doesn't say which way round the
+	 * NEW_REGS/STALE_REGS bitfields go. In fact it's 0x1=P0,
+	 * 0x2=P1, .., 0x20=P5, 0x40=ALARM, 0x80=SECONDS
 	 */
-	do {
-		if (!(readl(rtc_data->io + STMP3XXX_RTC_STAT) &
-				(0x80 << STMP3XXX_RTC_STAT_STALE_SHIFT)))
-			return 0;
-		udelay(1);
-	} while (--timeout > 0);
-	return (readl(rtc_data->io + STMP3XXX_RTC_STAT) &
-		(0x80 << STMP3XXX_RTC_STAT_STALE_SHIFT)) ? -ETIME : 0;
+	while (readl(rtc_data->io + STMP3XXX_RTC_STAT) &
+			(0x80 << STMP3XXX_RTC_STAT_STALE_SHIFT))
+		cpu_relax();
 }
 
 /* Time read/write */
 static int stmp3xxx_rtc_gettime(struct device *dev, struct rtc_time *rtc_tm)
 {
-	int ret;
 	struct stmp3xxx_rtc_data *rtc_data = dev_get_drvdata(dev);
 
-	ret = stmp3xxx_wait_time(rtc_data);
-	if (ret)
-		return ret;
-
+	stmp3xxx_wait_time(rtc_data);
 	rtc_time_to_tm(readl(rtc_data->io + STMP3XXX_RTC_SECONDS), rtc_tm);
 	return 0;
 }
@@ -162,7 +146,8 @@ static int stmp3xxx_rtc_set_mmss(struct device *dev, unsigned long t)
 	struct stmp3xxx_rtc_data *rtc_data = dev_get_drvdata(dev);
 
 	writel(t, rtc_data->io + STMP3XXX_RTC_SECONDS);
-	return stmp3xxx_wait_time(rtc_data);
+	stmp3xxx_wait_time(rtc_data);
+	return 0;
 }
 
 /* interrupt(s) handler */
@@ -240,6 +225,7 @@ static int stmp3xxx_rtc_remove(struct platform_device *pdev)
 
 	writel(STMP3XXX_RTC_CTRL_ALARM_IRQ_EN,
 			rtc_data->io + STMP3XXX_RTC_CTRL_CLR);
+	platform_set_drvdata(pdev, NULL);
 
 	return 0;
 }
@@ -276,12 +262,7 @@ static int stmp3xxx_rtc_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, rtc_data);
 
-	err = stmp_reset_block(rtc_data->io);
-	if (err) {
-		dev_err(&pdev->dev, "stmp_reset_block failed: %d\n", err);
-		return err;
-	}
-
+	stmp_reset_block(rtc_data->io);
 	writel(STMP3XXX_RTC_PERSISTENT0_ALARM_EN |
 			STMP3XXX_RTC_PERSISTENT0_ALARM_WAKE_EN |
 			STMP3XXX_RTC_PERSISTENT0_ALARM_WAKE,
@@ -293,19 +274,25 @@ static int stmp3xxx_rtc_probe(struct platform_device *pdev)
 
 	rtc_data->rtc = devm_rtc_device_register(&pdev->dev, pdev->name,
 				&stmp3xxx_rtc_ops, THIS_MODULE);
-	if (IS_ERR(rtc_data->rtc))
-		return PTR_ERR(rtc_data->rtc);
+	if (IS_ERR(rtc_data->rtc)) {
+		err = PTR_ERR(rtc_data->rtc);
+		goto out;
+	}
 
 	err = devm_request_irq(&pdev->dev, rtc_data->irq_alarm,
 			stmp3xxx_rtc_interrupt, 0, "RTC alarm", &pdev->dev);
 	if (err) {
 		dev_err(&pdev->dev, "Cannot claim IRQ%d\n",
 			rtc_data->irq_alarm);
-		return err;
+		goto out;
 	}
 
 	stmp3xxx_wdt_register(pdev);
 	return 0;
+
+out:
+	platform_set_drvdata(pdev, NULL);
+	return err;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -343,7 +330,7 @@ static struct platform_driver stmp3xxx_rtcdrv = {
 		.name	= "stmp3xxx-rtc",
 		.owner	= THIS_MODULE,
 		.pm	= &stmp3xxx_rtc_pm_ops,
-		.of_match_table = rtc_dt_ids,
+		.of_match_table = of_match_ptr(rtc_dt_ids),
 	},
 };
 

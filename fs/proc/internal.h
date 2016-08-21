@@ -52,6 +52,7 @@ struct proc_dir_entry {
 
 union proc_op {
 	int (*proc_get_link)(struct dentry *, struct path *);
+	int (*proc_read)(struct task_struct *task, char *page);
 	int (*proc_show)(struct seq_file *m,
 		struct pid_namespace *ns, struct pid *pid,
 		struct task_struct *task);
@@ -111,10 +112,10 @@ static inline int task_dumpable(struct task_struct *task)
 	return 0;
 }
 
-static inline unsigned name_to_int(const struct qstr *qstr)
+static inline unsigned name_to_int(struct dentry *dentry)
 {
-	const char *name = qstr->name;
-	int len = qstr->len;
+	const char *name = dentry->d_name.name;
+	int len = dentry->d_name.len;
 	unsigned n = 0;
 
 	if (len > 1 && *name == '0')
@@ -164,24 +165,26 @@ extern int proc_setattr(struct dentry *, struct iattr *);
 extern struct inode *proc_pid_make_inode(struct super_block *, struct task_struct *);
 extern int pid_revalidate(struct dentry *, unsigned int);
 extern int pid_delete_dentry(const struct dentry *);
-extern int proc_pid_readdir(struct file *, struct dir_context *);
+extern int proc_pid_readdir(struct file *, void *, filldir_t);
 extern struct dentry *proc_pid_lookup(struct inode *, struct dentry *, unsigned int);
 extern loff_t mem_lseek(struct file *, loff_t, int);
 
 /* Lookups */
-typedef int instantiate_t(struct inode *, struct dentry *,
+typedef struct dentry *instantiate_t(struct inode *, struct dentry *,
 				     struct task_struct *, const void *);
-extern bool proc_fill_cache(struct file *, struct dir_context *, const char *, int,
+extern int proc_fill_cache(struct file *, void *, filldir_t, const char *, int,
 			   instantiate_t, struct task_struct *, const void *);
 
 /*
  * generic.c
  */
+extern spinlock_t proc_subdir_lock;
+
 extern struct dentry *proc_lookup(struct inode *, struct dentry *, unsigned int);
 extern struct dentry *proc_lookup_de(struct proc_dir_entry *, struct inode *,
 				     struct dentry *);
-extern int proc_readdir(struct file *, struct dir_context *);
-extern int proc_readdir_de(struct proc_dir_entry *, struct file *, struct dir_context *);
+extern int proc_readdir(struct file *, void *, filldir_t);
+extern int proc_readdir_de(struct proc_dir_entry *, struct file *, void *, filldir_t);
 
 static inline struct proc_dir_entry *pde_get(struct proc_dir_entry *pde)
 {
@@ -199,7 +202,6 @@ struct pde_opener {
 	int closing;
 	struct completion *c;
 };
-extern const struct inode_operations proc_link_inode_operations;
 
 extern const struct inode_operations proc_pid_link_inode_operations;
 
@@ -207,6 +209,13 @@ extern void proc_init_inodecache(void);
 extern struct inode *proc_get_inode(struct super_block *, struct proc_dir_entry *);
 extern int proc_fill_super(struct super_block *);
 extern void proc_entry_rundown(struct proc_dir_entry *);
+
+/*
+ * proc_devtree.c
+ */
+#ifdef CONFIG_PROC_DEVICETREE
+extern void proc_device_tree_init(void);
+#endif
 
 /*
  * proc_namespaces.c
@@ -230,12 +239,6 @@ static inline int proc_net_init(void) { return 0; }
  * proc_self.c
  */
 extern int proc_setup_self(struct super_block *);
-
-/*
- * proc_thread_self.c
- */
-extern int proc_setup_thread_self(struct super_block *);
-extern void proc_thread_self_init(void);
 
 /*
  * proc_sysctl.c
@@ -269,9 +272,8 @@ extern int proc_remount(struct super_block *, int *, char *);
  * task_[no]mmu.c
  */
 struct proc_maps_private {
-	struct inode *inode;
+	struct pid *pid;
 	struct task_struct *task;
-	struct mm_struct *mm;
 #ifdef CONFIG_MMU
 	struct vm_area_struct *tail_vma;
 #endif
@@ -279,8 +281,6 @@ struct proc_maps_private {
 	struct mempolicy *task_mempolicy;
 #endif
 };
-
-struct mm_struct *proc_mem_open(struct inode *inode, unsigned int mode);
 
 extern const struct file_operations proc_pid_maps_operations;
 extern const struct file_operations proc_tid_maps_operations;

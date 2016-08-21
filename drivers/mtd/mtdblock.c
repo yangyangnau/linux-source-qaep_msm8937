@@ -32,7 +32,6 @@
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/blktrans.h>
 #include <linux/mutex.h>
-#include <linux/major.h>
 
 
 struct mtdblk_dev {
@@ -374,7 +373,7 @@ static void mtdblock_remove_dev(struct mtd_blktrans_dev *dev)
 
 static struct mtd_blktrans_ops mtdblock_tr = {
 	.name		= "mtdblock",
-	.major		= MTD_BLOCK_MAJOR,
+	.major		= 31,
 	.part_bits	= 0,
 	.blksize 	= 512,
 	.open		= mtdblock_open,

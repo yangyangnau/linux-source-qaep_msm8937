@@ -72,8 +72,7 @@ static int pcxhr_update_analog_audio_level(struct snd_pcxhr *chip,
 	rmh.cmd_len = 3;
 	err = pcxhr_send_msg(chip->mgr, &rmh);
 	if (err < 0) {
-		dev_dbg(chip->card->dev,
-			"error update_analog_audio_level card(%d)"
+		snd_printk(KERN_DEBUG "error update_analog_audio_level card(%d)"
 			   " is_capture(%d) err(%x)\n",
 			   chip->chip_idx, is_capture, err);
 		return -EINVAL;
@@ -285,7 +284,7 @@ static int pcxhr_update_playback_stream_level(struct snd_pcxhr* chip, int idx)
 
 	err = pcxhr_send_msg(chip->mgr, &rmh);
 	if (err < 0) {
-		dev_dbg(chip->card->dev, "error update_playback_stream_level "
+		snd_printk(KERN_DEBUG "error update_playback_stream_level "
 			   "card(%d) err(%x)\n", chip->chip_idx, err);
 		return -EINVAL;
 	}
@@ -336,8 +335,7 @@ static int pcxhr_update_audio_pipe_level(struct snd_pcxhr *chip,
 
 	err = pcxhr_send_msg(chip->mgr, &rmh);
 	if (err < 0) {
-		dev_dbg(chip->card->dev,
-			"error update_audio_level(%d) err=%x\n",
+		snd_printk(KERN_DEBUG "error update_audio_level(%d) err=%x\n",
 			   chip->chip_idx, err);
 		return -EINVAL;
 	}
@@ -932,7 +930,7 @@ static int pcxhr_iec958_capture_byte(struct snd_pcxhr *chip,
 				temp |= 1;
 		}
 	}
-	dev_dbg(chip->card->dev, "read iec958 AES %d byte %d = 0x%x\n",
+	snd_printdd("read iec958 AES %d byte %d = 0x%x\n",
 		    chip->chip_idx, aes_idx, temp);
 	*aes_bits = temp;
 	return 0;
@@ -994,8 +992,7 @@ static int pcxhr_iec958_update_byte(struct snd_pcxhr *chip,
 			rmh.cmd[0] |= IO_NUM_REG_CUER;
 			rmh.cmd[1] = cmd;
 			rmh.cmd_len = 2;
-			dev_dbg(chip->card->dev,
-				"write iec958 AES %d byte %d bit %d (cmd %x)\n",
+			snd_printdd("write iec958 AES %d byte %d bit %d (cmd %x)\n",
 				    chip->chip_idx, aes_idx, i, cmd);
 			err = pcxhr_send_msg(chip->mgr, &rmh);
 			if (err)

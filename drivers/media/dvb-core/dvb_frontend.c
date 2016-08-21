@@ -96,6 +96,10 @@ MODULE_PARM_DESC(dvb_mfe_wait_time, "Wait up to <mfe_wait_time> seconds on open(
  * FESTATE_LOSTLOCK. When the lock has been lost, and we're searching it again.
  */
 
+#define DVB_FE_NO_EXIT	0
+#define DVB_FE_NORMAL_EXIT	1
+#define DVB_FE_DEVICE_REMOVED	2
+
 static DEFINE_MUTEX(frontend_mutex);
 
 struct dvb_frontend_private {
@@ -109,6 +113,7 @@ struct dvb_frontend_private {
 	wait_queue_head_t wait_queue;
 	struct task_struct *thread;
 	unsigned long release_jiffies;
+	unsigned int exit;
 	unsigned int wakeup;
 	fe_status_t status;
 	unsigned long tune_mode_flags;
@@ -560,7 +565,7 @@ static int dvb_frontend_is_exiting(struct dvb_frontend *fe)
 {
 	struct dvb_frontend_private *fepriv = fe->frontend_priv;
 
-	if (fe->exit != DVB_FE_NO_EXIT)
+	if (fepriv->exit != DVB_FE_NO_EXIT)
 		return 1;
 
 	if (fepriv->dvbdev->writers == 1)
@@ -624,7 +629,7 @@ restart:
 			/* got signal or quitting */
 			if (!down_interruptible(&fepriv->sem))
 				semheld = true;
-			fe->exit = DVB_FE_NORMAL_EXIT;
+			fepriv->exit = DVB_FE_NORMAL_EXIT;
 			break;
 		}
 
@@ -734,9 +739,9 @@ restart:
 
 	fepriv->thread = NULL;
 	if (kthread_should_stop())
-		fe->exit = DVB_FE_DEVICE_REMOVED;
+		fepriv->exit = DVB_FE_DEVICE_REMOVED;
 	else
-		fe->exit = DVB_FE_NO_EXIT;
+		fepriv->exit = DVB_FE_NO_EXIT;
 	mb();
 
 	if (semheld)
@@ -751,8 +756,7 @@ static void dvb_frontend_stop(struct dvb_frontend *fe)
 
 	dev_dbg(fe->dvb->device, "%s:\n", __func__);
 
-	if (fe->exit != DVB_FE_DEVICE_REMOVED)
-		fe->exit = DVB_FE_NORMAL_EXIT;
+	fepriv->exit = DVB_FE_NORMAL_EXIT;
 	mb();
 
 	if (!fepriv->thread)
@@ -822,7 +826,7 @@ static int dvb_frontend_start(struct dvb_frontend *fe)
 	dev_dbg(fe->dvb->device, "%s:\n", __func__);
 
 	if (fepriv->thread) {
-		if (fe->exit == DVB_FE_NO_EXIT)
+		if (fepriv->exit == DVB_FE_NO_EXIT)
 			return 0;
 		else
 			dvb_frontend_stop (fe);
@@ -834,7 +838,7 @@ static int dvb_frontend_start(struct dvb_frontend *fe)
 		return -EINTR;
 
 	fepriv->state = FESTATE_IDLE;
-	fe->exit = DVB_FE_NO_EXIT;
+	fepriv->exit = DVB_FE_NO_EXIT;
 	fepriv->thread = NULL;
 	mb();
 
@@ -961,11 +965,6 @@ static int dvb_frontend_clear_cache(struct dvb_frontend *fe)
 		break;
 	case SYS_ATSC:
 		c->modulation = VSB_8;
-		break;
-	case SYS_ISDBS:
-		c->symbol_rate = 28860000;
-		c->rolloff = ROLLOFF_35;
-		c->bandwidth_hz = c->symbol_rate / 100 * 135;
 		break;
 	default:
 		c->modulation = QAM_AUTO;
@@ -1280,7 +1279,7 @@ static int dtv_property_process_get(struct dvb_frontend *fe,
 	switch(tvp->cmd) {
 	case DTV_ENUM_DELSYS:
 		ncaps = 0;
-		while (ncaps < MAX_DELSYS && fe->ops.delsys[ncaps]) {
+		while (fe->ops.delsys[ncaps] && ncaps < MAX_DELSYS) {
 			tvp->u.buffer.data[ncaps] = fe->ops.delsys[ncaps];
 			ncaps++;
 		}
@@ -1597,7 +1596,7 @@ static int dvbv5_set_delivery_system(struct dvb_frontend *fe,
 	 * supported
 	 */
 	ncaps = 0;
-	while (ncaps < MAX_DELSYS && fe->ops.delsys[ncaps]) {
+	while (fe->ops.delsys[ncaps] && ncaps < MAX_DELSYS) {
 		if (fe->ops.delsys[ncaps] == desired_system) {
 			c->delivery_system = desired_system;
 			dev_dbg(fe->dvb->device,
@@ -1629,7 +1628,7 @@ static int dvbv5_set_delivery_system(struct dvb_frontend *fe,
 	* of the desired system
 	*/
 	ncaps = 0;
-	while (ncaps < MAX_DELSYS && fe->ops.delsys[ncaps]) {
+	while (fe->ops.delsys[ncaps] && ncaps < MAX_DELSYS) {
 		if (dvbv3_type(fe->ops.delsys[ncaps]) == type)
 			delsys = fe->ops.delsys[ncaps];
 		ncaps++;
@@ -1704,7 +1703,7 @@ static int dvbv3_set_delivery_system(struct dvb_frontend *fe)
 	 * DVBv3 standard
 	 */
 	ncaps = 0;
-	while (ncaps < MAX_DELSYS && fe->ops.delsys[ncaps]) {
+	while (fe->ops.delsys[ncaps] && ncaps < MAX_DELSYS) {
 		if (dvbv3_type(fe->ops.delsys[ncaps]) != DVBV3_UNKNOWN) {
 			delsys = fe->ops.delsys[ncaps];
 			break;
@@ -1883,8 +1882,6 @@ static int dtv_property_process_set(struct dvb_frontend *fe,
 		c->lna = tvp->u.data;
 		if (fe->ops.set_lna)
 			r = fe->ops.set_lna(fe);
-		if (r < 0)
-			c->lna = LNA_AUTO;
 		break;
 
 	default:
@@ -1907,7 +1904,7 @@ static int dvb_frontend_ioctl(struct file *file,
 	if (down_interruptible(&fepriv->sem))
 		return -ERESTARTSYS;
 
-	if (fe->exit != DVB_FE_NO_EXIT) {
+	if (fepriv->exit != DVB_FE_NO_EXIT) {
 		up(&fepriv->sem);
 		return -ENODEV;
 	}
@@ -1939,13 +1936,15 @@ static int dvb_frontend_ioctl_properties(struct file *file,
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	int err = 0;
 
-	struct dtv_properties *tvps = parg;
+	struct dtv_properties *tvps = NULL;
 	struct dtv_property *tvp = NULL;
 	int i;
 
 	dev_dbg(fe->dvb->device, "%s:\n", __func__);
 
-	if (cmd == FE_SET_PROPERTY) {
+	if(cmd == FE_SET_PROPERTY) {
+		tvps = (struct dtv_properties __user *)parg;
+
 		dev_dbg(fe->dvb->device, "%s: properties.num = %d\n", __func__, tvps->num);
 		dev_dbg(fe->dvb->device, "%s: properties.props = %p\n", __func__, tvps->props);
 
@@ -1960,8 +1959,7 @@ static int dvb_frontend_ioctl_properties(struct file *file,
 			goto out;
 		}
 
-		if (copy_from_user(tvp, (void __user *)tvps->props,
-				   tvps->num * sizeof(struct dtv_property))) {
+		if (copy_from_user(tvp, tvps->props, tvps->num * sizeof(struct dtv_property))) {
 			err = -EFAULT;
 			goto out;
 		}
@@ -1976,7 +1974,10 @@ static int dvb_frontend_ioctl_properties(struct file *file,
 		if (c->state == DTV_TUNE)
 			dev_dbg(fe->dvb->device, "%s: Property cache is full, tuning\n", __func__);
 
-	} else if (cmd == FE_GET_PROPERTY) {
+	} else
+	if(cmd == FE_GET_PROPERTY) {
+		tvps = (struct dtv_properties __user *)parg;
+
 		dev_dbg(fe->dvb->device, "%s: properties.num = %d\n", __func__, tvps->num);
 		dev_dbg(fe->dvb->device, "%s: properties.props = %p\n", __func__, tvps->props);
 
@@ -1991,8 +1992,7 @@ static int dvb_frontend_ioctl_properties(struct file *file,
 			goto out;
 		}
 
-		if (copy_from_user(tvp, (void __user *)tvps->props,
-				   tvps->num * sizeof(struct dtv_property))) {
+		if (copy_from_user(tvp, tvps->props, tvps->num * sizeof(struct dtv_property))) {
 			err = -EFAULT;
 			goto out;
 		}
@@ -2014,8 +2014,7 @@ static int dvb_frontend_ioctl_properties(struct file *file,
 			(tvp + i)->result = err;
 		}
 
-		if (copy_to_user((void __user *)tvps->props, tvp,
-				 tvps->num * sizeof(struct dtv_property))) {
+		if (copy_to_user(tvps->props, tvp, tvps->num * sizeof(struct dtv_property))) {
 			err = -EFAULT;
 			goto out;
 		}
@@ -2074,24 +2073,6 @@ static int dtv_set_frontend(struct dvb_frontend *fe)
 		break;
 	case SYS_DVBC_ANNEX_C:
 		rolloff = 113;
-		break;
-	case SYS_DVBS:
-	case SYS_TURBO:
-	case SYS_ISDBS:
-		rolloff = 135;
-		break;
-	case SYS_DVBS2:
-		switch (c->rolloff) {
-		case ROLLOFF_20:
-			rolloff = 120;
-			break;
-		case ROLLOFF_25:
-			rolloff = 125;
-			break;
-		default:
-		case ROLLOFF_35:
-			rolloff = 135;
-		}
 		break;
 	default:
 		break;
@@ -2441,7 +2422,7 @@ static int dvb_frontend_open(struct inode *inode, struct file *file)
 	int ret;
 
 	dev_dbg(fe->dvb->device, "%s:\n", __func__);
-	if (fe->exit == DVB_FE_DEVICE_REMOVED)
+	if (fepriv->exit == DVB_FE_DEVICE_REMOVED)
 		return -ENODEV;
 
 	if (adapter->mfe_shared) {
@@ -2546,7 +2527,7 @@ static int dvb_frontend_release(struct inode *inode, struct file *file)
 
 	if (dvbdev->users == -1) {
 		wake_up(&fepriv->wait_queue);
-		if (fe->exit != DVB_FE_NO_EXIT)
+		if (fepriv->exit != DVB_FE_NO_EXIT)
 			wake_up(&dvbdev->wait_queue);
 		if (fe->ops.ts_bus_ctrl)
 			fe->ops.ts_bus_ctrl(fe, 0);
@@ -2571,9 +2552,7 @@ int dvb_frontend_suspend(struct dvb_frontend *fe)
 	dev_dbg(fe->dvb->device, "%s: adap=%d fe=%d\n", __func__, fe->dvb->num,
 			fe->id);
 
-	if (fe->ops.tuner_ops.suspend)
-		ret = fe->ops.tuner_ops.suspend(fe);
-	else if (fe->ops.tuner_ops.sleep)
+	if (fe->ops.tuner_ops.sleep)
 		ret = fe->ops.tuner_ops.sleep(fe);
 
 	if (fe->ops.sleep)
@@ -2591,16 +2570,12 @@ int dvb_frontend_resume(struct dvb_frontend *fe)
 	dev_dbg(fe->dvb->device, "%s: adap=%d fe=%d\n", __func__, fe->dvb->num,
 			fe->id);
 
-	fe->exit = DVB_FE_DEVICE_RESUME;
 	if (fe->ops.init)
 		ret = fe->ops.init(fe);
 
-	if (fe->ops.tuner_ops.resume)
-		ret = fe->ops.tuner_ops.resume(fe);
-	else if (fe->ops.tuner_ops.init)
+	if (fe->ops.tuner_ops.init)
 		ret = fe->ops.tuner_ops.init(fe);
 
-	fe->exit = DVB_FE_NO_EXIT;
 	fepriv->state = FESTATE_RETUNE;
 	dvb_frontend_wakeup(fe);
 
@@ -2689,20 +2664,20 @@ void dvb_frontend_detach(struct dvb_frontend* fe)
 
 	if (fe->ops.release_sec) {
 		fe->ops.release_sec(fe);
-		dvb_detach(fe->ops.release_sec);
+		symbol_put_addr(fe->ops.release_sec);
 	}
 	if (fe->ops.tuner_ops.release) {
 		fe->ops.tuner_ops.release(fe);
-		dvb_detach(fe->ops.tuner_ops.release);
+		symbol_put_addr(fe->ops.tuner_ops.release);
 	}
 	if (fe->ops.analog_ops.release) {
 		fe->ops.analog_ops.release(fe);
-		dvb_detach(fe->ops.analog_ops.release);
+		symbol_put_addr(fe->ops.analog_ops.release);
 	}
 	ptr = (void*)fe->ops.release;
 	if (ptr) {
 		fe->ops.release(fe);
-		dvb_detach(ptr);
+		symbol_put_addr(ptr);
 	}
 }
 #else

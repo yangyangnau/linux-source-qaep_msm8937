@@ -35,6 +35,7 @@ extern void pcibios_resource_survey(void);
 
 /* pci.c */
 
+extern int pcibios_last_bus;
 extern struct pci_ops *pci_root_ops;
 
 extern struct irq_routing_table *pcibios_get_irq_routing_table(void);

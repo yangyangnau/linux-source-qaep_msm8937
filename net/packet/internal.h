@@ -29,7 +29,6 @@ struct tpacket_kbdq_core {
 	char		*pkblk_start;
 	char		*pkblk_end;
 	int		kblk_size;
-	unsigned int	max_frame_len;
 	unsigned int	knum_blocks;
 	uint64_t	knxt_seq_num;
 	char		*prev;
@@ -65,7 +64,7 @@ struct packet_ring_buffer {
 	unsigned int		pg_vec_pages;
 	unsigned int		pg_vec_len;
 
-	unsigned int __percpu	*pending_refcnt;
+	atomic_t		pending;
 
 	struct tpacket_kbdq_core	prb_bdqc;
 };
@@ -115,7 +114,6 @@ struct packet_sock {
 	unsigned int		tp_tx_has_off:1;
 	unsigned int		tp_tstamp;
 	struct net_device __rcu	*cached_dev;
-	int			(*xmit)(struct sk_buff *skb);
 	struct packet_type	prot_hook ____cacheline_aligned_in_smp;
 };
 

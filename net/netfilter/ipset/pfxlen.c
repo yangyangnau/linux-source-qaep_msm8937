@@ -7,8 +7,8 @@
 
 #define E(a, b, c, d) \
 	{.ip6 = { \
-		htonl(a), htonl(b), \
-		htonl(c), htonl(d), \
+		__constant_htonl(a), __constant_htonl(b), \
+		__constant_htonl(c), __constant_htonl(d), \
 	} }
 
 /*

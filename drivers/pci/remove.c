@@ -7,6 +7,8 @@ static void pci_free_resources(struct pci_dev *dev)
 {
 	int i;
 
+ 	msi_remove_pci_irq_vectors(dev);
+
 	pci_cleanup_rom(dev);
 	for (i = 0; i < PCI_NUM_RESOURCES; i++) {
 		struct resource *res = dev->resource + i;
@@ -22,7 +24,7 @@ static void pci_stop_dev(struct pci_dev *dev)
 	if (dev->is_added) {
 		pci_proc_detach_device(dev);
 		pci_remove_sysfs_dev_files(dev);
-		device_release_driver(&dev->dev);
+		device_del(&dev->dev);
 		dev->is_added = 0;
 	}
 
@@ -32,11 +34,6 @@ static void pci_stop_dev(struct pci_dev *dev)
 
 static void pci_destroy_dev(struct pci_dev *dev)
 {
-	if (!dev->dev.kobj.parent)
-		return;
-
-	device_del(&dev->dev);
-
 	down_write(&pci_bus_sem);
 	list_del(&dev->bus_list);
 	up_write(&pci_bus_sem);
@@ -115,14 +112,6 @@ void pci_stop_and_remove_bus_device(struct pci_dev *dev)
 }
 EXPORT_SYMBOL(pci_stop_and_remove_bus_device);
 
-void pci_stop_and_remove_bus_device_locked(struct pci_dev *dev)
-{
-	pci_lock_rescan_remove();
-	pci_stop_and_remove_bus_device(dev);
-	pci_unlock_rescan_remove();
-}
-EXPORT_SYMBOL_GPL(pci_stop_and_remove_bus_device_locked);
-
 void pci_stop_root_bus(struct pci_bus *bus)
 {
 	struct pci_dev *child, *tmp;
@@ -137,7 +126,7 @@ void pci_stop_root_bus(struct pci_bus *bus)
 		pci_stop_bus_device(child);
 
 	/* stop the host bridge */
-	device_release_driver(&host_bridge->dev);
+	device_del(&host_bridge->dev);
 }
 
 void pci_remove_root_bus(struct pci_bus *bus)
@@ -156,5 +145,5 @@ void pci_remove_root_bus(struct pci_bus *bus)
 	host_bridge->bus = NULL;
 
 	/* remove the host bridge */
-	device_unregister(&host_bridge->dev);
+	put_device(&host_bridge->dev);
 }

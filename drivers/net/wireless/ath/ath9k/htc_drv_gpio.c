@@ -255,17 +255,6 @@ void ath9k_deinit_leds(struct ath9k_htc_priv *priv)
 	cancel_work_sync(&priv->led_work);
 }
 
-
-void ath9k_configure_leds(struct ath9k_htc_priv *priv)
-{
-	/* Configure gpio 1 for output */
-	ath9k_hw_cfg_output(priv->ah, priv->ah->led_pin,
-			    AR_GPIO_OUTPUT_MUX_AS_OUTPUT);
-	/* LED off, active low */
-	ath9k_hw_set_gpio(priv->ah, priv->ah->led_pin, 1);
-
-}
-
 void ath9k_init_leds(struct ath9k_htc_priv *priv)
 {
 	int ret;
@@ -279,7 +268,11 @@ void ath9k_init_leds(struct ath9k_htc_priv *priv)
 	else
 		priv->ah->led_pin = ATH_LED_PIN_DEF;
 
-	ath9k_configure_leds(priv);
+	/* Configure gpio 1 for output */
+	ath9k_hw_cfg_output(priv->ah, priv->ah->led_pin,
+			    AR_GPIO_OUTPUT_MUX_AS_OUTPUT);
+	/* LED off, active low */
+	ath9k_hw_set_gpio(priv->ah, priv->ah->led_pin, 1);
 
 	snprintf(priv->led_name, sizeof(priv->led_name),
 		"ath9k_htc-%s", wiphy_name(priv->hw->wiphy));

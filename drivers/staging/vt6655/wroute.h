@@ -39,7 +39,6 @@
 
 /*---------------------  Export Functions  --------------------------*/
 
-bool ROUTEbRelay(struct vnt_private *pDevice, unsigned char *pbySkbData,
-		 unsigned int uDataLen, unsigned int uNodeIndex);
+bool ROUTEbRelay(PSDevice pDevice, unsigned char *pbySkbData, unsigned int uDataLen, unsigned int uNodeIndex);
 
-#endif /* __WROUTE_H__ */
+#endif // __WROUTE_H__

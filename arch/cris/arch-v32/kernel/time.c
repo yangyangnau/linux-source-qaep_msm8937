@@ -216,10 +216,12 @@ static inline irqreturn_t timer_interrupt(int irq, void *dev_id)
         return IRQ_HANDLED;
 }
 
-/* Timer is IRQF_SHARED so drivers can add stuff to the timer irq chain. */
+/* Timer is IRQF_SHARED so drivers can add stuff to the timer irq chain.
+ * It needs to be IRQF_DISABLED to make the jiffies update work properly.
+ */
 static struct irqaction irq_timer = {
 	.handler = timer_interrupt,
-	.flags = IRQF_SHARED,
+	.flags = IRQF_SHARED | IRQF_DISABLED,
 	.name = "timer"
 };
 

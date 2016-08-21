@@ -12,7 +12,9 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, see <http://www.gnu.org/licenses/>.
+ * along with this program; if not, write to the
+ * Free Software Foundation, Inc.,
+ * 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
 
 #define pr_fmt(fmt) "llcp: %s: " fmt, __func__
@@ -601,7 +603,7 @@ static int llcp_sock_release(struct socket *sock)
 
 	/* Send a DISC */
 	if (sk->sk_state == LLCP_CONNECTED)
-		nfc_llcp_send_disconnect(llcp_sock);
+		nfc_llcp_disconnect(llcp_sock);
 
 	if (sk->sk_state == LLCP_LISTEN) {
 		struct nfc_llcp_sock *lsk, *n;
@@ -612,7 +614,7 @@ static int llcp_sock_release(struct socket *sock)
 			accept_sk = &lsk->sk;
 			lock_sock(accept_sk);
 
-			nfc_llcp_send_disconnect(lsk);
+			nfc_llcp_disconnect(lsk);
 			nfc_llcp_accept_unlink(accept_sk);
 
 			release_sock(accept_sk);
@@ -623,13 +625,6 @@ static int llcp_sock_release(struct socket *sock)
 		nfc_llcp_put_ssap(llcp_sock->local, llcp_sock->ssap);
 
 	release_sock(sk);
-
-	/* Keep this sock alive and therefore do not remove it from the sockets
-	 * list until the DISC PDU has been actually sent. Otherwise we would
-	 * reply with DM PDUs before sending the DISC one.
-	 */
-	if (sk->sk_state == LLCP_DISCONNECTING)
-		return err;
 
 	if (sock->type == SOCK_RAW)
 		nfc_llcp_sock_unlink(&local->raw_sockets, sk);
@@ -700,6 +695,7 @@ static int llcp_sock_connect(struct socket *sock, struct sockaddr *_addr,
 
 	llcp_sock->dev = dev;
 	llcp_sock->local = nfc_llcp_local_get(local);
+	llcp_sock->remote_miu = llcp_sock->local->remote_miu;
 	llcp_sock->ssap = nfc_llcp_get_local_ssap(local);
 	if (llcp_sock->ssap == LLCP_SAP_MAX) {
 		ret = -ENOMEM;
@@ -769,8 +765,8 @@ static int llcp_sock_sendmsg(struct kiocb *iocb, struct socket *sock,
 	lock_sock(sk);
 
 	if (sk->sk_type == SOCK_DGRAM) {
-		DECLARE_SOCKADDR(struct sockaddr_nfc_llcp *, addr,
-				 msg->msg_name);
+		struct sockaddr_nfc_llcp *addr =
+			(struct sockaddr_nfc_llcp *)msg->msg_name;
 
 		if (msg->msg_namelen < sizeof(*addr)) {
 			release_sock(sk);
@@ -842,8 +838,8 @@ static int llcp_sock_recvmsg(struct kiocb *iocb, struct socket *sock,
 
 	if (sk->sk_type == SOCK_DGRAM && msg->msg_name) {
 		struct nfc_llcp_ui_cb *ui_cb = nfc_llcp_ui_skb_cb(skb);
-		DECLARE_SOCKADDR(struct sockaddr_nfc_llcp *, sockaddr,
-				 msg->msg_name);
+		struct sockaddr_nfc_llcp *sockaddr =
+			(struct sockaddr_nfc_llcp *) msg->msg_name;
 
 		msg->msg_namelen = sizeof(struct sockaddr_nfc_llcp);
 

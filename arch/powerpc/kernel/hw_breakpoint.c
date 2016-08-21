@@ -28,6 +28,7 @@
 #include <linux/percpu.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
+#include <linux/init.h>
 #include <linux/smp.h>
 
 #include <asm/hw_breakpoint.h>
@@ -72,7 +73,7 @@ int arch_install_hw_breakpoint(struct perf_event *bp)
 	 * If so, DABR will be populated in single_step_dabr_instruction().
 	 */
 	if (current->thread.last_hit_ubp != bp)
-		__set_breakpoint(info);
+		set_breakpoint(info);
 
 	return 0;
 }
@@ -198,7 +199,7 @@ void thread_change_pc(struct task_struct *tsk, struct pt_regs *regs)
 
 	info = counter_arch_bp(tsk->thread.last_hit_ubp);
 	regs->msr &= ~MSR_SE;
-	__set_breakpoint(info);
+	set_breakpoint(info);
 	tsk->thread.last_hit_ubp = NULL;
 }
 
@@ -284,7 +285,7 @@ int __kprobes hw_breakpoint_handler(struct die_args *args)
 	if (!(info->type & HW_BRK_TYPE_EXTRANEOUS_IRQ))
 		perf_bp_event(bp, regs);
 
-	__set_breakpoint(info);
+	set_breakpoint(info);
 out:
 	rcu_read_unlock();
 	return rc;
@@ -293,7 +294,7 @@ out:
 /*
  * Handle single-step exceptions following a DABR hit.
  */
-static int __kprobes single_step_dabr_instruction(struct die_args *args)
+int __kprobes single_step_dabr_instruction(struct die_args *args)
 {
 	struct pt_regs *regs = args->regs;
 	struct perf_event *bp = NULL;
@@ -316,7 +317,7 @@ static int __kprobes single_step_dabr_instruction(struct die_args *args)
 	if (!(info->type & HW_BRK_TYPE_EXTRANEOUS_IRQ))
 		perf_bp_event(bp, regs);
 
-	__set_breakpoint(info);
+	set_breakpoint(info);
 	current->thread.last_hit_ubp = NULL;
 
 	/*

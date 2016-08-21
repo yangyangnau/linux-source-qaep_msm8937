@@ -57,13 +57,10 @@ struct mmu_notifier_ops {
 	 * pte. This way the VM will provide proper aging to the
 	 * accesses to the page through the secondary MMUs and not
 	 * only to the ones through the Linux pte.
-	 * Start-end is necessary in case the secondary MMU is mapping the page
-	 * at a smaller granularity than the primary MMU.
 	 */
 	int (*clear_flush_young)(struct mmu_notifier *mn,
 				 struct mm_struct *mm,
-				 unsigned long start,
-				 unsigned long end);
+				 unsigned long address);
 
 	/*
 	 * test_young is called to check the young/accessed bitflag in
@@ -173,13 +170,10 @@ extern int __mmu_notifier_register(struct mmu_notifier *mn,
 				   struct mm_struct *mm);
 extern void mmu_notifier_unregister(struct mmu_notifier *mn,
 				    struct mm_struct *mm);
-extern void mmu_notifier_unregister_no_release(struct mmu_notifier *mn,
-					       struct mm_struct *mm);
 extern void __mmu_notifier_mm_destroy(struct mm_struct *mm);
 extern void __mmu_notifier_release(struct mm_struct *mm);
 extern int __mmu_notifier_clear_flush_young(struct mm_struct *mm,
-					  unsigned long start,
-					  unsigned long end);
+					  unsigned long address);
 extern int __mmu_notifier_test_young(struct mm_struct *mm,
 				     unsigned long address);
 extern void __mmu_notifier_change_pte(struct mm_struct *mm,
@@ -198,11 +192,10 @@ static inline void mmu_notifier_release(struct mm_struct *mm)
 }
 
 static inline int mmu_notifier_clear_flush_young(struct mm_struct *mm,
-					  unsigned long start,
-					  unsigned long end)
+					  unsigned long address)
 {
 	if (mm_has_notifiers(mm))
-		return __mmu_notifier_clear_flush_young(mm, start, end);
+		return __mmu_notifier_clear_flush_young(mm, address);
 	return 0;
 }
 
@@ -260,9 +253,7 @@ static inline void mmu_notifier_mm_destroy(struct mm_struct *mm)
 	unsigned long ___address = __address;				\
 	__young = ptep_clear_flush_young(___vma, ___address, __ptep);	\
 	__young |= mmu_notifier_clear_flush_young(___vma->vm_mm,	\
-						  ___address,		\
-						  ___address +		\
-							PAGE_SIZE);	\
+						  ___address);		\
 	__young;							\
 })
 
@@ -273,9 +264,7 @@ static inline void mmu_notifier_mm_destroy(struct mm_struct *mm)
 	unsigned long ___address = __address;				\
 	__young = pmdp_clear_flush_young(___vma, ___address, __pmdp);	\
 	__young |= mmu_notifier_clear_flush_young(___vma->vm_mm,	\
-						  ___address,		\
-						  ___address +		\
-							PMD_SIZE);	\
+						  ___address);		\
 	__young;							\
 })
 
@@ -299,10 +288,6 @@ static inline void mmu_notifier_mm_destroy(struct mm_struct *mm)
 	set_pte_at(___mm, ___address, __ptep, ___pte);			\
 })
 
-extern void mmu_notifier_call_srcu(struct rcu_head *rcu,
-				   void (*func)(struct rcu_head *rcu));
-extern void mmu_notifier_synchronize(void);
-
 #else /* CONFIG_MMU_NOTIFIER */
 
 static inline void mmu_notifier_release(struct mm_struct *mm)
@@ -310,8 +295,7 @@ static inline void mmu_notifier_release(struct mm_struct *mm)
 }
 
 static inline int mmu_notifier_clear_flush_young(struct mm_struct *mm,
-					  unsigned long start,
-					  unsigned long end)
+					  unsigned long address)
 {
 	return 0;
 }

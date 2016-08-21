@@ -48,7 +48,6 @@
 #include "board.h"
 #include "sam9_smc.h"
 #include "generic.h"
-#include "gpio.h"
 
 static void __init cpu9krea_init_early(void)
 {
@@ -322,8 +321,6 @@ static struct mci_platform_data __initdata cpu9krea_mci0_data = {
 
 static void __init cpu9krea_board_init(void)
 {
-	at91_register_devices();
-
 	/* NOR */
 	cpu9krea_add_device_nor();
 	/* Serial */
@@ -377,7 +374,7 @@ MACHINE_START(CPUAT9260, "Eukrea CPU9260")
 MACHINE_START(CPUAT9G20, "Eukrea CPU9G20")
 #endif
 	/* Maintainer: Eric Benard - EUKREA Electromatique */
-	.init_time	= at91_init_time,
+	.init_time	= at91sam926x_pit_init,
 	.map_io		= at91_map_io,
 	.handle_irq	= at91_aic_handle_irq,
 	.init_early	= cpu9krea_init_early,

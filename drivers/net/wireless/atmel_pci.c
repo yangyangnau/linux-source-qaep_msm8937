@@ -15,13 +15,14 @@
     GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License
-    along with Atmel wireless lan drivers; if not, see
-    <http://www.gnu.org/licenses/>.
+    along with Atmel wireless lan drivers; if not, write to the Free Software
+    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 ******************************************************************************/
 #include <linux/pci.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/init.h>
 #include <linux/netdevice.h>
 #include "atmel.h"
 
@@ -30,7 +31,7 @@ MODULE_DESCRIPTION("Support for Atmel at76c50x 802.11 wireless ethernet cards.")
 MODULE_LICENSE("GPL");
 MODULE_SUPPORTED_DEVICE("Atmel at76c506 PCI wireless cards");
 
-static const struct pci_device_id card_ids[] = {
+static DEFINE_PCI_DEVICE_TABLE(card_ids) = {
 	{ 0x1114, 0x0506, PCI_ANY_ID, PCI_ANY_ID },
 	{ 0, }
 };

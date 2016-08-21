@@ -53,7 +53,8 @@ static inline int INTERFACE(int ipd_port)
 		return 3;
 	else if (ipd_port == 40)	/* Non existent interface for POW0 */
 		return 4;
-	panic("Illegal ipd_port %d passed to INTERFACE\n", ipd_port);
+	else
+		panic("Illegal ipd_port %d passed to INTERFACE\n", ipd_port);
 }
 
 /**
@@ -66,5 +67,6 @@ static inline int INDEX(int ipd_port)
 {
 	if (ipd_port < 32)
 		return ipd_port & 15;
-	return ipd_port & 3;
+	else
+		return ipd_port & 3;
 }

@@ -155,8 +155,20 @@ static int efivarfs_unlink(struct inode *dir, struct dentry *dentry)
 	return 0;
 };
 
+/*
+ * Handle negative dentry.
+ */
+static struct dentry *efivarfs_lookup(struct inode *dir, struct dentry *dentry,
+				      unsigned int flags)
+{
+	if (dentry->d_name.len > NAME_MAX)
+		return ERR_PTR(-ENAMETOOLONG);
+	d_add(dentry, NULL);
+	return NULL;
+}
+
 const struct inode_operations efivarfs_dir_inode_operations = {
-	.lookup = simple_lookup,
+	.lookup = efivarfs_lookup,
 	.unlink = efivarfs_unlink,
 	.create = efivarfs_create,
 };

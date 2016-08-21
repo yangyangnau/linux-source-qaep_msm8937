@@ -9,6 +9,7 @@
 #include <linux/miscdevice.h>
 #include <linux/fcntl.h>
 #include <linux/poll.h>
+#include <linux/init.h>
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
 #include <linux/mm.h>

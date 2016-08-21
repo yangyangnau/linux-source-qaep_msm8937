@@ -1466,7 +1466,8 @@ static void gelic_ether_setup_netdev_ops(struct net_device *netdev,
 {
 	netdev->watchdog_timeo = GELIC_NET_WATCHDOG_TIMEOUT;
 	/* NAPI */
-	netif_napi_add(netdev, napi, gelic_net_poll, NAPI_POLL_WEIGHT);
+	netif_napi_add(netdev, napi,
+		       gelic_net_poll, GELIC_NET_NAPI_WEIGHT);
 	netdev->ethtool_ops = &gelic_ether_ethtool_ops;
 	netdev->netdev_ops = &gelic_netdevice_ops;
 }
@@ -1561,7 +1562,7 @@ static struct gelic_card *gelic_alloc_card_net(struct net_device **netdev)
 	 * alloc netdev
 	 */
 	*netdev = alloc_etherdev(sizeof(struct gelic_port));
-	if (!*netdev) {
+	if (!netdev) {
 		kfree(card->unalign);
 		return NULL;
 	}
@@ -1726,7 +1727,7 @@ static int ps3_gelic_driver_probe(struct ps3_system_bus_device *dev)
 		goto fail_alloc_irq;
 	}
 	result = request_irq(card->irq, gelic_card_interrupt,
-			     0, netdev->name, card);
+			     IRQF_DISABLED, netdev->name, card);
 
 	if (result) {
 		dev_info(ctodev(card), "%s:request_irq failed (%d)\n",
@@ -1739,14 +1740,12 @@ static int ps3_gelic_driver_probe(struct ps3_system_bus_device *dev)
 		GELIC_CARD_PORT_STATUS_CHANGED;
 
 
-	result = gelic_card_init_chain(card, &card->tx_chain,
-				       card->descr, GELIC_NET_TX_DESCRIPTORS);
-	if (result)
+	if (gelic_card_init_chain(card, &card->tx_chain,
+			card->descr, GELIC_NET_TX_DESCRIPTORS))
 		goto fail_alloc_tx;
-	result = gelic_card_init_chain(card, &card->rx_chain,
-				       card->descr + GELIC_NET_TX_DESCRIPTORS,
-				       GELIC_NET_RX_DESCRIPTORS);
-	if (result)
+	if (gelic_card_init_chain(card, &card->rx_chain,
+				 card->descr + GELIC_NET_TX_DESCRIPTORS,
+				 GELIC_NET_RX_DESCRIPTORS))
 		goto fail_alloc_rx;
 
 	/* head of chain */
@@ -1756,8 +1755,7 @@ static int ps3_gelic_driver_probe(struct ps3_system_bus_device *dev)
 		card->rx_top, card->tx_top, sizeof(struct gelic_descr),
 		GELIC_NET_RX_DESCRIPTORS);
 	/* allocate rx skbs */
-	result = gelic_card_alloc_rx_skbs(card);
-	if (result)
+	if (gelic_card_alloc_rx_skbs(card))
 		goto fail_alloc_skbs;
 
 	spin_lock_init(&card->tx_lock);
@@ -1775,8 +1773,7 @@ static int ps3_gelic_driver_probe(struct ps3_system_bus_device *dev)
 	}
 
 #ifdef CONFIG_GELIC_WIRELESS
-	result = gelic_wl_driver_probe(card);
-	if (result) {
+	if (gelic_wl_driver_probe(card)) {
 		dev_dbg(&dev->core, "%s: WL init failed\n", __func__);
 		goto fail_setup_netdev;
 	}

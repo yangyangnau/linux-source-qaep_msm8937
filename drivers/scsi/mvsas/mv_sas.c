@@ -441,11 +441,14 @@ static u32 mvs_get_ncq_tag(struct sas_task *task, u32 *tag)
 static int mvs_task_prep_ata(struct mvs_info *mvi,
 			     struct mvs_task_exec_info *tei)
 {
+	struct sas_ha_struct *sha = mvi->sas;
 	struct sas_task *task = tei->task;
 	struct domain_device *dev = task->dev;
 	struct mvs_device *mvi_dev = dev->lldd_dev;
 	struct mvs_cmd_hdr *hdr = tei->hdr;
 	struct asd_sas_port *sas_port = dev->port;
+	struct sas_phy *sphy = dev->phy;
+	struct asd_sas_phy *sas_phy = sha->sas_phy[sphy->number];
 	struct mvs_slot_info *slot;
 	void *buf_prd;
 	u32 tag = tei->tag, hdr_tag;
@@ -465,7 +468,7 @@ static int mvs_task_prep_ata(struct mvs_info *mvi,
 	slot->tx = mvi->tx_prod;
 	del_q = TXQ_MODE_I | tag |
 		(TXQ_CMD_STP << TXQ_CMD_SHIFT) |
-		((sas_port->phy_mask & TXQ_PHY_MASK) << TXQ_PHY_SHIFT) |
+		(MVS_PHY_ID << TXQ_PHY_SHIFT) |
 		(mvi_dev->taskfileset << TXQ_SRS_SHIFT);
 	mvi->tx[mvi->tx_prod] = cpu_to_le32(del_q);
 
@@ -683,8 +686,7 @@ static int mvs_task_prep_ssp(struct mvs_info *mvi,
 	if (ssp_hdr->frame_type != SSP_TASK) {
 		buf_cmd[9] = fburst | task->ssp_task.task_attr |
 				(task->ssp_task.task_prio << 3);
-		memcpy(buf_cmd + 12, task->ssp_task.cmd->cmnd,
-		       task->ssp_task.cmd->cmd_len);
+		memcpy(buf_cmd + 12, &task->ssp_task.cdb, 16);
 	} else{
 		buf_cmd[10] = tmf->tmf;
 		switch (tmf->tmf) {
@@ -1341,23 +1343,19 @@ void mvs_dev_gone_notify(struct domain_device *dev)
 {
 	unsigned long flags = 0;
 	struct mvs_device *mvi_dev = dev->lldd_dev;
-	struct mvs_info *mvi;
-
-	if (!mvi_dev) {
-		mv_dprintk("found dev has gone.\n");
-		return;
-	}
-
-	mvi = mvi_dev->mvi_info;
+	struct mvs_info *mvi = mvi_dev->mvi_info;
 
 	spin_lock_irqsave(&mvi->lock, flags);
 
-	mv_dprintk("found dev[%d:%x] is gone.\n",
-		mvi_dev->device_id, mvi_dev->dev_type);
-	mvs_release_task(mvi, dev);
-	mvs_free_reg_set(mvi, mvi_dev);
-	mvs_free_dev(mvi_dev);
-
+	if (mvi_dev) {
+		mv_dprintk("found dev[%d:%x] is gone.\n",
+			mvi_dev->device_id, mvi_dev->dev_type);
+		mvs_release_task(mvi, dev);
+		mvs_free_reg_set(mvi, mvi_dev);
+		mvs_free_dev(mvi_dev);
+	} else {
+		mv_dprintk("found dev has gone.\n");
+	}
 	dev->lldd_dev = NULL;
 	mvi_dev->sas_device = NULL;
 
@@ -1412,7 +1410,7 @@ static int mvs_exec_internal_tmf_task(struct domain_device *dev,
 
 		if (res) {
 			del_timer(&task->slow_task->timer);
-			mv_printk("executing internal task failed:%d\n", res);
+			mv_printk("executing internel task failed:%d\n", res);
 			goto ex_err;
 		}
 
@@ -1858,16 +1856,11 @@ int mvs_slot_complete(struct mvs_info *mvi, u32 rx_desc, u32 flags)
 		goto out;
 	}
 
-	/*
-	 * error info record present; slot->response is 32 bit aligned but may
-	 * not be 64 bit aligned, so check for zero in two 32 bit reads
-	 */
-	if (unlikely((rx_desc & RXQ_ERR)
-		     && (*((u32 *)slot->response)
-			 || *(((u32 *)slot->response) + 1)))) {
+	/* error info record present */
+	if (unlikely((rx_desc & RXQ_ERR) && (*(u64 *) slot->response))) {
 		mv_dprintk("port %d slot %d rx_desc %X has error info"
 			"%016llX.\n", slot->port->sas_port.id, slot_idx,
-			 rx_desc, get_unaligned_le64(slot->response));
+			 rx_desc, (u64)(*(u64 *)slot->response));
 		tstat->stat = mvs_slot_err(mvi, task, slot_idx);
 		tstat->resp = SAS_TASK_COMPLETE;
 		goto out;

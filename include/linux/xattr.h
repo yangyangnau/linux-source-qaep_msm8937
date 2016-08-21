@@ -31,7 +31,7 @@ struct xattr_handler {
 };
 
 struct xattr {
-	const char *name;
+	char *name;
 	void *value;
 	size_t value_len;
 };

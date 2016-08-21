@@ -472,8 +472,7 @@ enum bfi_enet_hds_type {
 
 struct bfi_enet_rx_cfg {
 	u8		rxq_type;
-	u8		rsvd[1];
-	u16		frame_size;
+	u8		rsvd[3];
 
 	struct {
 		u8			max_header_size;

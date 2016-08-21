@@ -14,10 +14,11 @@
 #ifndef __MACH_370_XP_COHERENCY_H
 #define __MACH_370_XP_COHERENCY_H
 
-extern unsigned long coherency_phys_base;
-int set_cpu_coherent(void);
+#ifdef CONFIG_SMP
+int coherency_get_cpu_count(void);
+#endif
 
+int set_cpu_coherent(int cpu_id, int smp_group_id);
 int coherency_init(void);
-int coherency_available(void);
 
 #endif	/* __MACH_370_XP_COHERENCY_H */

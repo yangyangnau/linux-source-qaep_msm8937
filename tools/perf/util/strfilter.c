@@ -10,22 +10,22 @@ static const char *OP_not	= "!";	/* Logical NOT */
 #define is_operator(c)	((c) == '|' || (c) == '&' || (c) == '!')
 #define is_separator(c)	(is_operator(c) || (c) == '(' || (c) == ')')
 
-static void strfilter_node__delete(struct strfilter_node *node)
+static void strfilter_node__delete(struct strfilter_node *self)
 {
-	if (node) {
-		if (node->p && !is_operator(*node->p))
-			zfree((char **)&node->p);
-		strfilter_node__delete(node->l);
-		strfilter_node__delete(node->r);
-		free(node);
+	if (self) {
+		if (self->p && !is_operator(*self->p))
+			free((char *)self->p);
+		strfilter_node__delete(self->l);
+		strfilter_node__delete(self->r);
+		free(self);
 	}
 }
 
-void strfilter__delete(struct strfilter *filter)
+void strfilter__delete(struct strfilter *self)
 {
-	if (filter) {
-		strfilter_node__delete(filter->root);
-		free(filter);
+	if (self) {
+		strfilter_node__delete(self->root);
+		free(self);
 	}
 }
 
@@ -62,15 +62,15 @@ static struct strfilter_node *strfilter_node__alloc(const char *op,
 						    struct strfilter_node *l,
 						    struct strfilter_node *r)
 {
-	struct strfilter_node *node = zalloc(sizeof(*node));
+	struct strfilter_node *ret = zalloc(sizeof(struct strfilter_node));
 
-	if (node) {
-		node->p = op;
-		node->l = l;
-		node->r = r;
+	if (ret) {
+		ret->p = op;
+		ret->l = l;
+		ret->r = r;
 	}
 
-	return node;
+	return ret;
 }
 
 static struct strfilter_node *strfilter_node__new(const char *s,
@@ -154,46 +154,46 @@ error:
  */
 struct strfilter *strfilter__new(const char *rules, const char **err)
 {
-	struct strfilter *filter = zalloc(sizeof(*filter));
+	struct strfilter *ret = zalloc(sizeof(struct strfilter));
 	const char *ep = NULL;
 
-	if (filter)
-		filter->root = strfilter_node__new(rules, &ep);
+	if (ret)
+		ret->root = strfilter_node__new(rules, &ep);
 
-	if (!filter || !filter->root || *ep != '\0') {
+	if (!ret || !ret->root || *ep != '\0') {
 		if (err)
 			*err = ep;
-		strfilter__delete(filter);
-		filter = NULL;
+		strfilter__delete(ret);
+		ret = NULL;
 	}
 
-	return filter;
+	return ret;
 }
 
-static bool strfilter_node__compare(struct strfilter_node *node,
+static bool strfilter_node__compare(struct strfilter_node *self,
 				    const char *str)
 {
-	if (!node || !node->p)
+	if (!self || !self->p)
 		return false;
 
-	switch (*node->p) {
+	switch (*self->p) {
 	case '|':	/* OR */
-		return strfilter_node__compare(node->l, str) ||
-			strfilter_node__compare(node->r, str);
+		return strfilter_node__compare(self->l, str) ||
+			strfilter_node__compare(self->r, str);
 	case '&':	/* AND */
-		return strfilter_node__compare(node->l, str) &&
-			strfilter_node__compare(node->r, str);
+		return strfilter_node__compare(self->l, str) &&
+			strfilter_node__compare(self->r, str);
 	case '!':	/* NOT */
-		return !strfilter_node__compare(node->r, str);
+		return !strfilter_node__compare(self->r, str);
 	default:
-		return strglobmatch(str, node->p);
+		return strglobmatch(str, self->p);
 	}
 }
 
 /* Return true if STR matches the filter rules */
-bool strfilter__compare(struct strfilter *filter, const char *str)
+bool strfilter__compare(struct strfilter *self, const char *str)
 {
-	if (!filter)
+	if (!self)
 		return false;
-	return strfilter_node__compare(filter->root, str);
+	return strfilter_node__compare(self->root, str);
 }

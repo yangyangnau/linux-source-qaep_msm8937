@@ -5,6 +5,7 @@
 
 #include <linux/string.h>
 #include <linux/slab.h>
+#include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/device.h>
 #include <linux/of_device.h>

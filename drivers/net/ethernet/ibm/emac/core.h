@@ -26,6 +26,7 @@
 #define __IBM_NEWEMAC_CORE_H
 
 #include <linux/module.h>
+#include <linux/init.h>
 #include <linux/list.h>
 #include <linux/kernel.h>
 #include <linux/interrupt.h>

@@ -554,6 +554,7 @@ int cfspi_rxfrm(struct cfspi *cfspi, u8 *buf, size_t len)
 
 		skb->protocol = htons(ETH_P_CAIF);
 		skb_reset_mac_header(skb);
+		skb->dev = cfspi->ndev;
 
 		/*
 		 * Push received packet up the stack.
@@ -730,8 +731,8 @@ int cfspi_spi_probe(struct platform_device *pdev)
 	int res;
 	dev = (struct cfspi_dev *)pdev->dev.platform_data;
 
-	ndev = alloc_netdev(sizeof(struct cfspi), "cfspi%d",
-			    NET_NAME_UNKNOWN, cfspi_setup);
+	ndev = alloc_netdev(sizeof(struct cfspi),
+			"cfspi%d", cfspi_setup);
 	if (!dev)
 		return -ENODEV;
 

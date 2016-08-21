@@ -76,8 +76,8 @@ nf_ct_timeout_lookup(struct net *net, struct nf_conn *ct,
 }
 
 #ifdef CONFIG_NF_CONNTRACK_TIMEOUT
-int nf_conntrack_timeout_init(void);
-void nf_conntrack_timeout_fini(void);
+extern int nf_conntrack_timeout_init(void);
+extern void nf_conntrack_timeout_fini(void);
 #else
 static inline int nf_conntrack_timeout_init(void)
 {

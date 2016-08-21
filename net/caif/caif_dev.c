@@ -22,7 +22,6 @@
 #include <net/pkt_sched.h>
 #include <net/caif/caif_device.h>
 #include <net/caif/caif_layer.h>
-#include <net/caif/caif_dev.h>
 #include <net/caif/cfpkt.h>
 #include <net/caif/cfcnfg.h>
 #include <net/caif/cfserl.h>
@@ -353,9 +352,9 @@ EXPORT_SYMBOL(caif_enroll_dev);
 
 /* notify Caif of device events */
 static int caif_device_notify(struct notifier_block *me, unsigned long what,
-			      void *ptr)
+			      void *arg)
 {
-	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
+	struct net_device *dev = arg;
 	struct caif_device_entry *caifd = NULL;
 	struct caif_dev_common *caifdev;
 	struct cfcnfg *cfg;

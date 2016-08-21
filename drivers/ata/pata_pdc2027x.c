@@ -25,6 +25,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/pci.h>
+#include <linux/init.h>
 #include <linux/blkdev.h>
 #include <linux/delay.h>
 #include <linux/device.h>
@@ -62,7 +63,7 @@ enum {
 };
 
 static int pdc2027x_init_one(struct pci_dev *pdev, const struct pci_device_id *ent);
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_PM
 static int pdc2027x_reinit_one(struct pci_dev *pdev);
 #endif
 static int pdc2027x_prereset(struct ata_link *link, unsigned long deadline);
@@ -128,7 +129,7 @@ static struct pci_driver pdc2027x_pci_driver = {
 	.id_table		= pdc2027x_pci_tbl,
 	.probe			= pdc2027x_init_one,
 	.remove			= ata_pci_remove_one,
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_PM
 	.suspend		= ata_pci_device_suspend,
 	.resume			= pdc2027x_reinit_one,
 #endif
@@ -761,10 +762,10 @@ static int pdc2027x_init_one(struct pci_dev *pdev,
 				 IRQF_SHARED, &pdc2027x_sht);
 }
 
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_PM
 static int pdc2027x_reinit_one(struct pci_dev *pdev)
 {
-	struct ata_host *host = pci_get_drvdata(pdev);
+	struct ata_host *host = dev_get_drvdata(&pdev->dev);
 	unsigned int board_idx;
 	int rc;
 

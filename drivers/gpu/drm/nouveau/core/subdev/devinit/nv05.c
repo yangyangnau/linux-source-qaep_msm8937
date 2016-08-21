@@ -24,12 +24,17 @@
  *
  */
 
+#include <subdev/devinit.h>
 #include <subdev/bios.h>
 #include <subdev/bios/bmp.h>
 #include <subdev/vga.h>
 
 #include "fbmem.h"
-#include "nv04.h"
+
+struct nv05_devinit_priv {
+	struct nouveau_devinit base;
+	u8 owner;
+};
 
 static void
 nv05_devinit_meminit(struct nouveau_devinit *devinit)
@@ -44,7 +49,7 @@ nv05_devinit_meminit(struct nouveau_devinit *devinit)
 		{ 0x06, 0x00 },
 		{ 0x00, 0x00 }
 	};
-	struct nv04_devinit_priv *priv = (void *)devinit;
+	struct nv05_devinit_priv *priv = (void *)devinit;
 	struct nouveau_bios *bios = nouveau_bios(priv);
 	struct io_mapping *fb;
 	u32 patt = 0xdeadbeef;
@@ -53,7 +58,7 @@ nv05_devinit_meminit(struct nouveau_devinit *devinit)
 	int i, v;
 
 	/* Map the framebuffer aperture */
-	fb = fbmem_init(nv_device(priv));
+	fb = fbmem_init(nv_device(priv)->pdev);
 	if (!fb) {
 		nv_error(priv, "failed to map fb\n");
 		return;
@@ -125,15 +130,30 @@ out:
 	fbmem_fini(fb);
 }
 
-struct nouveau_oclass *
-nv05_devinit_oclass = &(struct nouveau_devinit_impl) {
-	.base.handle = NV_SUBDEV(DEVINIT, 0x05),
-	.base.ofuncs = &(struct nouveau_ofuncs) {
-		.ctor = nv04_devinit_ctor,
+static int
+nv05_devinit_ctor(struct nouveau_object *parent, struct nouveau_object *engine,
+		  struct nouveau_oclass *oclass, void *data, u32 size,
+		  struct nouveau_object **pobject)
+{
+	struct nv05_devinit_priv *priv;
+	int ret;
+
+	ret = nouveau_devinit_create(parent, engine, oclass, &priv);
+	*pobject = nv_object(priv);
+	if (ret)
+		return ret;
+
+	priv->base.meminit = nv05_devinit_meminit;
+	return 0;
+}
+
+struct nouveau_oclass
+nv05_devinit_oclass = {
+	.handle = NV_SUBDEV(DEVINIT, 0x05),
+	.ofuncs = &(struct nouveau_ofuncs) {
+		.ctor = nv05_devinit_ctor,
 		.dtor = nv04_devinit_dtor,
 		.init = nv04_devinit_init,
 		.fini = nv04_devinit_fini,
 	},
-	.meminit = nv05_devinit_meminit,
-	.pll_set = nv04_devinit_pll_set,
-}.base;
+};

@@ -48,10 +48,10 @@ static void vortex_fix_latency(struct pci_dev *vortex)
 {
 	int rc;
 	if (!(rc = pci_write_config_byte(vortex, 0x40, 0xff))) {
-			pr_info( CARD_NAME
+			printk(KERN_INFO CARD_NAME
 			       ": vortex latency is 0xff\n");
 	} else {
-		pr_warn( CARD_NAME
+		printk(KERN_WARNING CARD_NAME
 				": could not set vortex latency: pci error 0x%x\n", rc);
 	}
 }
@@ -70,10 +70,10 @@ static void vortex_fix_agp_bridge(struct pci_dev *via)
 	if (!(rc = pci_read_config_byte(via, 0x42, &value))
 			&& ((value & 0x10)
 				|| !(rc = pci_write_config_byte(via, 0x42, value | 0x10)))) {
-		pr_info( CARD_NAME
+		printk(KERN_INFO CARD_NAME
 				": bridge config is 0x%x\n", value | 0x10);
 	} else {
-		pr_warn( CARD_NAME
+		printk(KERN_WARNING CARD_NAME
 				": could not set vortex latency: pci error 0x%x\n", rc);
 	}
 }
@@ -97,7 +97,7 @@ static void snd_vortex_workaround(struct pci_dev *vortex, int fix)
 					PCI_DEVICE_ID_AMD_FE_GATE_7007, NULL);
 		}
 		if (via) {
-			pr_info( CARD_NAME ": Activating latency workaround...\n");
+			printk(KERN_INFO CARD_NAME ": Activating latency workaround...\n");
 			vortex_fix_latency(vortex);
 			vortex_fix_agp_bridge(via);
 		}
@@ -153,7 +153,7 @@ snd_vortex_create(struct snd_card *card, struct pci_dev *pci, vortex_t ** rchip)
 		return err;
 	if (pci_set_dma_mask(pci, DMA_BIT_MASK(32)) < 0 ||
 	    pci_set_consistent_dma_mask(pci, DMA_BIT_MASK(32)) < 0) {
-		pr_err( "error to set DMA mask\n");
+		printk(KERN_ERR "error to set DMA mask\n");
 		pci_disable_device(pci);
 		return -ENXIO;
 	}
@@ -182,7 +182,7 @@ snd_vortex_create(struct snd_card *card, struct pci_dev *pci, vortex_t ** rchip)
 
 	chip->mmio = pci_ioremap_bar(pci, 0);
 	if (!chip->mmio) {
-		pr_err( "MMIO area remap failed.\n");
+		printk(KERN_ERR "MMIO area remap failed.\n");
 		err = -ENOMEM;
 		goto ioremap_out;
 	}
@@ -191,14 +191,14 @@ snd_vortex_create(struct snd_card *card, struct pci_dev *pci, vortex_t ** rchip)
 	 * This must be done before we do request_irq otherwise we can get spurious
 	 * interrupts that we do not handle properly and make a mess of things */
 	if ((err = vortex_core_init(chip)) != 0) {
-		pr_err( "hw core init failed\n");
+		printk(KERN_ERR "hw core init failed\n");
 		goto core_out;
 	}
 
 	if ((err = request_irq(pci->irq, vortex_interrupt,
 			       IRQF_SHARED, KBUILD_MODNAME,
 	                       chip)) != 0) {
-		pr_err( "cannot grab irq\n");
+		printk(KERN_ERR "cannot grab irq\n");
 		goto irq_out;
 	}
 	chip->irq = pci->irq;
@@ -210,6 +210,8 @@ snd_vortex_create(struct snd_card *card, struct pci_dev *pci, vortex_t ** rchip)
 	if ((err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, chip, &ops)) < 0) {
 		goto alloc_out;
 	}
+
+	snd_card_set_dev(card, &pci->dev);
 
 	*rchip = chip;
 
@@ -248,8 +250,7 @@ snd_vortex_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
 		return -ENOENT;
 	}
 	// (2)
-	err = snd_card_new(&pci->dev, index[dev], id[dev], THIS_MODULE,
-			   0, &card);
+	err = snd_card_create(index[dev], id[dev], THIS_MODULE, 0, &card);
 	if (err < 0)
 		return err;
 
@@ -342,10 +343,10 @@ snd_vortex_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
 	chip->rev = pci->revision;
 #ifdef CHIP_AU8830
 	if ((chip->rev) != 0xfe && (chip->rev) != 0xfa) {
-		pr_alert(
+		printk(KERN_ALERT
 		       "vortex: The revision (%x) of your card has not been seen before.\n",
 		       chip->rev);
-		pr_alert(
+		printk(KERN_ALERT
 		       "vortex: Please email the results of 'lspci -vv' to openvortex-dev@nongnu.org.\n");
 		snd_card_free(card);
 		err = -ENODEV;
@@ -370,6 +371,7 @@ snd_vortex_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
 static void snd_vortex_remove(struct pci_dev *pci)
 {
 	snd_card_free(pci_get_drvdata(pci));
+	pci_set_drvdata(pci, NULL);
 }
 
 // pci_driver definition

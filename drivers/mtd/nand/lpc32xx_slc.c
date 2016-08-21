@@ -725,8 +725,10 @@ static struct lpc32xx_nand_cfg_slc *lpc32xx_parse_dt(struct device *dev)
 	struct device_node *np = dev->of_node;
 
 	ncfg = devm_kzalloc(dev, sizeof(*ncfg), GFP_KERNEL);
-	if (!ncfg)
+	if (!ncfg) {
+		dev_err(dev, "could not allocate memory for NAND config\n");
 		return NULL;
+	}
 
 	of_property_read_u32(np, "nxp,wdr-clks", &ncfg->wdr_clks);
 	of_property_read_u32(np, "nxp,wwidth", &ncfg->wwidth);
@@ -770,8 +772,10 @@ static int lpc32xx_nand_probe(struct platform_device *pdev)
 
 	/* Allocate memory for the device structure (and zero it) */
 	host = devm_kzalloc(&pdev->dev, sizeof(*host), GFP_KERNEL);
-	if (!host)
+	if (!host) {
+		dev_err(&pdev->dev, "failed to allocate device structure\n");
 		return -ENOMEM;
+	}
 	host->io_base_dma = rc->start;
 
 	host->io_base = devm_ioremap_resource(&pdev->dev, rc);
@@ -787,14 +791,14 @@ static int lpc32xx_nand_probe(struct platform_device *pdev)
 	}
 	if (host->ncfg->wp_gpio == -EPROBE_DEFER)
 		return -EPROBE_DEFER;
-	if (gpio_is_valid(host->ncfg->wp_gpio) && devm_gpio_request(&pdev->dev,
-			host->ncfg->wp_gpio, "NAND WP")) {
+	if (gpio_is_valid(host->ncfg->wp_gpio) &&
+			gpio_request(host->ncfg->wp_gpio, "NAND WP")) {
 		dev_err(&pdev->dev, "GPIO not available\n");
 		return -EBUSY;
 	}
 	lpc32xx_wp_disable(host);
 
-	host->pdata = dev_get_platdata(&pdev->dev);
+	host->pdata = pdev->dev.platform_data;
 
 	mtd = &host->mtd;
 	chip = &host->nand_chip;
@@ -804,7 +808,7 @@ static int lpc32xx_nand_probe(struct platform_device *pdev)
 	mtd->dev.parent = &pdev->dev;
 
 	/* Get NAND clock */
-	host->clk = devm_clk_get(&pdev->dev, NULL);
+	host->clk = clk_get(&pdev->dev, NULL);
 	if (IS_ERR(host->clk)) {
 		dev_err(&pdev->dev, "Clock failure\n");
 		res = -ENOENT;
@@ -840,6 +844,12 @@ static int lpc32xx_nand_probe(struct platform_device *pdev)
 	chip->ecc.strength = 1;
 	chip->ecc.hwctl = lpc32xx_nand_ecc_enable;
 
+	/* bitflip_threshold's default is defined as ecc_strength anyway.
+	 * Unfortunately, it is set only later at add_mtd_device(). Meanwhile
+	 * being 0, it causes bad block table scanning errors in
+	 * nand_scan_tail(), so preparing it here already. */
+	mtd->bitflip_threshold = chip->ecc.strength;
+
 	/*
 	 * Allocate a large enough buffer for a single huge page plus
 	 * extra space for the spare area and ECC storage area
@@ -848,6 +858,7 @@ static int lpc32xx_nand_probe(struct platform_device *pdev)
 	host->data_buf = devm_kzalloc(&pdev->dev, host->dma_buf_len,
 				      GFP_KERNEL);
 	if (host->data_buf == NULL) {
+		dev_err(&pdev->dev, "Error allocating memory\n");
 		res = -ENOMEM;
 		goto err_exit2;
 	}
@@ -882,6 +893,7 @@ static int lpc32xx_nand_probe(struct platform_device *pdev)
 
 	/* Avoid extra scan if using BBT, setup BBT support */
 	if (host->ncfg->use_bbt) {
+		chip->options |= NAND_SKIP_BBTSCAN;
 		chip->bbt_options |= NAND_BBT_USE_FLASH;
 
 		/*
@@ -903,6 +915,13 @@ static int lpc32xx_nand_probe(struct platform_device *pdev)
 		goto err_exit3;
 	}
 
+	/* Standard layout in FLASH for bad block tables */
+	if (host->ncfg->use_bbt) {
+		if (nand_default_bbt(mtd) < 0)
+			dev_err(&pdev->dev,
+			       "Error initializing default bad block tables\n");
+	}
+
 	mtd->name = "nxp_lpc3220_slc";
 	ppdata.of_node = pdev->dev.of_node;
 	res = mtd_device_parse_register(mtd, NULL, &ppdata, host->ncfg->parts,
@@ -916,8 +935,11 @@ err_exit3:
 	dma_release_channel(host->dma_chan);
 err_exit2:
 	clk_disable(host->clk);
+	clk_put(host->clk);
+	platform_set_drvdata(pdev, NULL);
 err_exit1:
 	lpc32xx_wp_enable(host);
+	gpio_free(host->ncfg->wp_gpio);
 
 	return res;
 }
@@ -940,7 +962,10 @@ static int lpc32xx_nand_remove(struct platform_device *pdev)
 	writel(tmp, SLC_CTRL(host->io_base));
 
 	clk_disable(host->clk);
+	clk_put(host->clk);
+	platform_set_drvdata(pdev, NULL);
 	lpc32xx_wp_enable(host);
+	gpio_free(host->ncfg->wp_gpio);
 
 	return 0;
 }
@@ -1000,7 +1025,7 @@ static struct platform_driver lpc32xx_nand_driver = {
 	.driver		= {
 		.name	= LPC32XX_MODNAME,
 		.owner	= THIS_MODULE,
-		.of_match_table = lpc32xx_nand_match,
+		.of_match_table = of_match_ptr(lpc32xx_nand_match),
 	},
 };
 

@@ -137,6 +137,7 @@ void init_gssp_clnt(struct sunrpc_net *sn)
 {
 	mutex_init(&sn->gssp_lock);
 	sn->gssp_clnt = NULL;
+	init_waitqueue_head(&sn->gssp_wq);
 }
 
 int set_gssp_clnt(struct net *net)
@@ -153,6 +154,7 @@ int set_gssp_clnt(struct net *net)
 		sn->gssp_clnt = clnt;
 	}
 	mutex_unlock(&sn->gssp_lock);
+	wake_up(&sn->gssp_wq);
 	return ret;
 }
 
@@ -296,8 +298,7 @@ int gssp_accept_sec_context_upcall(struct net *net,
 	if (res.context_handle) {
 		data->out_handle = rctxh.exported_context_token;
 		data->mech_oid.len = rctxh.mech.len;
-		if (rctxh.mech.data)
-			memcpy(data->mech_oid.data, rctxh.mech.data,
+		memcpy(data->mech_oid.data, rctxh.mech.data,
 						data->mech_oid.len);
 		client_name = rctxh.src_name.display_name;
 	}

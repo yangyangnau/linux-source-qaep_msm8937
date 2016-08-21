@@ -111,7 +111,7 @@ struct net_device *alloc_rtllib(int sizeof_priv)
 	dev = alloc_etherdev(sizeof(struct rtllib_device) + sizeof_priv);
 	if (!dev) {
 		RTLLIB_ERROR("Unable to network device.\n");
-		return NULL;
+		goto failed;
 	}
 	ieee = (struct rtllib_device *)netdev_priv_rsl(dev);
 	memset(ieee, 0, sizeof(struct rtllib_device)+sizeof_priv);
@@ -180,7 +180,8 @@ struct net_device *alloc_rtllib(int sizeof_priv)
 	return dev;
 
  failed:
-	free_netdev(dev);
+	if (dev)
+		free_netdev(dev);
 	return NULL;
 }
 EXPORT_SYMBOL(alloc_rtllib);
@@ -217,7 +218,6 @@ static ssize_t write_debug_level(struct file *file, const char __user *buffer,
 {
 	unsigned long val;
 	int err = kstrtoul_from_user(buffer, count, 0, &val);
-
 	if (err)
 		return err;
 	rtllib_debug_level = val;
@@ -233,11 +233,10 @@ static const struct file_operations fops = {
 	.open = open_debug_level,
 	.read = seq_read,
 	.llseek = seq_lseek,
-	.write = write_debug_level,
-	.release = single_release,
+	.write = write_debug_level
 };
 
-static int __init rtllib_init(void)
+int __init rtllib_init(void)
 {
 	struct proc_dir_entry *e;
 
@@ -257,7 +256,7 @@ static int __init rtllib_init(void)
 	return 0;
 }
 
-static void __exit rtllib_exit(void)
+void __exit rtllib_exit(void)
 {
 	if (rtllib_proc) {
 		remove_proc_entry("debug_level", rtllib_proc);

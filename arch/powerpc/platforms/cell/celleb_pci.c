@@ -454,7 +454,7 @@ static struct celleb_phb_spec celleb_fake_pci_spec __initdata = {
 	.setup = celleb_setup_fake_pci,
 };
 
-static const struct of_device_id celleb_phb_match[] __initconst = {
+static struct of_device_id celleb_phb_match[] __initdata = {
 	{
 		.name = "pci-pseudo",
 		.data = &celleb_fake_pci_spec,

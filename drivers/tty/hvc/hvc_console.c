@@ -365,12 +365,7 @@ static int hvc_open(struct tty_struct *tty, struct file * filp)
 		tty->driver_data = NULL;
 		tty_port_put(&hp->port);
 		printk(KERN_ERR "hvc_open: request_irq failed with rc %d.\n", rc);
-	} else
-		/* We are ready... raise DTR/RTS */
-		if (C_BAUD(tty))
-			if (hp->ops->dtr_rts)
-				hp->ops->dtr_rts(hp, 1);
-
+	}
 	/* Force wakeup of the polling thread */
 	hvc_kick();
 
@@ -401,10 +396,6 @@ static void hvc_close(struct tty_struct *tty, struct file * filp)
 		spin_unlock_irqrestore(&hp->port.lock, flags);
 		/* We are done with the tty pointer now. */
 		tty_port_tty_set(&hp->port, NULL);
-
-		if (C_HUPCL(tty))
-			if (hp->ops->dtr_rts)
-				hp->ops->dtr_rts(hp, 0);
 
 		if (hp->ops->notifier_del)
 			hp->ops->notifier_del(hp, hp->data);
@@ -760,17 +751,10 @@ static int khvcd(void *unused)
 			if (poll_mask == 0)
 				schedule();
 			else {
-				unsigned long j_timeout;
-
 				if (timeout < MAX_TIMEOUT)
 					timeout += (timeout >> 6) + 1;
 
-				/*
-				 * We don't use msleep_interruptible otherwise
-				 * "kick" will fail to wake us up
-				 */
-				j_timeout = msecs_to_jiffies(timeout) + 1;
-				schedule_timeout_interruptible(j_timeout);
+				msleep_interruptible(timeout);
 			}
 		}
 		__set_current_state(TASK_RUNNING);
@@ -799,7 +783,7 @@ static int hvc_tiocmset(struct tty_struct *tty,
 }
 
 #ifdef CONFIG_CONSOLE_POLL
-static int hvc_poll_init(struct tty_driver *driver, int line, char *options)
+int hvc_poll_init(struct tty_driver *driver, int line, char *options)
 {
 	return 0;
 }

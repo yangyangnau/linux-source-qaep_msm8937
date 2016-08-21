@@ -17,7 +17,6 @@
 #include <linux/module.h>
 #include <linux/phy.h>
 #include <linux/mdio.h>
-#include <linux/of_address.h>
 #include <linux/of_platform.h>
 #include <linux/of_mdio.h>
 
@@ -46,7 +45,7 @@ struct tgec_mdio_controller {
 #define MDIO_DATA_BSY		(1 << 31)
 
 /*
- * Wait until the MDIO bus is free
+ * Wait untill the MDIO bus is free
  */
 static int xgmac_wait_until_free(struct device *dev,
 				 struct tgec_mdio_controller __iomem *regs)
@@ -162,9 +161,7 @@ static int xgmac_mdio_read(struct mii_bus *bus, int phy_id, int regnum)
 
 	/* Return all Fs if nothing was there */
 	if (in_be32(&regs->mdio_stat) & MDIO_STAT_RD_ER) {
-		dev_err(&bus->dev,
-			"Error while reading PHY%d reg at %d.%hhu\n",
-			phy_id, dev_addr, regnum);
+		dev_err(&bus->dev, "MDIO read error\n");
 		return 0xffff;
 	}
 
@@ -230,7 +227,7 @@ static int xgmac_mdio_probe(struct platform_device *pdev)
 		goto err_registration;
 	}
 
-	platform_set_drvdata(pdev, bus);
+	dev_set_drvdata(&pdev->dev, bus);
 
 	return 0;
 
@@ -245,7 +242,7 @@ err_ioremap:
 
 static int xgmac_mdio_remove(struct platform_device *pdev)
 {
-	struct mii_bus *bus = platform_get_drvdata(pdev);
+	struct mii_bus *bus = dev_get_drvdata(&pdev->dev);
 
 	mdiobus_unregister(bus);
 	iounmap(bus->priv);

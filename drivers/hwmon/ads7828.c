@@ -50,7 +50,7 @@ enum ads7828_chips { ads7828, ads7830 };
 
 /* Client specific data */
 struct ads7828_data {
-	struct i2c_client *client;
+	struct device *hwmon_dev;
 	struct mutex update_lock;	/* Mutex protecting updates */
 	unsigned long last_updated;	/* Last updated time (in jiffies) */
 	u16 adc_input[ADS7828_NCH];	/* ADS7828_NCH samples */
@@ -72,8 +72,8 @@ static inline u8 ads7828_cmd_byte(u8 cmd, int ch)
 /* Update data for the device (all 8 channels) */
 static struct ads7828_data *ads7828_update_device(struct device *dev)
 {
-	struct ads7828_data *data = dev_get_drvdata(dev);
-	struct i2c_client *client = data->client;
+	struct i2c_client *client = to_i2c_client(dev);
+	struct ads7828_data *data = i2c_get_clientdata(client);
 
 	mutex_lock(&data->update_lock);
 
@@ -116,7 +116,7 @@ static SENSOR_DEVICE_ATTR(in5_input, S_IRUGO, ads7828_show_in, NULL, 5);
 static SENSOR_DEVICE_ATTR(in6_input, S_IRUGO, ads7828_show_in, NULL, 6);
 static SENSOR_DEVICE_ATTR(in7_input, S_IRUGO, ads7828_show_in, NULL, 7);
 
-static struct attribute *ads7828_attrs[] = {
+static struct attribute *ads7828_attributes[] = {
 	&sensor_dev_attr_in0_input.dev_attr.attr,
 	&sensor_dev_attr_in1_input.dev_attr.attr,
 	&sensor_dev_attr_in2_input.dev_attr.attr,
@@ -128,17 +128,29 @@ static struct attribute *ads7828_attrs[] = {
 	NULL
 };
 
-ATTRIBUTE_GROUPS(ads7828);
+static const struct attribute_group ads7828_group = {
+	.attrs = ads7828_attributes,
+};
+
+static int ads7828_remove(struct i2c_client *client)
+{
+	struct ads7828_data *data = i2c_get_clientdata(client);
+
+	hwmon_device_unregister(data->hwmon_dev);
+	sysfs_remove_group(&client->dev.kobj, &ads7828_group);
+
+	return 0;
+}
 
 static int ads7828_probe(struct i2c_client *client,
 			 const struct i2c_device_id *id)
 {
-	struct device *dev = &client->dev;
-	struct ads7828_platform_data *pdata = dev_get_platdata(dev);
+	struct ads7828_platform_data *pdata = client->dev.platform_data;
 	struct ads7828_data *data;
-	struct device *hwmon_dev;
+	int err;
 
-	data = devm_kzalloc(dev, sizeof(struct ads7828_data), GFP_KERNEL);
+	data = devm_kzalloc(&client->dev, sizeof(struct ads7828_data),
+			    GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
 
@@ -170,13 +182,24 @@ static int ads7828_probe(struct i2c_client *client,
 	if (!data->diff_input)
 		data->cmd_byte |= ADS7828_CMD_SD_SE;
 
-	data->client = client;
+	i2c_set_clientdata(client, data);
 	mutex_init(&data->update_lock);
 
-	hwmon_dev = devm_hwmon_device_register_with_groups(dev, client->name,
-							   data,
-							   ads7828_groups);
-	return PTR_ERR_OR_ZERO(hwmon_dev);
+	err = sysfs_create_group(&client->dev.kobj, &ads7828_group);
+	if (err)
+		return err;
+
+	data->hwmon_dev = hwmon_device_register(&client->dev);
+	if (IS_ERR(data->hwmon_dev)) {
+		err = PTR_ERR(data->hwmon_dev);
+		goto error;
+	}
+
+	return 0;
+
+error:
+	sysfs_remove_group(&client->dev.kobj, &ads7828_group);
+	return err;
 }
 
 static const struct i2c_device_id ads7828_device_ids[] = {
@@ -193,6 +216,7 @@ static struct i2c_driver ads7828_driver = {
 
 	.id_table = ads7828_device_ids,
 	.probe = ads7828_probe,
+	.remove = ads7828_remove,
 };
 
 module_i2c_driver(ads7828_driver);

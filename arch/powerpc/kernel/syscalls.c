@@ -34,6 +34,7 @@
 #include <linux/ipc.h>
 #include <linux/utsname.h>
 #include <linux/file.h>
+#include <linux/init.h>
 #include <linux/personality.h>
 
 #include <asm/uaccess.h>

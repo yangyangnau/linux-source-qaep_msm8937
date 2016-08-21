@@ -11,16 +11,8 @@
 #ifndef __ARCH_ARM_MACH_AT91_PM
 #define __ARCH_ARM_MACH_AT91_PM
 
-#include <asm/proc-fns.h>
-
 #include <mach/at91_ramc.h>
 #include <mach/at91rm9200_sdramc.h>
-
-#ifdef CONFIG_PM
-extern void at91_pm_set_standby(void (*at91_standby)(void));
-#else
-static inline void at91_pm_set_standby(void (*at91_standby)(void)) { }
-#endif
 
 /*
  * The AT91RM9200 goes into self-refresh mode with this command, and will
@@ -45,7 +37,7 @@ static inline void at91rm9200_standby(void)
 		"    mcr    p15, 0, %0, c7, c0, 4\n\t"
 		"    str    %5, [%1, %2]"
 		:
-		: "r" (0), "r" (at91_ramc_base[0]), "r" (AT91RM9200_SDRAMC_LPR),
+		: "r" (0), "r" (AT91_BASE_SYS), "r" (AT91RM9200_SDRAMC_LPR),
 		  "r" (1), "r" (AT91RM9200_SDRAMC_SRR),
 		  "r" (lpr));
 }
@@ -53,18 +45,16 @@ static inline void at91rm9200_standby(void)
 /* We manage both DDRAM/SDRAM controllers, we need more than one value to
  * remember.
  */
-static inline void at91_ddr_standby(void)
+static inline void at91sam9g45_standby(void)
 {
 	/* Those two values allow us to delay self-refresh activation
 	 * to the maximum. */
-	u32 lpr0, lpr1 = 0;
-	u32 saved_lpr0, saved_lpr1 = 0;
+	u32 lpr0, lpr1;
+	u32 saved_lpr0, saved_lpr1;
 
-	if (at91_ramc_base[1]) {
-		saved_lpr1 = at91_ramc_read(1, AT91_DDRSDRC_LPR);
-		lpr1 = saved_lpr1 & ~AT91_DDRSDRC_LPCB;
-		lpr1 |= AT91_DDRSDRC_LPCB_SELF_REFRESH;
-	}
+	saved_lpr1 = at91_ramc_read(1, AT91_DDRSDRC_LPR);
+	lpr1 = saved_lpr1 & ~AT91_DDRSDRC_LPCB;
+	lpr1 |= AT91_DDRSDRC_LPCB_SELF_REFRESH;
 
 	saved_lpr0 = at91_ramc_read(0, AT91_DDRSDRC_LPR);
 	lpr0 = saved_lpr0 & ~AT91_DDRSDRC_LPCB;
@@ -72,29 +62,25 @@ static inline void at91_ddr_standby(void)
 
 	/* self-refresh mode now */
 	at91_ramc_write(0, AT91_DDRSDRC_LPR, lpr0);
-	if (at91_ramc_base[1])
-		at91_ramc_write(1, AT91_DDRSDRC_LPR, lpr1);
+	at91_ramc_write(1, AT91_DDRSDRC_LPR, lpr1);
 
 	cpu_do_idle();
 
 	at91_ramc_write(0, AT91_DDRSDRC_LPR, saved_lpr0);
-	if (at91_ramc_base[1])
-		at91_ramc_write(1, AT91_DDRSDRC_LPR, saved_lpr1);
+	at91_ramc_write(1, AT91_DDRSDRC_LPR, saved_lpr1);
 }
 
 /* We manage both DDRAM/SDRAM controllers, we need more than one value to
  * remember.
  */
-static inline void at91sam9_sdram_standby(void)
+static inline void at91sam9263_standby(void)
 {
-	u32 lpr0, lpr1 = 0;
-	u32 saved_lpr0, saved_lpr1 = 0;
+	u32 lpr0, lpr1;
+	u32 saved_lpr0, saved_lpr1;
 
-	if (at91_ramc_base[1]) {
-		saved_lpr1 = at91_ramc_read(1, AT91_SDRAMC_LPR);
-		lpr1 = saved_lpr1 & ~AT91_SDRAMC_LPCB;
-		lpr1 |= AT91_SDRAMC_LPCB_SELF_REFRESH;
-	}
+	saved_lpr1 = at91_ramc_read(1, AT91_SDRAMC_LPR);
+	lpr1 = saved_lpr1 & ~AT91_SDRAMC_LPCB;
+	lpr1 |= AT91_SDRAMC_LPCB_SELF_REFRESH;
 
 	saved_lpr0 = at91_ramc_read(0, AT91_SDRAMC_LPR);
 	lpr0 = saved_lpr0 & ~AT91_SDRAMC_LPCB;
@@ -102,14 +88,27 @@ static inline void at91sam9_sdram_standby(void)
 
 	/* self-refresh mode now */
 	at91_ramc_write(0, AT91_SDRAMC_LPR, lpr0);
-	if (at91_ramc_base[1])
-		at91_ramc_write(1, AT91_SDRAMC_LPR, lpr1);
+	at91_ramc_write(1, AT91_SDRAMC_LPR, lpr1);
 
 	cpu_do_idle();
 
 	at91_ramc_write(0, AT91_SDRAMC_LPR, saved_lpr0);
-	if (at91_ramc_base[1])
-		at91_ramc_write(1, AT91_SDRAMC_LPR, saved_lpr1);
+	at91_ramc_write(1, AT91_SDRAMC_LPR, saved_lpr1);
+}
+
+static inline void at91sam9_standby(void)
+{
+	u32 saved_lpr, lpr;
+
+	saved_lpr = at91_ramc_read(0, AT91_SDRAMC_LPR);
+
+	lpr = saved_lpr & ~AT91_SDRAMC_LPCB;
+	at91_ramc_write(0, AT91_SDRAMC_LPR, lpr |
+			AT91_SDRAMC_LPCB_SELF_REFRESH);
+
+	cpu_do_idle();
+
+	at91_ramc_write(0, AT91_SDRAMC_LPR, saved_lpr);
 }
 
 #endif

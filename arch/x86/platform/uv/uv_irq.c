@@ -238,9 +238,11 @@ uv_set_irq_affinity(struct irq_data *data, const struct cpumask *mask,
 int uv_setup_irq(char *irq_name, int cpu, int mmr_blade,
 		 unsigned long mmr_offset, int limit)
 {
-	int ret, irq = irq_alloc_hwirq(uv_blade_to_memory_nid(mmr_blade));
+	int irq, ret;
 
-	if (!irq)
+	irq = create_irq_nr(NR_IRQS_LEGACY, uv_blade_to_memory_nid(mmr_blade));
+
+	if (irq <= 0)
 		return -EBUSY;
 
 	ret = arch_enable_uv_irq(irq_name, irq, cpu, mmr_blade, mmr_offset,
@@ -248,7 +250,7 @@ int uv_setup_irq(char *irq_name, int cpu, int mmr_blade,
 	if (ret == irq)
 		uv_set_irq_2_mmr_info(irq, mmr_offset, mmr_blade);
 	else
-		irq_free_hwirq(irq);
+		destroy_irq(irq);
 
 	return ret;
 }
@@ -283,6 +285,6 @@ void uv_teardown_irq(unsigned int irq)
 			n = n->rb_right;
 	}
 	spin_unlock_irqrestore(&uv_irq_lock, irqflags);
-	irq_free_hwirq(irq);
+	destroy_irq(irq);
 }
 EXPORT_SYMBOL_GPL(uv_teardown_irq);

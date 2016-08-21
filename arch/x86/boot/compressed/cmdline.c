@@ -1,6 +1,6 @@
 #include "misc.h"
 
-#if CONFIG_EARLY_PRINTK || CONFIG_RANDOMIZE_BASE
+#ifdef CONFIG_EARLY_PRINTK
 
 static unsigned long fs;
 static inline void set_fs(unsigned long seg)

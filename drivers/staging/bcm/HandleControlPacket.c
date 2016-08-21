@@ -11,19 +11,18 @@
  * Enqueue the control packet for Application.
  * @return None
  */
-static VOID handle_rx_control_packet(struct bcm_mini_adapter *Adapter,
-				     struct sk_buff *skb)
+static VOID handle_rx_control_packet(struct bcm_mini_adapter *Adapter, struct sk_buff *skb)
 {
 	struct bcm_tarang_data *pTarang = NULL;
-	bool HighPriorityMessage = false;
+	BOOLEAN HighPriorityMessage = FALSE;
 	struct sk_buff *newPacket = NULL;
 	CHAR cntrl_msg_mask_bit = 0;
-	bool drop_pkt_flag = TRUE;
+	BOOLEAN drop_pkt_flag = TRUE;
 	USHORT usStatus = *(PUSHORT)(skb->data);
 
 	if (netif_msg_pktdata(Adapter))
 		print_hex_dump(KERN_DEBUG, PFX "rx control: ", DUMP_PREFIX_NONE,
-			       16, 1, skb->data, skb->len, 0);
+				16, 1, skb->data, skb->len, 0);
 
 	switch (usStatus) {
 	case CM_RESPONSES:               /* 0xA0 */
@@ -92,13 +91,13 @@ static VOID handle_rx_control_packet(struct bcm_mini_adapter *Adapter,
 		 *	cntrl_msg_mask_bit);
 		 */
 		if (pTarang->RxCntrlMsgBitMask & (1 << cntrl_msg_mask_bit))
-			drop_pkt_flag = false;
+			drop_pkt_flag = FALSE;
 
 		if ((drop_pkt_flag == TRUE) ||
 				(pTarang->AppCtrlQueueLen > MAX_APP_QUEUE_LEN)
 				|| ((pTarang->AppCtrlQueueLen >
 					MAX_APP_QUEUE_LEN / 2) &&
-				    (HighPriorityMessage == false))) {
+				    (HighPriorityMessage == FALSE))) {
 			/*
 			 * Assumption:-
 			 * 1. every tarang manages it own dropped pkt
@@ -107,32 +106,30 @@ static VOID handle_rx_control_packet(struct bcm_mini_adapter *Adapter,
 			 *    the sum of all types of dropped pkt by that
 			 *    tarang only.
 			 */
-			struct bcm_mibs_dropped_cntrl_msg *msg =
-				&pTarang->stDroppedAppCntrlMsgs;
 			switch (*(PUSHORT)skb->data) {
 			case CM_RESPONSES:
-				msg->cm_responses++;
+				pTarang->stDroppedAppCntrlMsgs.cm_responses++;
 				break;
 			case CM_CONTROL_NEWDSX_MULTICLASSIFIER_RESP:
-				msg->cm_control_newdsx_multiclassifier_resp++;
+				pTarang->stDroppedAppCntrlMsgs.cm_control_newdsx_multiclassifier_resp++;
 				break;
 			case LINK_CONTROL_RESP:
-				msg->link_control_resp++;
+				pTarang->stDroppedAppCntrlMsgs.link_control_resp++;
 				break;
 			case STATUS_RSP:
-				msg->status_rsp++;
+				pTarang->stDroppedAppCntrlMsgs.status_rsp++;
 				break;
 			case STATS_POINTER_RESP:
-				msg->stats_pointer_resp++;
+				pTarang->stDroppedAppCntrlMsgs.stats_pointer_resp++;
 				break;
 			case IDLE_MODE_STATUS:
-				msg->idle_mode_status++;
+				pTarang->stDroppedAppCntrlMsgs.idle_mode_status++;
 				break;
 			case AUTH_SS_HOST_MSG:
-				msg->auth_ss_host_msg++;
+				pTarang->stDroppedAppCntrlMsgs.auth_ss_host_msg++;
 				break;
 			default:
-				msg->low_priority_message++;
+				pTarang->stDroppedAppCntrlMsgs.low_priority_message++;
 				break;
 			}
 
@@ -157,9 +154,7 @@ static VOID handle_rx_control_packet(struct bcm_mini_adapter *Adapter,
  * @ingroup ctrl_pkt_functions
  * Thread to handle control pkt reception
  */
-
-/* pointer to adapter object*/
-int control_packet_handler(struct bcm_mini_adapter *Adapter)
+int control_packet_handler(struct bcm_mini_adapter *Adapter /* pointer to adapter object*/)
 {
 	struct sk_buff *ctrl_packet = NULL;
 	unsigned long flags = 0;
@@ -180,8 +175,8 @@ int control_packet_handler(struct bcm_mini_adapter *Adapter)
 			return 0;
 		}
 		if (TRUE == Adapter->bWakeUpDevice) {
-			Adapter->bWakeUpDevice = false;
-			if ((false == Adapter->bTriedToWakeUpFromlowPowerMode)
+			Adapter->bWakeUpDevice = FALSE;
+			if ((FALSE == Adapter->bTriedToWakeUpFromlowPowerMode)
 					&& ((TRUE == Adapter->IdleMode) ||
 					    (TRUE == Adapter->bShutStatus))) {
 				BCM_DEBUG_PRINT(Adapter, DBG_TYPE_OTHERS,
@@ -221,7 +216,6 @@ INT flushAllAppQ(void)
 	struct bcm_mini_adapter *Adapter = GET_BCM_ADAPTER(gblpnetdev);
 	struct bcm_tarang_data *pTarang = NULL;
 	struct sk_buff *PacketToDrop = NULL;
-
 	for (pTarang = Adapter->pTarangs; pTarang; pTarang = pTarang->next) {
 		while (pTarang->RxAppControlHead != NULL) {
 			PacketToDrop = pTarang->RxAppControlHead;

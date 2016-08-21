@@ -8,11 +8,11 @@
  * Reset/NMI/re-entry vectors for BMIPS processors
  */
 
+#include <linux/init.h>
 
 #include <asm/asm.h>
 #include <asm/asmmacro.h>
 #include <asm/cacheops.h>
-#include <asm/cpu.h>
 #include <asm/regdef.h>
 #include <asm/mipsregs.h>
 #include <asm/stackframe.h>
@@ -27,6 +27,8 @@
 	_ssnop
 	.set	mips0
 	.endm
+
+	__CPUINIT
 
 /***********************************************************************
  * Alternate CPU1 startup vector for BMIPS4350
@@ -54,11 +56,7 @@ LEAF(bmips_smp_movevec)
 	/* set up CPU1 CBR; move BASE to 0xa000_0000 */
 	li	k0, 0xff400000
 	mtc0	k0, $22, 6
-	/* set up relocation vector address based on thread ID */
-	mfc0	k1, $22, 3
-	srl	k1, 16
-	andi	k1, 0x8000
-	or	k1, CKSEG1 | BMIPS_RELO_VECTOR_CONTROL_0
+	li	k1, CKSEG1 | BMIPS_RELO_VECTOR_CONTROL_1
 	or	k0, k1
 	li	k1, 0xa0080000
 	sw	k1, 0(k0)
@@ -91,18 +89,12 @@ NESTED(bmips_reset_nmi_vec, PT_SIZE, sp)
 	beqz	k0, bmips_smp_entry
 
 #if defined(CONFIG_CPU_BMIPS5000)
-	mfc0	k0, CP0_PRID
-	li	k1, PRID_IMP_BMIPS5000
-	andi	k0, 0xff00
-	bne	k0, k1, 1f
-
 	/* if we're not on core 0, this must be the SMP boot signal */
 	li	k1, (3 << 25)
 	mfc0	k0, $22
 	and	k0, k1
 	bnez	k0, bmips_smp_entry
-1:
-#endif /* CONFIG_CPU_BMIPS5000 */
+#endif
 #endif /* CONFIG_SMP */
 
 	/* nope, it's just a regular NMI */
@@ -122,7 +114,7 @@ NESTED(bmips_reset_nmi_vec, PT_SIZE, sp)
 	jr	k0
 
 	RESTORE_ALL
-	.set	arch=r4000
+	.set	mips3
 	eret
 
 /***********************************************************************
@@ -145,12 +137,7 @@ bmips_smp_entry:
 	xori	k0, 0x04
 	mtc0	k0, CP0_CONFIG
 
-	mfc0	k0, CP0_PRID
-	andi	k0, 0xff00
 #if defined(CONFIG_CPU_BMIPS4350) || defined(CONFIG_CPU_BMIPS4380)
-	li	k1, PRID_IMP_BMIPS43XX
-	bne	k0, k1, 2f
-
 	/* initialize CPU1's local I-cache */
 	li	k0, 0x80000000
 	li	k1, 0x80010000
@@ -161,21 +148,14 @@ bmips_smp_entry:
 1:	cache	Index_Store_Tag_I, 0(k0)
 	addiu	k0, 16
 	bne	k0, k1, 1b
-
-	b	3f
-2:
-#endif /* CONFIG_CPU_BMIPS4350 || CONFIG_CPU_BMIPS4380 */
-#if defined(CONFIG_CPU_BMIPS5000)
+#elif defined(CONFIG_CPU_BMIPS5000)
 	/* set exception vector base */
-	li	k1, PRID_IMP_BMIPS5000
-	bne	k0, k1, 3f
-
 	la	k0, ebase
 	lw	k0, 0(k0)
 	mtc0	k0, $15, 1
 	BARRIER
-#endif /* CONFIG_CPU_BMIPS5000 */
-3:
+#endif
+
 	/* jump back to kseg0 in case we need to remap the kseg1 area */
 	la	k0, 1f
 	jr	k0
@@ -208,6 +188,7 @@ bmips_reset_nmi_vec_end:
 END(bmips_reset_nmi_vec)
 
 	.set	pop
+	.previous
 
 /***********************************************************************
  * CPU1 warm restart vector (used for second and subsequent boots).
@@ -235,21 +216,13 @@ END(bmips_smp_int_vec)
  * Certain CPUs support extending kseg0 to 1024MB.
  ***********************************************************************/
 
+	__CPUINIT
+
 LEAF(bmips_enable_xks01)
 
 #if defined(CONFIG_XKS01)
-	mfc0	t0, CP0_PRID
-	andi	t2, t0, 0xff00
+
 #if defined(CONFIG_CPU_BMIPS4380)
-	li	t1, PRID_IMP_BMIPS43XX
-	bne	t2, t1, 1f
-
-	andi	t0, 0xff
-	addiu	t1, t0, -PRID_REV_BMIPS4380_HI
-	bgtz	t1, 2f
-	addiu	t0, -PRID_REV_BMIPS4380_LO
-	bltz	t0, 2f
-
 	mfc0	t0, $22, 3
 	li	t1, 0x1ff0
 	li	t2, (1 << 12) | (1 << 9)
@@ -258,13 +231,7 @@ LEAF(bmips_enable_xks01)
 	or	t0, t2
 	mtc0	t0, $22, 3
 	BARRIER
-	b	2f
-1:
-#endif /* CONFIG_CPU_BMIPS4380 */
-#if defined(CONFIG_CPU_BMIPS5000)
-	li	t1, PRID_IMP_BMIPS5000
-	bne	t2, t1, 2f
-
+#elif defined(CONFIG_CPU_BMIPS5000)
 	mfc0	t0, $22, 5
 	li	t1, 0x01ff
 	li	t2, (1 << 8) | (1 << 5)
@@ -273,10 +240,16 @@ LEAF(bmips_enable_xks01)
 	or	t0, t2
 	mtc0	t0, $22, 5
 	BARRIER
-#endif /* CONFIG_CPU_BMIPS5000 */
-2:
+#else
+
+#error Missing XKS01 setup
+
+#endif
+
 #endif /* defined(CONFIG_XKS01) */
 
 	jr	ra
 
 END(bmips_enable_xks01)
+
+	.previous

@@ -46,9 +46,6 @@ static const char * const iio_chan_type_name_spec[] = {
 	[IIO_TIMESTAMP] = "timestamp",
 	[IIO_CAPACITANCE] = "capacitance",
 	[IIO_ALTVOLTAGE] = "altvoltage",
-	[IIO_CCT] = "cct",
-	[IIO_PRESSURE] = "pressure",
-	[IIO_HUMIDITYRELATIVE] = "humidityrelative",
 };
 
 static const char * const iio_ev_type_text[] = {
@@ -73,8 +70,6 @@ static const char * const iio_modifier_names[] = {
 	[IIO_MOD_LIGHT_IR] = "ir",
 	[IIO_MOD_ROOT_SUM_SQUARED_X_Y] = "sqrt(x^2+y^2)",
 	[IIO_MOD_SUM_SQUARED_X_Y_Z] = "x^2+y^2+z^2",
-	[IIO_MOD_LIGHT_BOTH] = "both",
-	[IIO_MOD_LIGHT_IR] = "ir",
 	[IIO_MOD_LIGHT_CLEAR] = "clear",
 	[IIO_MOD_LIGHT_RED] = "red",
 	[IIO_MOD_LIGHT_GREEN] = "green",
@@ -105,9 +100,6 @@ static bool event_is_known(struct iio_event_data *event)
 	case IIO_TIMESTAMP:
 	case IIO_CAPACITANCE:
 	case IIO_ALTVOLTAGE:
-	case IIO_CCT:
-	case IIO_PRESSURE:
-	case IIO_HUMIDITYRELATIVE:
 		break;
 	default:
 		return false;

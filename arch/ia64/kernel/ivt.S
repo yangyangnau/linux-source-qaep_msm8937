@@ -58,7 +58,7 @@
 #include <asm/unistd.h>
 #include <asm/errno.h>
 
-#if 0
+#if 1
 # define PSR_DEFAULT_BITS	psr.ac
 #else
 # define PSR_DEFAULT_BITS	0

@@ -30,9 +30,7 @@
 #include "mxl5007t.h"
 #include "tda18218.h"
 #include "fc2580.h"
-#include "it913x.h"
-#include "si2168.h"
-#include "si2157.h"
+#include "tuner_it913x.h"
 
 struct reg_val {
 	u32 reg;
@@ -63,12 +61,7 @@ struct state {
 	u16 chip_type;
 	u8 dual_mode:1;
 	u16 eeprom_addr;
-	u8 af9033_i2c_addr[2];
 	struct af9033_config af9033_config[2];
-	struct af9033_ops ops;
-	#define AF9035_I2C_CLIENT_MAX 4
-	struct i2c_client *i2c_client[AF9035_I2C_CLIENT_MAX];
-	struct i2c_adapter *i2c_adapter_demod;
 };
 
 static const u32 clock_lut_af9035[] = {
@@ -102,19 +95,13 @@ static const u32 clock_lut_it9135[] = {
 #define AF9035_FIRMWARE_AF9035 "dvb-usb-af9035-02.fw"
 #define AF9035_FIRMWARE_IT9135_V1 "dvb-usb-it9135-01.fw"
 #define AF9035_FIRMWARE_IT9135_V2 "dvb-usb-it9135-02.fw"
-#define AF9035_FIRMWARE_IT9303 "dvb-usb-it9303-01.fw"
 
 /*
  * eeprom is memory mapped as read only. Writing that memory mapped address
  * will not corrupt eeprom.
  *
- * TS mode:
- * 0  TS
- * 1  DCA + PIP
- * 3  PIP
- * n  DCA
- *
- * Values 0 and 3 are seen to this day. 0 for single TS and 3 for dual TS.
+ * eeprom has value 0x00 single mode and 0x03 for dual mode as far as I have
+ * seen to this day.
  */
 
 #define EEPROM_BASE_AF9035        0x42fd
@@ -122,7 +109,7 @@ static const u32 clock_lut_it9135[] = {
 #define EEPROM_SHIFT                0x10
 
 #define EEPROM_IR_MODE              0x10
-#define EEPROM_TS_MODE              0x29
+#define EEPROM_DUAL_MODE            0x29
 #define EEPROM_2ND_DEMOD_ADDR       0x2a
 #define EEPROM_IR_TYPE              0x2c
 #define EEPROM_1_IF_L               0x30
@@ -144,7 +131,5 @@ static const u32 clock_lut_it9135[] = {
 #define CMD_FW_DL_BEGIN             0x24
 #define CMD_FW_DL_END               0x25
 #define CMD_FW_SCATTER_WR           0x29
-#define CMD_GENERIC_I2C_RD          0x2a
-#define CMD_GENERIC_I2C_WR          0x2b
 
 #endif

@@ -3,11 +3,12 @@
  *  Copyright (C) 2001, 2002 Andi Kleen, SuSE Labs.
  *  Copyright (C) 2008-2009, Red Hat Inc., Ingo Molnar
  */
+#include <linux/magic.h>		/* STACK_END_MAGIC		*/
 #include <linux/sched.h>		/* test_thread_flag(), ...	*/
 #include <linux/kdebug.h>		/* oops_begin/end, ...		*/
 #include <linux/module.h>		/* search_exception_table	*/
 #include <linux/bootmem.h>		/* max_low_pfn			*/
-#include <linux/kprobes.h>		/* NOKPROBE_SYMBOL, ...		*/
+#include <linux/kprobes.h>		/* __kprobes, ...		*/
 #include <linux/mmiotrace.h>		/* kmmio_handler, ...		*/
 #include <linux/perf_event.h>		/* perf_sw_event		*/
 #include <linux/hugetlb.h>		/* hstate_index_to_shift	*/
@@ -17,11 +18,7 @@
 #include <asm/traps.h>			/* dotraplinkage, ...		*/
 #include <asm/pgalloc.h>		/* pgd_*(), ...			*/
 #include <asm/kmemcheck.h>		/* kmemcheck_*(), ...		*/
-#include <asm/fixmap.h>			/* VSYSCALL_ADDR		*/
-#include <asm/vsyscall.h>		/* emulate_vsyscall		*/
-
-#define CREATE_TRACE_POINTS
-#include <asm/trace/exceptions.h>
+#include <asm/fixmap.h>			/* VSYSCALL_START		*/
 
 /*
  * Page fault error code bits:
@@ -45,7 +42,7 @@ enum x86_pf_error_code {
  * Returns 0 if mmiotrace is disabled, or if the fault is not
  * handled by mmiotrace:
  */
-static nokprobe_inline int
+static inline int __kprobes
 kmmio_fault(struct pt_regs *regs, unsigned long addr)
 {
 	if (unlikely(is_kmmio_active()))
@@ -54,7 +51,7 @@ kmmio_fault(struct pt_regs *regs, unsigned long addr)
 	return 0;
 }
 
-static nokprobe_inline int kprobes_fault(struct pt_regs *regs)
+static inline int __kprobes notify_page_fault(struct pt_regs *regs)
 {
 	int ret = 0;
 
@@ -261,7 +258,7 @@ void vmalloc_sync_all(void)
  *
  *   Handle a fault on the vmalloc or module mapping area
  */
-static noinline int vmalloc_fault(unsigned long address)
+static noinline __kprobes int vmalloc_fault(unsigned long address)
 {
 	unsigned long pgd_paddr;
 	pmd_t *pmd_k;
@@ -291,7 +288,6 @@ static noinline int vmalloc_fault(unsigned long address)
 
 	return 0;
 }
-NOKPROBE_SYMBOL(vmalloc_fault);
 
 /*
  * Did it hit the DOS screen memory VA from vm86 mode?
@@ -349,7 +345,7 @@ out:
 
 void vmalloc_sync_all(void)
 {
-	sync_global_pgds(VMALLOC_START & PGDIR_MASK, VMALLOC_END, 0);
+	sync_global_pgds(VMALLOC_START & PGDIR_MASK, VMALLOC_END);
 }
 
 /*
@@ -359,7 +355,7 @@ void vmalloc_sync_all(void)
  *
  * This assumes no large pages in there.
  */
-static noinline int vmalloc_fault(unsigned long address)
+static noinline __kprobes int vmalloc_fault(unsigned long address)
 {
 	pgd_t *pgd, *pgd_ref;
 	pud_t *pud, *pud_ref;
@@ -426,7 +422,6 @@ static noinline int vmalloc_fault(unsigned long address)
 
 	return 0;
 }
-NOKPROBE_SYMBOL(vmalloc_fault);
 
 #ifdef CONFIG_CPU_SUP_AMD
 static const char errata93_warning[] =
@@ -576,8 +571,6 @@ static int is_f00f_bug(struct pt_regs *regs, unsigned long address)
 
 static const char nx_warning[] = KERN_CRIT
 "kernel tried to execute NX-protected page - exploit attempt? (uid: %d)\n";
-static const char smep_warning[] = KERN_CRIT
-"unable to execute userspace code (SMEP?) (uid: %d)\n";
 
 static void
 show_fault_oops(struct pt_regs *regs, unsigned long error_code,
@@ -588,20 +581,11 @@ show_fault_oops(struct pt_regs *regs, unsigned long error_code,
 
 	if (error_code & PF_INSTR) {
 		unsigned int level;
-		pgd_t *pgd;
-		pte_t *pte;
 
-		pgd = __va(read_cr3() & PHYSICAL_PAGE_MASK);
-		pgd += pgd_index(address);
-
-		pte = lookup_address_in_pgd(pgd, address, &level);
+		pte_t *pte = lookup_address(address, &level);
 
 		if (pte && pte_present(*pte) && !pte_exec(*pte))
 			printk(nx_warning, from_kuid(&init_user_ns, current_uid()));
-		if (pte && pte_present(*pte) && pte_exec(*pte) &&
-				(pgd_flags(*pgd) & _PAGE_USER) &&
-				(__read_cr4() & X86_CR4_SMEP))
-			printk(smep_warning, from_kuid(&init_user_ns, current_uid()));
 	}
 
 	printk(KERN_ALERT "BUG: unable to handle kernel ");
@@ -612,7 +596,7 @@ show_fault_oops(struct pt_regs *regs, unsigned long error_code,
 
 	printk(KERN_CONT " at %p\n", (void *) address);
 	printk(KERN_ALERT "IP:");
-	printk_address(regs->ip);
+	printk_address(regs->ip, 1);
 
 	dump_pagetable(address);
 }
@@ -648,25 +632,12 @@ no_context(struct pt_regs *regs, unsigned long error_code,
 	   unsigned long address, int signal, int si_code)
 {
 	struct task_struct *tsk = current;
+	unsigned long *stackend;
 	unsigned long flags;
 	int sig;
 
 	/* Are we prepared to handle this kernel fault? */
 	if (fixup_exception(regs)) {
-		/*
-		 * Any interrupt that takes a fault gets the fixup. This makes
-		 * the below recursive fault logic only apply to a faults from
-		 * task context.
-		 */
-		if (in_interrupt())
-			return;
-
-		/*
-		 * Per the above we're !in_interrupt(), aka. task context.
-		 *
-		 * In this case we need to make sure we're not recursively
-		 * faulting through the emulate_vsyscall() logic.
-		 */
 		if (current_thread_info()->sig_on_uaccess_error && signal) {
 			tsk->thread.trap_nr = X86_TRAP_PF;
 			tsk->thread.error_code = error_code | PF_USER;
@@ -675,10 +646,6 @@ no_context(struct pt_regs *regs, unsigned long error_code,
 			/* XXX: hwpoison faults will set the wrong code. */
 			force_sig_info_fault(signal, si_code, address, tsk, 0);
 		}
-
-		/*
-		 * Barring that, we can do the fixup and be happy.
-		 */
 		return;
 	}
 
@@ -707,7 +674,8 @@ no_context(struct pt_regs *regs, unsigned long error_code,
 
 	show_fault_oops(regs, error_code, address);
 
-	if (task_stack_end_corrupted(tsk))
+	stackend = end_of_stack(tsk);
+	if (tsk != &init_task && *stackend != STACK_END_MAGIC)
 		printk(KERN_EMERG "Thread overran stack, or stack corrupted\n");
 
 	tsk->thread.cr2		= address;
@@ -777,7 +745,7 @@ __bad_area_nosemaphore(struct pt_regs *regs, unsigned long error_code,
 		 * emulation.
 		 */
 		if (unlikely((error_code & PF_INSTR) &&
-			     ((address & ~0xfff) == VSYSCALL_ADDR))) {
+			     ((address & ~0xfff) == VSYSCALL_START))) {
 			if (emulate_vsyscall(regs, address))
 				return;
 		}
@@ -844,7 +812,10 @@ do_sigbus(struct pt_regs *regs, unsigned long error_code, unsigned long address,
 	  unsigned int fault)
 {
 	struct task_struct *tsk = current;
+	struct mm_struct *mm = tsk->mm;
 	int code = BUS_ADRERR;
+
+	up_read(&mm->mmap_sem);
 
 	/* Kernel mode? Handle exceptions or die: */
 	if (!(error_code & PF_USER)) {
@@ -871,22 +842,34 @@ do_sigbus(struct pt_regs *regs, unsigned long error_code, unsigned long address,
 	force_sig_info_fault(SIGBUS, code, address, tsk, fault);
 }
 
-static noinline void
+static noinline int
 mm_fault_error(struct pt_regs *regs, unsigned long error_code,
 	       unsigned long address, unsigned int fault)
 {
-	if (fatal_signal_pending(current) && !(error_code & PF_USER)) {
-		no_context(regs, error_code, address, 0, 0);
-		return;
+	/*
+	 * Pagefault was interrupted by SIGKILL. We have no reason to
+	 * continue pagefault.
+	 */
+	if (fatal_signal_pending(current)) {
+		if (!(fault & VM_FAULT_RETRY))
+			up_read(&current->mm->mmap_sem);
+		if (!(error_code & PF_USER))
+			no_context(regs, error_code, address, 0, 0);
+		return 1;
 	}
+	if (!(fault & VM_FAULT_ERROR))
+		return 0;
 
 	if (fault & VM_FAULT_OOM) {
 		/* Kernel mode? Handle exceptions or die: */
 		if (!(error_code & PF_USER)) {
+			up_read(&current->mm->mmap_sem);
 			no_context(regs, error_code, address,
 				   SIGSEGV, SEGV_MAPERR);
-			return;
+			return 1;
 		}
+
+		up_read(&current->mm->mmap_sem);
 
 		/*
 		 * We ran out of memory, call the OOM killer, and return the
@@ -898,11 +881,10 @@ mm_fault_error(struct pt_regs *regs, unsigned long error_code,
 		if (fault & (VM_FAULT_SIGBUS|VM_FAULT_HWPOISON|
 			     VM_FAULT_HWPOISON_LARGE))
 			do_sigbus(regs, error_code, address, fault);
-		else if (fault & VM_FAULT_SIGSEGV)
-			bad_area_nosemaphore(regs, error_code, address);
 		else
 			BUG();
 	}
+	return 1;
 }
 
 static int spurious_fault_check(unsigned long error_code, pte_t *pte)
@@ -925,19 +907,10 @@ static int spurious_fault_check(unsigned long error_code, pte_t *pte)
  * cross-processor TLB flush, even if no stale TLB entries exist
  * on other processors.
  *
- * Spurious faults may only occur if the TLB contains an entry with
- * fewer permission than the page table entry.  Non-present (P = 0)
- * and reserved bit (R = 1) faults are never spurious.
- *
  * There are no security implications to leaving a stale TLB when
  * increasing the permissions on a page.
- *
- * Returns non-zero if a spurious fault was handled, zero otherwise.
- *
- * See Intel Developer's Manual Vol 3 Section 4.10.4.3, bullet 3
- * (Optional Invalidation).
  */
-static noinline int
+static noinline __kprobes int
 spurious_fault(unsigned long error_code, unsigned long address)
 {
 	pgd_t *pgd;
@@ -946,17 +919,8 @@ spurious_fault(unsigned long error_code, unsigned long address)
 	pte_t *pte;
 	int ret;
 
-	/*
-	 * Only writes to RO or instruction fetches from NX may cause
-	 * spurious faults.
-	 *
-	 * These could be from user or supervisor accesses but the TLB
-	 * is only lazily flushed after a kernel mapping protection
-	 * change, so user accesses are not expected to cause spurious
-	 * faults.
-	 */
-	if (error_code != (PF_WRITE | PF_PROT)
-	    && error_code != (PF_INSTR | PF_PROT))
+	/* Reserved-bit violation or user access to kernel space? */
+	if (error_code & (PF_USER | PF_RSVD))
 		return 0;
 
 	pgd = init_mm.pgd + pgd_index(address);
@@ -994,7 +958,6 @@ spurious_fault(unsigned long error_code, unsigned long address)
 
 	return ret;
 }
-NOKPROBE_SYMBOL(spurious_fault);
 
 int show_unhandled_signals = 1;
 
@@ -1045,23 +1008,24 @@ static inline bool smap_violation(int error_code, struct pt_regs *regs)
  * This routine handles page faults.  It determines the address,
  * and the problem, and then passes it off to one of the appropriate
  * routines.
- *
- * This function must have noinline because both callers
- * {,trace_}do_page_fault() have notrace on. Having this an actual function
- * guarantees there's a function trace entry.
  */
-static noinline void
-__do_page_fault(struct pt_regs *regs, unsigned long error_code,
-		unsigned long address)
+static void __kprobes
+__do_page_fault(struct pt_regs *regs, unsigned long error_code)
 {
 	struct vm_area_struct *vma;
 	struct task_struct *tsk;
+	unsigned long address;
 	struct mm_struct *mm;
 	int fault;
-	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE;
+	int write = error_code & PF_WRITE;
+	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE |
+					(write ? FAULT_FLAG_WRITE : 0);
 
 	tsk = current;
 	mm = tsk->mm;
+
+	/* Get the faulting address: */
+	address = read_cr2();
 
 	/*
 	 * Detect and handle instructions that would cause a page fault for
@@ -1101,7 +1065,7 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code,
 			return;
 
 		/* kprobes don't want to hook the spurious faults: */
-		if (kprobes_fault(regs))
+		if (notify_page_fault(regs))
 			return;
 		/*
 		 * Don't take the mm semaphore here. If we fixup a prefetch
@@ -1113,26 +1077,8 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code,
 	}
 
 	/* kprobes don't want to hook the spurious faults: */
-	if (unlikely(kprobes_fault(regs)))
+	if (unlikely(notify_page_fault(regs)))
 		return;
-
-	if (unlikely(error_code & PF_RSVD))
-		pgtable_bad(regs, error_code, address);
-
-	if (unlikely(smap_violation(error_code, regs))) {
-		bad_area_nosemaphore(regs, error_code, address);
-		return;
-	}
-
-	/*
-	 * If we're in an interrupt, have no user context or are running
-	 * in an atomic region then we must not take the fault:
-	 */
-	if (unlikely(in_atomic() || !mm)) {
-		bad_area_nosemaphore(regs, error_code, address);
-		return;
-	}
-
 	/*
 	 * It's safe to allow irq's after cr2 has been saved and the
 	 * vmalloc fault has been handled.
@@ -1143,16 +1089,29 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code,
 	if (user_mode_vm(regs)) {
 		local_irq_enable();
 		error_code |= PF_USER;
-		flags |= FAULT_FLAG_USER;
 	} else {
 		if (regs->flags & X86_EFLAGS_IF)
 			local_irq_enable();
 	}
 
+	if (unlikely(error_code & PF_RSVD))
+		pgtable_bad(regs, error_code, address);
+
+	if (unlikely(smap_violation(error_code, regs))) {
+		bad_area_nosemaphore(regs, error_code, address);
+		return;
+	}
+
 	perf_sw_event(PERF_COUNT_SW_PAGE_FAULTS, 1, regs, address);
 
-	if (error_code & PF_WRITE)
-		flags |= FAULT_FLAG_WRITE;
+	/*
+	 * If we're in an interrupt, have no user context or are running
+	 * in an atomic region then we must not take the fault:
+	 */
+	if (unlikely(in_atomic() || !mm)) {
+		bad_area_nosemaphore(regs, error_code, address);
+		return;
+	}
 
 	/*
 	 * When running in the kernel we expect faults to occur only to
@@ -1228,23 +1187,13 @@ good_area:
 	/*
 	 * If for any reason at all we couldn't handle the fault,
 	 * make sure we exit gracefully rather than endlessly redo
-	 * the fault.  Since we never set FAULT_FLAG_RETRY_NOWAIT, if
-	 * we get VM_FAULT_RETRY back, the mmap_sem has been unlocked.
+	 * the fault:
 	 */
 	fault = handle_mm_fault(mm, vma, address, flags);
 
-	/*
-	 * If we need to retry but a fatal signal is pending, handle the
-	 * signal first. We do not need to release the mmap_sem because it
-	 * would already be released in __lock_page_or_retry in mm/filemap.c.
-	 */
-	if (unlikely((fault & VM_FAULT_RETRY) && fatal_signal_pending(current)))
-		return;
-
-	if (unlikely(fault & VM_FAULT_ERROR)) {
-		up_read(&mm->mmap_sem);
-		mm_fault_error(regs, error_code, address, fault);
-		return;
+	if (unlikely(fault & (VM_FAULT_RETRY|VM_FAULT_ERROR))) {
+		if (mm_fault_error(regs, error_code, address, fault))
+			return;
 	}
 
 	/*
@@ -1275,55 +1224,13 @@ good_area:
 
 	up_read(&mm->mmap_sem);
 }
-NOKPROBE_SYMBOL(__do_page_fault);
 
-dotraplinkage void notrace
+dotraplinkage void __kprobes
 do_page_fault(struct pt_regs *regs, unsigned long error_code)
 {
-	unsigned long address = read_cr2(); /* Get the faulting address */
-	enum ctx_state prev_state;
-
-	/*
-	 * We must have this function tagged with __kprobes, notrace and call
-	 * read_cr2() before calling anything else. To avoid calling any kind
-	 * of tracing machinery before we've observed the CR2 value.
-	 *
-	 * exception_{enter,exit}() contain all sorts of tracepoints.
-	 */
-
-	prev_state = exception_enter();
-	__do_page_fault(regs, error_code, address);
-	exception_exit(prev_state);
-}
-NOKPROBE_SYMBOL(do_page_fault);
-
-#ifdef CONFIG_TRACING
-static nokprobe_inline void
-trace_page_fault_entries(unsigned long address, struct pt_regs *regs,
-			 unsigned long error_code)
-{
-	if (user_mode(regs))
-		trace_page_fault_user(address, regs, error_code);
-	else
-		trace_page_fault_kernel(address, regs, error_code);
-}
-
-dotraplinkage void notrace
-trace_do_page_fault(struct pt_regs *regs, unsigned long error_code)
-{
-	/*
-	 * The exception_enter and tracepoint processing could
-	 * trigger another page faults (user space callchain
-	 * reading) and destroy the original cr2 value, so read
-	 * the faulting address now.
-	 */
-	unsigned long address = read_cr2();
 	enum ctx_state prev_state;
 
 	prev_state = exception_enter();
-	trace_page_fault_entries(address, regs, error_code);
-	__do_page_fault(regs, error_code, address);
+	__do_page_fault(regs, error_code);
 	exception_exit(prev_state);
 }
-NOKPROBE_SYMBOL(trace_do_page_fault);
-#endif /* CONFIG_TRACING */

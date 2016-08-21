@@ -418,14 +418,9 @@ static int snd_info_entry_release(struct inode *inode, struct file *file)
 			if (entry->c.text.write) {
 				entry->c.text.write(entry, data->wbuffer);
 				if (data->wbuffer->error) {
-					if (entry->card)
-						dev_warn(entry->card->dev, "info: data write error to %s (%i)\n",
-							 entry->name,
-							 data->wbuffer->error);
-					else
-						pr_warn("ALSA: info: data write error to %s (%i)\n",
-							entry->name,
-							data->wbuffer->error);
+					snd_printk(KERN_WARNING "data write error to %s (%i)\n",
+						entry->name,
+						data->wbuffer->error);
 				}
 			}
 			kfree(data->wbuffer->buffer);
@@ -545,7 +540,7 @@ int __init snd_info_init(void)
 		snd_oss_root = entry;
 	}
 #endif
-#if IS_ENABLED(CONFIG_SND_SEQUENCER)
+#if defined(CONFIG_SND_SEQUENCER) || defined(CONFIG_SND_SEQUENCER_MODULE)
 	{
 		struct snd_info_entry *entry;
 		if ((entry = snd_info_create_module_entry(THIS_MODULE, "seq", NULL)) == NULL)
@@ -572,7 +567,7 @@ int __exit snd_info_done(void)
 	snd_minor_info_done();
 	snd_info_version_done();
 	if (snd_proc_root) {
-#if IS_ENABLED(CONFIG_SND_SEQUENCER)
+#if defined(CONFIG_SND_SEQUENCER) || defined(CONFIG_SND_SEQUENCER_MODULE)
 		snd_info_free_entry(snd_seq_root);
 #endif
 #ifdef CONFIG_SND_OSSEMUL
@@ -684,7 +679,7 @@ int snd_info_card_free(struct snd_card *card)
  * snd_info_get_line - read one line from the procfs buffer
  * @buffer: the procfs buffer
  * @line: the buffer to store
- * @len: the max. buffer size
+ * @len: the max. buffer size - 1
  *
  * Reads one line from the buffer and stores the string.
  *
@@ -704,7 +699,7 @@ int snd_info_get_line(struct snd_info_buffer *buffer, char *line, int len)
 			buffer->stop = 1;
 		if (c == '\n')
 			break;
-		if (len > 1) {
+		if (len) {
 			len--;
 			*line++ = c;
 		}

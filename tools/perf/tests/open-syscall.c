@@ -9,14 +9,13 @@ int test__open_syscall_event(void)
 	struct perf_evsel *evsel;
 	unsigned int nr_open_calls = 111, i;
 	struct thread_map *threads = thread_map__new(-1, getpid(), UINT_MAX);
-	char sbuf[STRERR_BUFSIZE];
 
 	if (threads == NULL) {
 		pr_debug("thread_map__new\n");
 		return -1;
 	}
 
-	evsel = perf_evsel__newtp("syscalls", "sys_enter_open");
+	evsel = perf_evsel__newtp("syscalls", "sys_enter_open", 0);
 	if (evsel == NULL) {
 		pr_debug("is debugfs mounted on /sys/kernel/debug?\n");
 		goto out_thread_map_delete;
@@ -25,7 +24,7 @@ int test__open_syscall_event(void)
 	if (perf_evsel__open_per_thread(evsel, threads) < 0) {
 		pr_debug("failed to open counter: %s, "
 			 "tweak /proc/sys/kernel/perf_event_paranoid?\n",
-			 strerror_r(errno, sbuf, sizeof(sbuf)));
+			 strerror(errno));
 		goto out_evsel_delete;
 	}
 

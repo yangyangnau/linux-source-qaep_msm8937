@@ -1760,7 +1760,7 @@ static int isp1760_hub_status_data(struct usb_hcd *hcd, char *buf)
 
 	/*
 	 * Return status information even for ports with OWNER set.
-	 * Otherwise hub_wq wouldn't see the disconnect event when a
+	 * Otherwise khubd wouldn't see the disconnect event when a
 	 * high-speed device is switched over to the companion
 	 * controller by the user.
 	 */
@@ -1871,7 +1871,7 @@ static int isp1760_hub_control(struct usb_hcd *hcd, u16 typeReq,
 
 		/*
 		 * Even if OWNER is set, so the port is owned by the
-		 * companion controller, hub_wq needs to be able to clear
+		 * companion controller, khubd needs to be able to clear
 		 * the port-change status bits (especially
 		 * USB_PORT_STAT_C_CONNECTION).
 		 */
@@ -2000,7 +2000,7 @@ static int isp1760_hub_control(struct usb_hcd *hcd, u16 typeReq,
 					reg_read32(hcd->regs, HC_PORTSC1));
 		}
 		/*
-		 * Even if OWNER is set, there's no harm letting hub_wq
+		 * Even if OWNER is set, there's no harm letting khubd
 		 * see the wPortStatus values (they should all be 0 except
 		 * for PORT_POWER anyway).
 		 */
@@ -2247,13 +2247,9 @@ struct usb_hcd *isp1760_register(phys_addr_t res_start, resource_size_t res_len,
 	hcd->rsrc_start = res_start;
 	hcd->rsrc_len = res_len;
 
-	/* This driver doesn't support wakeup requests */
-	hcd->cant_recv_wakeups = 1;
-
 	ret = usb_add_hcd(hcd, irq, irqflags);
 	if (ret)
 		goto err_unmap;
-	device_wakeup_enable(hcd->self.controller);
 
 	return hcd;
 

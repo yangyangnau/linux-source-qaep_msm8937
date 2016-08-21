@@ -16,6 +16,7 @@
 #include <linux/timex.h>
 #include <linux/preempt.h>
 #include <linux/delay.h>
+#include <linux/init.h>
 
 #include <asm/processor.h>
 #include <asm/delay.h>

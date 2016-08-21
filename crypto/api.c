@@ -216,11 +216,11 @@ struct crypto_alg *crypto_larval_lookup(const char *name, u32 type, u32 mask)
 
 	alg = crypto_alg_lookup(name, type, mask);
 	if (!alg) {
-		request_module("crypto-%s", name);
+		request_module("%s", name);
 
 		if (!((type ^ CRYPTO_ALG_NEED_FALLBACK) & mask &
 		      CRYPTO_ALG_NEED_FALLBACK))
-			request_module("crypto-%s-all", name);
+			request_module("%s-all", name);
 
 		alg = crypto_alg_lookup(name, type, mask);
 	}
@@ -396,7 +396,7 @@ EXPORT_SYMBOL_GPL(__crypto_alloc_tfm);
  *	@mask: Mask for type comparison
  *
  *	This function should not be used by new algorithm types.
- *	Please use crypto_alloc_tfm instead.
+ *	Plesae use crypto_alloc_tfm instead.
  *
  *	crypto_alloc_base() will first attempt to locate an already loaded
  *	algorithm.  If that fails and the kernel supports dynamically loadable

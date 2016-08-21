@@ -24,7 +24,7 @@
  * Traits of this clock:
  * prepare - clk_prepare only ensures that parents are prepared
  * enable - clk_enable only ensures that parents are enabled
- * rate - rate is adjustable.  clk->rate = DIV_ROUND_UP(parent->rate / divisor)
+ * rate - rate is adjustable.  clk->rate = parent->rate / divisor
  * parent - fixed parent.  No clk_set_parent support
  */
 
@@ -41,17 +41,6 @@ static unsigned int _get_table_maxdiv(const struct clk_div_table *table)
 		if (clkt->div > maxdiv)
 			maxdiv = clkt->div;
 	return maxdiv;
-}
-
-static unsigned int _get_table_mindiv(const struct clk_div_table *table)
-{
-	unsigned int mindiv = UINT_MAX;
-	const struct clk_div_table *clkt;
-
-	for (clkt = table; clkt->div; clkt++)
-		if (clkt->div < mindiv)
-			mindiv = clkt->div;
-	return mindiv;
 }
 
 static unsigned int _get_maxdiv(struct clk_divider *divider)
@@ -115,7 +104,7 @@ static unsigned long clk_divider_recalc_rate(struct clk_hw *hw,
 	struct clk_divider *divider = to_clk_divider(hw);
 	unsigned int div, val;
 
-	val = clk_readl(divider->reg) >> divider->shift;
+	val = readl(divider->reg) >> divider->shift;
 	val &= div_mask(divider);
 
 	div = _get_div(divider, val);
@@ -126,8 +115,14 @@ static unsigned long clk_divider_recalc_rate(struct clk_hw *hw,
 		return parent_rate;
 	}
 
-	return DIV_ROUND_UP(parent_rate, div);
+	return parent_rate / div;
 }
+
+/*
+ * The reverse of DIV_ROUND_UP: The maximum number which
+ * divided by m is r
+ */
+#define MULT_ROUND_UP(r, m) ((r) * (m) + (m) - 1)
 
 static bool _is_valid_table_div(const struct clk_div_table *table,
 							 unsigned int div)
@@ -149,131 +144,21 @@ static bool _is_valid_div(struct clk_divider *divider, unsigned int div)
 	return true;
 }
 
-static int _round_up_table(const struct clk_div_table *table, int div)
-{
-	const struct clk_div_table *clkt;
-	int up = INT_MAX;
-
-	for (clkt = table; clkt->div; clkt++) {
-		if (clkt->div == div)
-			return clkt->div;
-		else if (clkt->div < div)
-			continue;
-
-		if ((clkt->div - div) < (up - div))
-			up = clkt->div;
-	}
-
-	return up;
-}
-
-static int _round_down_table(const struct clk_div_table *table, int div)
-{
-	const struct clk_div_table *clkt;
-	int down = _get_table_mindiv(table);
-
-	for (clkt = table; clkt->div; clkt++) {
-		if (clkt->div == div)
-			return clkt->div;
-		else if (clkt->div > div)
-			continue;
-
-		if ((div - clkt->div) < (div - down))
-			down = clkt->div;
-	}
-
-	return down;
-}
-
-static int _div_round_up(struct clk_divider *divider,
-		unsigned long parent_rate, unsigned long rate)
-{
-	int div = DIV_ROUND_UP(parent_rate, rate);
-
-	if (divider->flags & CLK_DIVIDER_POWER_OF_TWO)
-		div = __roundup_pow_of_two(div);
-	if (divider->table)
-		div = _round_up_table(divider->table, div);
-
-	return div;
-}
-
-static int _div_round_closest(struct clk_divider *divider,
-		unsigned long parent_rate, unsigned long rate)
-{
-	int up, down, div;
-	unsigned long up_rate, down_rate;
-
-	up = down = div = DIV_ROUND_CLOSEST(parent_rate, rate);
-
-	if (divider->flags & CLK_DIVIDER_POWER_OF_TWO) {
-		up = __roundup_pow_of_two(div);
-		down = __rounddown_pow_of_two(div);
-	} else if (divider->table) {
-		up = _round_up_table(divider->table, div);
-		down = _round_down_table(divider->table, div);
-	}
-
-	up_rate = DIV_ROUND_UP(parent_rate, up);
-	down_rate = DIV_ROUND_UP(parent_rate, down);
-
-	return (rate - up_rate) <= (down_rate - rate) ? up : down;
-}
-
-static int _div_round(struct clk_divider *divider, unsigned long parent_rate,
-		unsigned long rate)
-{
-	if (divider->flags & CLK_DIVIDER_ROUND_CLOSEST)
-		return _div_round_closest(divider, parent_rate, rate);
-
-	return _div_round_up(divider, parent_rate, rate);
-}
-
-static bool _is_best_div(struct clk_divider *divider,
-		unsigned long rate, unsigned long now, unsigned long best)
-{
-	if (divider->flags & CLK_DIVIDER_ROUND_CLOSEST)
-		return abs(rate - now) < abs(rate - best);
-
-	return now <= rate && now > best;
-}
-
-static int _next_div(struct clk_divider *divider, int div)
-{
-	div++;
-
-	if (divider->flags & CLK_DIVIDER_POWER_OF_TWO)
-		return __roundup_pow_of_two(div);
-	if (divider->table)
-		return _round_up_table(divider->table, div);
-
-	return div;
-}
-
 static int clk_divider_bestdiv(struct clk_hw *hw, unsigned long rate,
 		unsigned long *best_parent_rate)
 {
 	struct clk_divider *divider = to_clk_divider(hw);
 	int i, bestdiv = 0;
 	unsigned long parent_rate, best = 0, now, maxdiv;
-	unsigned long parent_rate_saved = *best_parent_rate;
 
 	if (!rate)
 		rate = 1;
-
-	/* if read only, just return current value */
-	if (divider->flags & CLK_DIVIDER_READ_ONLY) {
-		bestdiv = readl(divider->reg) >> divider->shift;
-		bestdiv &= div_mask(divider);
-		bestdiv = _get_div(divider, bestdiv);
-		return bestdiv;
-	}
 
 	maxdiv = _get_maxdiv(divider);
 
 	if (!(__clk_get_flags(hw->clk) & CLK_SET_RATE_PARENT)) {
 		parent_rate = *best_parent_rate;
-		bestdiv = _div_round(divider, parent_rate, rate);
+		bestdiv = DIV_ROUND_UP(parent_rate, rate);
 		bestdiv = bestdiv == 0 ? 1 : bestdiv;
 		bestdiv = bestdiv > maxdiv ? maxdiv : bestdiv;
 		return bestdiv;
@@ -285,22 +170,13 @@ static int clk_divider_bestdiv(struct clk_hw *hw, unsigned long rate,
 	 */
 	maxdiv = min(ULONG_MAX / rate, maxdiv);
 
-	for (i = 1; i <= maxdiv; i = _next_div(divider, i)) {
+	for (i = 1; i <= maxdiv; i++) {
 		if (!_is_valid_div(divider, i))
 			continue;
-		if (rate * i == parent_rate_saved) {
-			/*
-			 * It's the most ideal case if the requested rate can be
-			 * divided from parent clock without needing to change
-			 * parent rate, so return the divider immediately.
-			 */
-			*best_parent_rate = parent_rate_saved;
-			return i;
-		}
 		parent_rate = __clk_round_rate(__clk_get_parent(hw->clk),
-					       rate * i);
-		now = DIV_ROUND_UP(parent_rate, i);
-		if (_is_best_div(divider, rate, now, best)) {
+				MULT_ROUND_UP(rate, i));
+		now = parent_rate / i;
+		if (now <= rate && now > best) {
 			bestdiv = i;
 			best = now;
 			*best_parent_rate = parent_rate;
@@ -321,7 +197,7 @@ static long clk_divider_round_rate(struct clk_hw *hw, unsigned long rate,
 	int div;
 	div = clk_divider_bestdiv(hw, rate, prate);
 
-	return DIV_ROUND_UP(*prate, div);
+	return *prate / div;
 }
 
 static int clk_divider_set_rate(struct clk_hw *hw, unsigned long rate,
@@ -332,11 +208,7 @@ static int clk_divider_set_rate(struct clk_hw *hw, unsigned long rate,
 	unsigned long flags = 0;
 	u32 val;
 
-	div = DIV_ROUND_UP(parent_rate, rate);
-
-	if (!_is_valid_div(divider, div))
-		return -EINVAL;
-
+	div = parent_rate / rate;
 	value = _get_val(divider, div);
 
 	if (value > div_mask(divider))
@@ -345,14 +217,10 @@ static int clk_divider_set_rate(struct clk_hw *hw, unsigned long rate,
 	if (divider->lock)
 		spin_lock_irqsave(divider->lock, flags);
 
-	if (divider->flags & CLK_DIVIDER_HIWORD_MASK) {
-		val = div_mask(divider) << (divider->shift + 16);
-	} else {
-		val = clk_readl(divider->reg);
-		val &= ~(div_mask(divider) << divider->shift);
-	}
+	val = readl(divider->reg);
+	val &= ~(div_mask(divider) << divider->shift);
 	val |= value << divider->shift;
-	clk_writel(val, divider->reg);
+	writel(val, divider->reg);
 
 	if (divider->lock)
 		spin_unlock_irqrestore(divider->lock, flags);
@@ -376,13 +244,6 @@ static struct clk *_register_divider(struct device *dev, const char *name,
 	struct clk_divider *div;
 	struct clk *clk;
 	struct clk_init_data init;
-
-	if (clk_divider_flags & CLK_DIVIDER_HIWORD_MASK) {
-		if (width + shift > 16) {
-			pr_warn("divider value exceeds LOWORD field\n");
-			return ERR_PTR(-EINVAL);
-		}
-	}
 
 	/* allocate the divider */
 	div = kzalloc(sizeof(struct clk_divider), GFP_KERNEL);
@@ -435,7 +296,6 @@ struct clk *clk_register_divider(struct device *dev, const char *name,
 	return _register_divider(dev, name, parent_name, flags, reg, shift,
 			width, clk_divider_flags, NULL, lock);
 }
-EXPORT_SYMBOL_GPL(clk_register_divider);
 
 /**
  * clk_register_divider_table - register a table based divider clock with
@@ -460,4 +320,3 @@ struct clk *clk_register_divider_table(struct device *dev, const char *name,
 	return _register_divider(dev, name, parent_name, flags, reg, shift,
 			width, clk_divider_flags, table, lock);
 }
-EXPORT_SYMBOL_GPL(clk_register_divider_table);

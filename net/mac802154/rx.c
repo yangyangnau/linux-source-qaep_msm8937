@@ -59,35 +59,36 @@ mac802154_subif_rx(struct ieee802154_dev *hw, struct sk_buff *skb, u8 lqi)
 	skb->protocol = htons(ETH_P_IEEE802154);
 	skb_reset_mac_header(skb);
 
+	BUILD_BUG_ON(sizeof(struct ieee802154_mac_cb) > sizeof(skb->cb));
+
 	if (!(priv->hw.flags & IEEE802154_HW_OMIT_CKSUM)) {
 		u16 crc;
 
 		if (skb->len < 2) {
 			pr_debug("got invalid frame\n");
-			goto fail;
+			goto out;
 		}
 		crc = crc_ccitt(0, skb->data, skb->len);
 		if (crc) {
 			pr_debug("CRC mismatch\n");
-			goto fail;
+			goto out;
 		}
 		skb_trim(skb, skb->len - 2); /* CRC */
 	}
 
 	mac802154_monitors_rx(priv, skb);
 	mac802154_wpans_rx(priv, skb);
-
+out:
+	dev_kfree_skb(skb);
 	return;
-
-fail:
-	kfree_skb(skb);
 }
 
 static void mac802154_rx_worker(struct work_struct *work)
 {
 	struct rx_work *rw = container_of(work, struct rx_work, work);
+	struct sk_buff *skb = rw->skb;
 
-	mac802154_subif_rx(rw->dev, rw->skb, rw->lqi);
+	mac802154_subif_rx(rw->dev, skb, rw->lqi);
 	kfree(rw);
 }
 
@@ -100,7 +101,7 @@ ieee802154_rx_irqsafe(struct ieee802154_dev *dev, struct sk_buff *skb, u8 lqi)
 	if (!skb)
 		return;
 
-	work = kzalloc(sizeof(*work), GFP_ATOMIC);
+	work = kzalloc(sizeof(struct rx_work), GFP_ATOMIC);
 	if (!work)
 		return;
 

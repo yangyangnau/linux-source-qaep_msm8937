@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2014, Intel Corp.
+ * Copyright (C) 2000 - 2013, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -70,7 +70,6 @@
 #define ACPI_SIG_HPET           "HPET"	/* High Precision Event Timer table */
 #define ACPI_SIG_IBFT           "IBFT"	/* iSCSI Boot Firmware Table */
 #define ACPI_SIG_IVRS           "IVRS"	/* I/O Virtualization Reporting Structure */
-#define ACPI_SIG_LPIT           "LPIT"	/* Low Power Idle Table */
 #define ACPI_SIG_MCFG           "MCFG"	/* PCI Memory Mapped Configuration table */
 #define ACPI_SIG_MCHI           "MCHI"	/* Management Controller Host Interface table */
 #define ACPI_SIG_MTMR           "MTMR"	/* MID Timer table */
@@ -328,11 +327,6 @@ struct acpi_table_dbg2 {
 	u32 info_count;
 };
 
-struct acpi_dbg2_header {
-	u32 info_offset;
-	u32 info_count;
-};
-
 /* Debug Device Information Subtable */
 
 struct acpi_dbg2_device {
@@ -396,7 +390,7 @@ struct acpi_table_dbgp {
  *        Version 1
  *
  * Conforms to "Intel Virtualization Technology for Directed I/O",
- * Version 2.2, Sept. 2013
+ * Version 1.2, Sept. 2008
  *
  ******************************************************************************/
 
@@ -423,10 +417,9 @@ struct acpi_dmar_header {
 enum acpi_dmar_type {
 	ACPI_DMAR_TYPE_HARDWARE_UNIT = 0,
 	ACPI_DMAR_TYPE_RESERVED_MEMORY = 1,
-	ACPI_DMAR_TYPE_ROOT_ATS = 2,
-	ACPI_DMAR_TYPE_HARDWARE_AFFINITY = 3,
-	ACPI_DMAR_TYPE_NAMESPACE = 4,
-	ACPI_DMAR_TYPE_RESERVED = 5	/* 5 and greater are reserved */
+	ACPI_DMAR_TYPE_ATSR = 2,
+	ACPI_DMAR_HARDWARE_AFFINITY = 3,
+	ACPI_DMAR_TYPE_RESERVED = 4	/* 4 and greater are reserved */
 };
 
 /* DMAR Device Scope structure */
@@ -439,7 +432,7 @@ struct acpi_dmar_device_scope {
 	u8 bus;
 };
 
-/* Values for entry_type in struct acpi_dmar_device_scope - device types */
+/* Values for entry_type in struct acpi_dmar_device_scope */
 
 enum acpi_dmar_scope_type {
 	ACPI_DMAR_SCOPE_TYPE_NOT_USED = 0,
@@ -447,17 +440,16 @@ enum acpi_dmar_scope_type {
 	ACPI_DMAR_SCOPE_TYPE_BRIDGE = 2,
 	ACPI_DMAR_SCOPE_TYPE_IOAPIC = 3,
 	ACPI_DMAR_SCOPE_TYPE_HPET = 4,
-	ACPI_DMAR_SCOPE_TYPE_NAMESPACE = 5,
-	ACPI_DMAR_SCOPE_TYPE_RESERVED = 6	/* 6 and greater are reserved */
+	ACPI_DMAR_SCOPE_TYPE_RESERVED = 5	/* 5 and greater are reserved */
 };
 
 struct acpi_dmar_pci_path {
-	u8 device;
-	u8 function;
+	u8 dev;
+	u8 fn;
 };
 
 /*
- * DMAR Subtables, correspond to Type in struct acpi_dmar_header
+ * DMAR Sub-tables, correspond to Type in struct acpi_dmar_header
  */
 
 /* 0: Hardware Unit Definition */
@@ -508,15 +500,6 @@ struct acpi_dmar_rhsa {
 	u32 reserved;
 	u64 base_address;
 	u32 proximity_domain;
-};
-
-/* 4: ACPI Namespace Device Declaration Structure */
-
-struct acpi_dmar_andd {
-	struct acpi_dmar_header header;
-	u8 reserved[3];
-	u8 device_number;
-	char device_name[1];
 };
 
 /*******************************************************************************
@@ -821,71 +804,7 @@ struct acpi_ivrs_memory {
 
 /*******************************************************************************
  *
- * LPIT - Low Power Idle Table
- *
- * Conforms to "ACPI Low Power Idle Table (LPIT) and _LPD Proposal (DRAFT)"
- *
- ******************************************************************************/
-
-struct acpi_table_lpit {
-	struct acpi_table_header header;	/* Common ACPI table header */
-};
-
-/* LPIT subtable header */
-
-struct acpi_lpit_header {
-	u32 type;		/* Subtable type */
-	u32 length;		/* Subtable length */
-	u16 unique_id;
-	u16 reserved;
-	u32 flags;
-};
-
-/* Values for subtable Type above */
-
-enum acpi_lpit_type {
-	ACPI_LPIT_TYPE_NATIVE_CSTATE = 0x00,
-	ACPI_LPIT_TYPE_SIMPLE_IO = 0x01
-};
-
-/* Masks for Flags field above  */
-
-#define ACPI_LPIT_STATE_DISABLED    (1)
-#define ACPI_LPIT_NO_COUNTER        (1<<1)
-
-/*
- * LPIT subtables, correspond to Type in struct acpi_lpit_header
- */
-
-/* 0x00: Native C-state instruction based LPI structure */
-
-struct acpi_lpit_native {
-	struct acpi_lpit_header header;
-	struct acpi_generic_address entry_trigger;
-	u32 residency;
-	u32 latency;
-	struct acpi_generic_address residency_counter;
-	u64 counter_frequency;
-};
-
-/* 0x01: Simple I/O based LPI structure */
-
-struct acpi_lpit_io {
-	struct acpi_lpit_header header;
-	struct acpi_generic_address entry_trigger;
-	u32 trigger_action;
-	u64 trigger_value;
-	u64 trigger_mask;
-	struct acpi_generic_address minimum_idle_state;
-	u32 residency;
-	u32 latency;
-	struct acpi_generic_address residency_counter;
-	u64 counter_frequency;
-};
-
-/*******************************************************************************
- *
- * MCFG - PCI Memory Mapped Configuration table and subtable
+ * MCFG - PCI Memory Mapped Configuration table and sub-table
  *        Version 1
  *
  * Conforms to "PCI Firmware Specification", Revision 3.0, June 20, 2005
@@ -988,7 +907,7 @@ enum acpi_slic_type {
 };
 
 /*
- * SLIC Subtables, correspond to Type in struct acpi_slic_header
+ * SLIC Sub-tables, correspond to Type in struct acpi_slic_header
  */
 
 /* 0: Public Key Structure */

@@ -56,8 +56,7 @@
  * struct:  This defines the way the data will be stored in the ring buffer.
  *    There are currently two types of elements. __field and __array.
  *    a __field is broken up into (type, name). Where type can be any
- *    primitive type (integer, long or pointer). __field_struct() can
- *    be any static complex data value (struct, union, but not an array).
+ *    type but an array.
  *    For an array. there are three fields. (type, name, size). The
  *    type of elements in the array, the name of the field and the size
  *    of the array.
@@ -87,7 +86,7 @@ TRACE_EVENT(foo_bar,
 	),
 
 	TP_fast_assign(
-		strlcpy(__entry->foo, foo, 10);
+		strncpy(__entry->foo, foo, 10);
 		__entry->bar	= bar;
 	),
 

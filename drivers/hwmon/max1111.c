@@ -192,8 +192,10 @@ static int max1111_probe(struct spi_device *spi)
 		return err;
 
 	data = devm_kzalloc(&spi->dev, sizeof(struct max1111_data), GFP_KERNEL);
-	if (data == NULL)
+	if (data == NULL) {
+		dev_err(&spi->dev, "failed to allocate memory\n");
 		return -ENOMEM;
+	}
 
 	switch (chip) {
 	case max1110:

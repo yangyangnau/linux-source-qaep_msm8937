@@ -737,7 +737,7 @@ typedef void (tx_cb_t)(struct ngene *, u32);
 struct ngene {
 	int                   nr;
 	struct pci_dev       *pci_dev;
-	unsigned char __iomem *iomem;
+	unsigned char        *iomem;
 
 	/*struct i2c_adapter  i2c_adapter;*/
 

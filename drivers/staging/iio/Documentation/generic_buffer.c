@@ -305,12 +305,9 @@ int main(int argc, char **argv)
 		read_size = read(fp,
 				 data,
 				 toread*scan_size);
-		if (read_size < 0) {
-			if (errno == -EAGAIN) {
-				printf("nothing available\n");
-				continue;
-			} else
-				break;
+		if (read_size == -EAGAIN) {
+			printf("nothing available\n");
+			continue;
 		}
 		for (i = 0; i < read_size/scan_size; i++)
 			process_scan(data + scan_size*i,

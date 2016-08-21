@@ -12,15 +12,16 @@
 */
 
 #include <linux/kernel.h>
+#include <linux/init.h>
 #include <linux/platform_device.h>
 #include <linux/leds.h>
 #include <linux/gpio.h>
 #include <linux/slab.h>
 #include <linux/module.h>
-#include <linux/platform_data/leds-s3c24xx.h>
 
+#include <mach/hardware.h>
 #include <mach/regs-gpio.h>
-#include <plat/gpio-cfg.h>
+#include <linux/platform_data/leds-s3c24xx.h>
 
 /* our context */
 
@@ -70,14 +71,16 @@ static int s3c24xx_led_remove(struct platform_device *dev)
 
 static int s3c24xx_led_probe(struct platform_device *dev)
 {
-	struct s3c24xx_led_platdata *pdata = dev_get_platdata(&dev->dev);
+	struct s3c24xx_led_platdata *pdata = dev->dev.platform_data;
 	struct s3c24xx_gpio_led *led;
 	int ret;
 
 	led = devm_kzalloc(&dev->dev, sizeof(struct s3c24xx_gpio_led),
 			   GFP_KERNEL);
-	if (!led)
+	if (led == NULL) {
+		dev_err(&dev->dev, "No memory for device\n");
 		return -ENOMEM;
+	}
 
 	platform_set_drvdata(dev, led);
 

@@ -31,7 +31,8 @@
  * the GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program;  if not, see <http://www.gnu.org/licenses/>.
+ * along with this program;  if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  *
  */
 
@@ -246,7 +247,7 @@ static u32 cipso_v4_map_cache_hash(const unsigned char *key, u32 key_len)
  * success, negative values on error.
  *
  */
-static int __init cipso_v4_cache_init(void)
+static int cipso_v4_cache_init(void)
 {
 	u32 iter;
 
@@ -376,18 +377,20 @@ static int cipso_v4_cache_check(const unsigned char *key,
  * negative values on failure.
  *
  */
-int cipso_v4_cache_add(const unsigned char *cipso_ptr,
+int cipso_v4_cache_add(const struct sk_buff *skb,
 		       const struct netlbl_lsm_secattr *secattr)
 {
 	int ret_val = -EPERM;
 	u32 bkt;
 	struct cipso_v4_map_cache_entry *entry = NULL;
 	struct cipso_v4_map_cache_entry *old_entry = NULL;
+	unsigned char *cipso_ptr;
 	u32 cipso_ptr_len;
 
 	if (!cipso_v4_cache_enabled || cipso_v4_cache_bucketsize <= 0)
 		return 0;
 
+	cipso_ptr = CIPSO_V4_OPTPTR(skb);
 	cipso_ptr_len = cipso_ptr[1];
 
 	entry = kzalloc(sizeof(*entry), GFP_ATOMIC);
@@ -888,8 +891,8 @@ static int cipso_v4_map_cat_rbm_hton(const struct cipso_v4_doi *doi_def,
 	}
 
 	for (;;) {
-		host_spot = netlbl_catmap_walk(secattr->attr.mls.cat,
-					       host_spot + 1);
+		host_spot = netlbl_secattr_catmap_walk(secattr->attr.mls.cat,
+						       host_spot + 1);
 		if (host_spot < 0)
 			break;
 
@@ -971,7 +974,7 @@ static int cipso_v4_map_cat_rbm_ntoh(const struct cipso_v4_doi *doi_def,
 				return -EPERM;
 			break;
 		}
-		ret_val = netlbl_catmap_setbit(&secattr->attr.mls.cat,
+		ret_val = netlbl_secattr_catmap_setbit(secattr->attr.mls.cat,
 						       host_spot,
 						       GFP_ATOMIC);
 		if (ret_val != 0)
@@ -1037,7 +1040,8 @@ static int cipso_v4_map_cat_enum_hton(const struct cipso_v4_doi *doi_def,
 	u32 cat_iter = 0;
 
 	for (;;) {
-		cat = netlbl_catmap_walk(secattr->attr.mls.cat, cat + 1);
+		cat = netlbl_secattr_catmap_walk(secattr->attr.mls.cat,
+						 cat + 1);
 		if (cat < 0)
 			break;
 		if ((cat_iter + 2) > net_cat_len)
@@ -1072,9 +1076,9 @@ static int cipso_v4_map_cat_enum_ntoh(const struct cipso_v4_doi *doi_def,
 	u32 iter;
 
 	for (iter = 0; iter < net_cat_len; iter += 2) {
-		ret_val = netlbl_catmap_setbit(&secattr->attr.mls.cat,
-					     get_unaligned_be16(&net_cat[iter]),
-					     GFP_ATOMIC);
+		ret_val = netlbl_secattr_catmap_setbit(secattr->attr.mls.cat,
+				get_unaligned_be16(&net_cat[iter]),
+				GFP_ATOMIC);
 		if (ret_val != 0)
 			return ret_val;
 	}
@@ -1152,7 +1156,8 @@ static int cipso_v4_map_cat_rng_hton(const struct cipso_v4_doi *doi_def,
 		return -ENOSPC;
 
 	for (;;) {
-		iter = netlbl_catmap_walk(secattr->attr.mls.cat, iter + 1);
+		iter = netlbl_secattr_catmap_walk(secattr->attr.mls.cat,
+						  iter + 1);
 		if (iter < 0)
 			break;
 		cat_size += (iter == 0 ? 0 : sizeof(u16));
@@ -1160,7 +1165,8 @@ static int cipso_v4_map_cat_rng_hton(const struct cipso_v4_doi *doi_def,
 			return -ENOSPC;
 		array[array_cnt++] = iter;
 
-		iter = netlbl_catmap_walkrng(secattr->attr.mls.cat, iter);
+		iter = netlbl_secattr_catmap_walk_rng(secattr->attr.mls.cat,
+						      iter);
 		if (iter < 0)
 			return -EFAULT;
 		cat_size += sizeof(u16);
@@ -1212,10 +1218,10 @@ static int cipso_v4_map_cat_rng_ntoh(const struct cipso_v4_doi *doi_def,
 		else
 			cat_low = 0;
 
-		ret_val = netlbl_catmap_setrng(&secattr->attr.mls.cat,
-					       cat_low,
-					       cat_high,
-					       GFP_ATOMIC);
+		ret_val = netlbl_secattr_catmap_setrng(secattr->attr.mls.cat,
+						       cat_low,
+						       cat_high,
+						       GFP_ATOMIC);
 		if (ret_val != 0)
 			return ret_val;
 	}
@@ -1330,12 +1336,17 @@ static int cipso_v4_parsetag_rbm(const struct cipso_v4_doi *doi_def,
 	secattr->flags |= NETLBL_SECATTR_MLS_LVL;
 
 	if (tag_len > 4) {
+		secattr->attr.mls.cat =
+		                       netlbl_secattr_catmap_alloc(GFP_ATOMIC);
+		if (secattr->attr.mls.cat == NULL)
+			return -ENOMEM;
+
 		ret_val = cipso_v4_map_cat_rbm_ntoh(doi_def,
 						    &tag[4],
 						    tag_len - 4,
 						    secattr);
 		if (ret_val != 0) {
-			netlbl_catmap_free(secattr->attr.mls.cat);
+			netlbl_secattr_catmap_free(secattr->attr.mls.cat);
 			return ret_val;
 		}
 
@@ -1421,12 +1432,17 @@ static int cipso_v4_parsetag_enum(const struct cipso_v4_doi *doi_def,
 	secattr->flags |= NETLBL_SECATTR_MLS_LVL;
 
 	if (tag_len > 4) {
+		secattr->attr.mls.cat =
+			               netlbl_secattr_catmap_alloc(GFP_ATOMIC);
+		if (secattr->attr.mls.cat == NULL)
+			return -ENOMEM;
+
 		ret_val = cipso_v4_map_cat_enum_ntoh(doi_def,
 						     &tag[4],
 						     tag_len - 4,
 						     secattr);
 		if (ret_val != 0) {
-			netlbl_catmap_free(secattr->attr.mls.cat);
+			netlbl_secattr_catmap_free(secattr->attr.mls.cat);
 			return ret_val;
 		}
 
@@ -1511,12 +1527,17 @@ static int cipso_v4_parsetag_rng(const struct cipso_v4_doi *doi_def,
 	secattr->flags |= NETLBL_SECATTR_MLS_LVL;
 
 	if (tag_len > 4) {
+		secattr->attr.mls.cat =
+			               netlbl_secattr_catmap_alloc(GFP_ATOMIC);
+		if (secattr->attr.mls.cat == NULL)
+			return -ENOMEM;
+
 		ret_val = cipso_v4_map_cat_rng_ntoh(doi_def,
 						    &tag[4],
 						    tag_len - 4,
 						    secattr);
 		if (ret_val != 0) {
-			netlbl_catmap_free(secattr->attr.mls.cat);
+			netlbl_secattr_catmap_free(secattr->attr.mls.cat);
 			return ret_val;
 		}
 
@@ -1572,33 +1593,6 @@ static int cipso_v4_parsetag_loc(const struct cipso_v4_doi *doi_def,
 	secattr->flags |= NETLBL_SECATTR_SECID;
 
 	return 0;
-}
-
-/**
- * cipso_v4_optptr - Find the CIPSO option in the packet
- * @skb: the packet
- *
- * Description:
- * Parse the packet's IP header looking for a CIPSO option.  Returns a pointer
- * to the start of the CIPSO option on success, NULL if one if not found.
- *
- */
-unsigned char *cipso_v4_optptr(const struct sk_buff *skb)
-{
-	const struct iphdr *iph = ip_hdr(skb);
-	unsigned char *optptr = (unsigned char *)&(ip_hdr(skb)[1]);
-	int optlen;
-	int taglen;
-
-	for (optlen = iph->ihl*4 - sizeof(struct iphdr); optlen > 0; ) {
-		if (optptr[0] == IPOPT_CIPSO)
-			return optptr;
-		taglen = optptr[1];
-		optlen -= taglen;
-		optptr += taglen;
-	}
-
-	return NULL;
 }
 
 /**
@@ -2142,8 +2136,8 @@ void cipso_v4_req_delattr(struct request_sock *req)
  * on success and negative values on failure.
  *
  */
-int cipso_v4_getattr(const unsigned char *cipso,
-		     struct netlbl_lsm_secattr *secattr)
+static int cipso_v4_getattr(const unsigned char *cipso,
+			    struct netlbl_lsm_secattr *secattr)
 {
 	int ret_val = -ENOMSG;
 	u32 doi;
@@ -2326,6 +2320,22 @@ int cipso_v4_skbuff_delattr(struct sk_buff *skb)
 	ip_send_check(iph);
 
 	return 0;
+}
+
+/**
+ * cipso_v4_skbuff_getattr - Get the security attributes from the CIPSO option
+ * @skb: the packet
+ * @secattr: the security attributes
+ *
+ * Description:
+ * Parse the given packet's CIPSO option and return the security attributes.
+ * Returns zero on success and negative values on failure.
+ *
+ */
+int cipso_v4_skbuff_getattr(const struct sk_buff *skb,
+			    struct netlbl_lsm_secattr *secattr)
+{
+	return cipso_v4_getattr(CIPSO_V4_OPTPTR(skb), secattr);
 }
 
 /*

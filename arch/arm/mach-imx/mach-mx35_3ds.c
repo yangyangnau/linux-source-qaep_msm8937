@@ -50,7 +50,6 @@
 #include "3ds_debugboard.h"
 #include "common.h"
 #include "devices-imx35.h"
-#include "ehci.h"
 #include "hardware.h"
 #include "iomux-mx35.h"
 
@@ -616,6 +615,7 @@ MACHINE_START(MX35_3DS, "Freescale MX35PDK")
 	.map_io = mx35_map_io,
 	.init_early = imx35_init_early,
 	.init_irq = mx35_init_irq,
+	.handle_irq = imx35_handle_irq,
 	.init_time	= mx35pdk_timer_init,
 	.init_machine = mx35_3ds_init,
 	.reserve = mx35_3ds_reserve,

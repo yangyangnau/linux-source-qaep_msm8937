@@ -22,8 +22,8 @@ static void clean_cmdnames(struct cmdnames *cmds)
 	unsigned int i;
 
 	for (i = 0; i < cmds->cnt; ++i)
-		zfree(&cmds->names[i]);
-	zfree(&cmds->names);
+		free(cmds->names[i]);
+	free(cmds->names);
 	cmds->cnt = 0;
 	cmds->alloc = 0;
 }
@@ -263,8 +263,9 @@ static void add_cmd_list(struct cmdnames *cmds, struct cmdnames *old)
 
 	for (i = 0; i < old->cnt; i++)
 		cmds->names[cmds->cnt++] = old->names[i];
-	zfree(&old->names);
+	free(old->names);
 	old->cnt = 0;
+	old->names = NULL;
 }
 
 const char *help_unknown_cmd(const char *cmd)

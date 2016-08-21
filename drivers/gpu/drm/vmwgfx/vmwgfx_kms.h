@@ -123,8 +123,7 @@ struct vmw_display_unit {
 void vmw_display_unit_cleanup(struct vmw_display_unit *du);
 int vmw_du_page_flip(struct drm_crtc *crtc,
 		     struct drm_framebuffer *fb,
-		     struct drm_pending_vblank_event *event,
-		     uint32_t page_flip_flags);
+		     struct drm_pending_vblank_event *event);
 void vmw_du_crtc_save(struct drm_crtc *crtc);
 void vmw_du_crtc_restore(struct drm_crtc *crtc);
 void vmw_du_crtc_gamma_set(struct drm_crtc *crtc,

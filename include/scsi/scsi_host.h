@@ -7,7 +7,6 @@
 #include <linux/workqueue.h>
 #include <linux/mutex.h>
 #include <linux/seq_file.h>
-#include <linux/blk-mq.h>
 #include <scsi/scsi.h>
 
 struct request_queue;
@@ -16,7 +15,6 @@ struct completion;
 struct module;
 struct scsi_cmnd;
 struct scsi_device;
-struct scsi_host_cmd_pool;
 struct scsi_target;
 struct Scsi_Host;
 struct scsi_host_cmd_pool;
@@ -131,6 +129,27 @@ struct scsi_host_template {
 	 * STATUS: REQUIRED
 	 */
 	int (* queuecommand)(struct Scsi_Host *, struct scsi_cmnd *);
+
+	/*
+	 * The transfer functions are used to queue a scsi command to
+	 * the LLD. When the driver is finished processing the command
+	 * the done callback is invoked.
+	 *
+	 * This is called to inform the LLD to transfer
+	 * scsi_bufflen(cmd) bytes. scsi_sg_count(cmd) speciefies the
+	 * number of scatterlist entried in the command and
+	 * scsi_sglist(cmd) returns the scatterlist.
+	 *
+	 * return values: see queuecommand
+	 *
+	 * If the LLD accepts the cmd, it should set the result to an
+	 * appropriate value when completed before calling the done function.
+	 *
+	 * STATUS: REQUIRED FOR TARGET DRIVERS
+	 */
+	/* TODO: rename */
+	int (* transfer_response)(struct scsi_cmnd *,
+				  void (*done)(struct scsi_cmnd *));
 
 	/*
 	 * This is an error handling strategy routine.  You don't need to
@@ -388,7 +407,7 @@ struct scsi_host_template {
 	/*
 	 * Set this if the host adapter has limitations beside segment count.
 	 */
-	unsigned int max_sectors;
+	unsigned short max_sectors;
 
 	/*
 	 * DMA scatter gather segment boundary limit. A segment crossing this
@@ -460,11 +479,6 @@ struct scsi_host_template {
 	unsigned no_write_same:1;
 
 	/*
-	 * True if asynchronous aborts are not supported
-	 */
-	unsigned no_async_abort:1;
-
-	/*
 	 * Countdown for host blocking with no commands outstanding.
 	 */
 	unsigned int max_host_blocked;
@@ -505,15 +519,6 @@ struct scsi_host_template {
 	 *   scsi_netlink.h
 	 */
 	u64 vendor_id;
-
-	/*
-	 * Additional per-command data allocated for the driver.
-	 */
-	unsigned int cmd_size;
-	struct scsi_host_cmd_pool *cmd_pool;
-
-	/* temporary flag to disable blk-mq I/O path */
-	bool disable_blk_mq;
 };
 
 /*
@@ -584,34 +589,30 @@ struct Scsi_Host {
 	 * Area to keep a shared tag map (if needed, will be
 	 * NULL if not).
 	 */
-	union {
-		struct blk_queue_tag	*bqt;
-		struct blk_mq_tag_set	tag_set;
-	};
+	struct blk_queue_tag	*bqt;
 
-	atomic_t host_busy;		   /* commands actually active on low-level */
-	atomic_t host_blocked;
-
-	unsigned int host_failed;	   /* commands that failed.
-					      protected by host_lock */
+	/*
+	 * The following two fields are protected with host_lock;
+	 * however, eh routines can safely access during eh processing
+	 * without acquiring the lock.
+	 */
+	unsigned int host_busy;		   /* commands actually active on low-level */
+	unsigned int host_failed;	   /* commands that failed. */
 	unsigned int host_eh_scheduled;    /* EH scheduled without command */
     
 	unsigned int host_no;  /* Used for IOCTL_GET_IDLUN, /proc/scsi et al. */
-
-	/* next two fields are used to bound the time spent in error handling */
-	int eh_deadline;
+	int resetting; /* if set, it means that last_reset is a valid value */
 	unsigned long last_reset;
-
 
 	/*
 	 * These three parameters can be used to allow for wide scsi,
 	 * and for host adapters that support multiple busses
-	 * The last two should be set to 1 more than the actual max id
-	 * or lun (e.g. 8 for SCSI parallel systems).
+	 * The first two should be set to 1 more than the actual max id
+	 * or lun (i.e. 8 for normal systems).
 	 */
-	unsigned int max_channel;
 	unsigned int max_id;
-	u64 max_lun;
+	unsigned int max_lun;
+	unsigned int max_channel;
 
 	/*
 	 * This is a unique identifier that must be assigned so that we
@@ -636,7 +637,7 @@ struct Scsi_Host {
 	short cmd_per_lun;
 	short unsigned int sg_tablesize;
 	short unsigned int sg_prot_tablesize;
-	unsigned int max_sectors;
+	short unsigned int max_sectors;
 	unsigned long dma_boundary;
 	/* 
 	 * Used to assign serial numbers to the cmds.
@@ -679,9 +680,6 @@ struct Scsi_Host {
 	/* The controller does not support WRITE SAME */
 	unsigned no_write_same:1;
 
-	unsigned use_blk_mq:1;
-	unsigned use_cmd_list:1;
-
 	/*
 	 * Optional work queue to be utilized by the transport
 	 */
@@ -689,12 +687,9 @@ struct Scsi_Host {
 	struct workqueue_struct *work_q;
 
 	/*
-	 * Task management function work queue
+	 * Host has rejected a command because it was busy.
 	 */
-	struct workqueue_struct *tmf_work_q;
-
-	/* The transport requires the LUN bits NOT to be stored in CDB[1] */
-	unsigned no_scsi2_lun_in_cdb:1;
+	unsigned int host_blocked;
 
 	/*
 	 * Value host_blocked counts down from
@@ -785,13 +780,6 @@ static inline int scsi_host_in_recovery(struct Scsi_Host *shost)
 		shost->tmf_in_progress;
 }
 
-extern bool scsi_use_blk_mq;
-
-static inline bool shost_use_blk_mq(struct Scsi_Host *shost)
-{
-	return shost->use_blk_mq;
-}
-
 extern int scsi_queue_work(struct Scsi_Host *, struct work_struct *);
 extern void scsi_flush_work(struct Scsi_Host *);
 
@@ -807,6 +795,8 @@ extern void scsi_host_put(struct Scsi_Host *t);
 extern struct Scsi_Host *scsi_host_lookup(unsigned short);
 extern const char *scsi_host_state_name(enum scsi_host_state);
 extern void scsi_cmd_get_serial(struct Scsi_Host *, struct scsi_cmnd *);
+
+extern u64 scsi_calculate_bounce_limit(struct Scsi_Host *);
 
 static inline int __must_check scsi_add_host(struct Scsi_Host *host,
 					     struct device *dev)

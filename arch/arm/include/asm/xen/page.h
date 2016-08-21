@@ -1,17 +1,18 @@
 #ifndef _ASM_ARM_XEN_PAGE_H
 #define _ASM_ARM_XEN_PAGE_H
 
+#include <asm/mach/map.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
 
 #include <linux/pfn.h>
 #include <linux/types.h>
-#include <linux/dma-mapping.h>
 
-#include <xen/xen.h>
 #include <xen/interface/grant_table.h>
 
+#define pfn_to_mfn(pfn)			(pfn)
 #define phys_to_machine_mapping_valid(pfn) (1)
+#define mfn_to_pfn(mfn)			(mfn)
 #define mfn_to_virt(m)			(__va(mfn_to_pfn(m) << PAGE_SHIFT))
 
 #define pte_mfn	    pte_pfn
@@ -32,29 +33,6 @@ typedef struct xpaddr {
 
 #define INVALID_P2M_ENTRY      (~0UL)
 
-unsigned long __pfn_to_mfn(unsigned long pfn);
-extern struct rb_root phys_to_mach;
-
-static inline unsigned long pfn_to_mfn(unsigned long pfn)
-{
-	unsigned long mfn;
-
-	if (phys_to_mach.rb_node != NULL) {
-		mfn = __pfn_to_mfn(pfn);
-		if (mfn != INVALID_P2M_ENTRY)
-			return mfn;
-	}
-
-	return pfn;
-}
-
-static inline unsigned long mfn_to_pfn(unsigned long mfn)
-{
-	return mfn;
-}
-
-#define mfn_to_local_pfn(mfn) mfn_to_pfn(mfn)
-
 static inline xmaddr_t phys_to_machine(xpaddr_t phys)
 {
 	unsigned offset = phys.paddr & ~PAGE_MASK;
@@ -68,6 +46,7 @@ static inline xpaddr_t machine_to_phys(xmaddr_t machine)
 }
 /* VIRT <-> MACHINE conversion */
 #define virt_to_machine(v)	(phys_to_machine(XPADDR(__pa(v))))
+#define virt_to_pfn(v)          (PFN_DOWN(__pa(v)))
 #define virt_to_mfn(v)		(pfn_to_mfn(virt_to_pfn(v)))
 #define mfn_to_virt(m)		(__va(mfn_to_pfn(m) << PAGE_SHIFT))
 
@@ -87,28 +66,28 @@ static inline pte_t *lookup_address(unsigned long address, unsigned int *level)
 	return NULL;
 }
 
-extern int set_foreign_p2m_mapping(struct gnttab_map_grant_ref *map_ops,
-				   struct gnttab_map_grant_ref *kmap_ops,
-				   struct page **pages, unsigned int count);
+static inline int m2p_add_override(unsigned long mfn, struct page *page,
+		struct gnttab_map_grant_ref *kmap_op)
+{
+	return 0;
+}
 
-extern int clear_foreign_p2m_mapping(struct gnttab_unmap_grant_ref *unmap_ops,
-				     struct gnttab_map_grant_ref *kmap_ops,
-				     struct page **pages, unsigned int count);
+static inline int m2p_remove_override(struct page *page, bool clear_pte)
+{
+	return 0;
+}
 
-bool __set_phys_to_machine(unsigned long pfn, unsigned long mfn);
-bool __set_phys_to_machine_multi(unsigned long pfn, unsigned long mfn,
-		unsigned long nr_pages);
+static inline bool __set_phys_to_machine(unsigned long pfn, unsigned long mfn)
+{
+	BUG_ON(pfn != mfn && mfn != INVALID_P2M_ENTRY);
+	return true;
+}
 
 static inline bool set_phys_to_machine(unsigned long pfn, unsigned long mfn)
 {
 	return __set_phys_to_machine(pfn, mfn);
 }
 
-#define xen_remap(cookie, size) ioremap_cache((cookie), (size))
-#define xen_unmap(cookie) iounmap((cookie))
-
-bool xen_arch_need_swiotlb(struct device *dev,
-			   unsigned long pfn,
-			   unsigned long mfn);
+#define xen_remap(cookie, size) __arm_ioremap((cookie), (size), MT_MEMORY);
 
 #endif /* _ASM_ARM_XEN_PAGE_H */

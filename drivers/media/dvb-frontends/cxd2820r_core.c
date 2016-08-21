@@ -564,10 +564,10 @@ static enum dvbfe_search cxd2820r_search(struct dvb_frontend *fe)
 
 	/* check if we have a valid signal */
 	if (status & FE_HAS_LOCK) {
-		priv->last_tune_failed = false;
+		priv->last_tune_failed = 0;
 		return DVBFE_ALGO_SEARCH_SUCCESS;
 	} else {
-		priv->last_tune_failed = true;
+		priv->last_tune_failed = 1;
 		return DVBFE_ALGO_SEARCH_AGAIN;
 	}
 
@@ -584,14 +584,18 @@ static int cxd2820r_get_frontend_algo(struct dvb_frontend *fe)
 static void cxd2820r_release(struct dvb_frontend *fe)
 {
 	struct cxd2820r_priv *priv = fe->demodulator_priv;
+	int uninitialized_var(ret); /* silence compiler warning */
 
 	dev_dbg(&priv->i2c->dev, "%s\n", __func__);
 
 #ifdef CONFIG_GPIOLIB
 	/* remove GPIOs */
-	if (priv->gpio_chip.label)
-		gpiochip_remove(&priv->gpio_chip);
-
+	if (priv->gpio_chip.label) {
+		ret = gpiochip_remove(&priv->gpio_chip);
+		if (ret)
+			dev_err(&priv->i2c->dev, "%s: gpiochip_remove() " \
+					"failed=%d\n", KBUILD_MODNAME, ret);
+	}
 #endif
 	kfree(priv);
 	return;

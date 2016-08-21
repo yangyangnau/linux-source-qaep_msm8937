@@ -14,15 +14,19 @@
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
 
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
 */
 
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/types.h>
 #include <linux/i2c.h>
+#include <linux/init.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
-#include <linux/of_irq.h>
 #include <asm/prom.h>
 #include <asm/pmac_low_i2c.h>
 
@@ -394,7 +398,7 @@ static void i2c_powermac_register_devices(struct i2c_adapter *adap,
 
 static int i2c_powermac_probe(struct platform_device *dev)
 {
-	struct pmac_i2c_bus *bus = dev_get_platdata(&dev->dev);
+	struct pmac_i2c_bus *bus = dev->dev.platform_data;
 	struct device_node *parent = NULL;
 	struct i2c_adapter *adapter;
 	const char *basename;
@@ -436,24 +440,22 @@ static int i2c_powermac_probe(struct platform_device *dev)
 	adapter->algo = &i2c_powermac_algorithm;
 	i2c_set_adapdata(adapter, bus);
 	adapter->dev.parent = &dev->dev;
-
-	/* Clear of_node to skip automatic registration of i2c child nodes */
-	adapter->dev.of_node = NULL;
+	adapter->dev.of_node = dev->dev.of_node;
 	rc = i2c_add_adapter(adapter);
 	if (rc) {
 		printk(KERN_ERR "i2c-powermac: Adapter %s registration "
 		       "failed\n", adapter->name);
 		memset(adapter, 0, sizeof(*adapter));
-		return rc;
 	}
 
 	printk(KERN_INFO "PowerMac i2c bus %s registered\n", adapter->name);
 
-	/* Use custom child registration due to Apple device-tree funkyness */
-	adapter->dev.of_node = dev->dev.of_node;
+	/* Cannot use of_i2c_register_devices() due to Apple device-tree
+	 * funkyness
+	 */
 	i2c_powermac_register_devices(adapter, bus);
 
-	return 0;
+	return rc;
 }
 
 static struct platform_driver i2c_powermac_driver = {

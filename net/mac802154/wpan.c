@@ -35,26 +35,33 @@
 
 #include "mac802154.h"
 
-static int mac802154_wpan_update_llsec(struct net_device *dev)
+static inline int mac802154_fetch_skb_u8(struct sk_buff *skb, u8 *val)
 {
-	struct mac802154_sub_if_data *priv = netdev_priv(dev);
-	struct ieee802154_mlme_ops *ops = ieee802154_mlme_ops(dev);
-	int rc = 0;
+	if (unlikely(!pskb_may_pull(skb, 1)))
+		return -EINVAL;
 
-	if (ops->llsec) {
-		struct ieee802154_llsec_params params;
-		int changed = 0;
+	*val = skb->data[0];
+	skb_pull(skb, 1);
 
-		params.pan_id = priv->pan_id;
-		changed |= IEEE802154_LLSEC_PARAM_PAN_ID;
+	return 0;
+}
 
-		params.hwaddr = priv->extended_addr;
-		changed |= IEEE802154_LLSEC_PARAM_HWADDR;
+static inline int mac802154_fetch_skb_u16(struct sk_buff *skb, u16 *val)
+{
+	if (unlikely(!pskb_may_pull(skb, 2)))
+		return -EINVAL;
 
-		rc = ops->llsec->set_params(dev, &params, changed);
-	}
+	*val = skb->data[0] | (skb->data[1] << 8);
+	skb_pull(skb, 2);
 
-	return rc;
+	return 0;
+}
+
+static inline void mac802154_haddr_copy_swap(u8 *dest, const u8 *src)
+{
+	int i;
+	for (i = 0; i < IEEE802154_ADDR_LEN; i++)
+		dest[IEEE802154_ADDR_LEN - i - 1] = src[i];
 }
 
 static int
@@ -69,28 +76,22 @@ mac802154_wpan_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 
 	switch (cmd) {
 	case SIOCGIFADDR:
-	{
-		u16 pan_id, short_addr;
-
-		pan_id = le16_to_cpu(priv->pan_id);
-		short_addr = le16_to_cpu(priv->short_addr);
-		if (pan_id == IEEE802154_PANID_BROADCAST ||
-		    short_addr == IEEE802154_ADDR_BROADCAST) {
+		if (priv->pan_id == IEEE802154_PANID_BROADCAST ||
+		    priv->short_addr == IEEE802154_ADDR_BROADCAST) {
 			err = -EADDRNOTAVAIL;
 			break;
 		}
 
 		sa->family = AF_IEEE802154;
 		sa->addr.addr_type = IEEE802154_ADDR_SHORT;
-		sa->addr.pan_id = pan_id;
-		sa->addr.short_addr = short_addr;
+		sa->addr.pan_id = priv->pan_id;
+		sa->addr.short_addr = priv->short_addr;
 
 		err = 0;
 		break;
-	}
 	case SIOCSIFADDR:
 		dev_warn(&dev->dev,
-			 "Using DEBUGing ioctl SIOCSIFADDR isn't recommended!\n");
+			 "Using DEBUGing ioctl SIOCSIFADDR isn't recommened!\n");
 		if (sa->family != AF_IEEE802154 ||
 		    sa->addr.addr_type != IEEE802154_ADDR_SHORT ||
 		    sa->addr.pan_id == IEEE802154_PANID_BROADCAST ||
@@ -100,10 +101,10 @@ mac802154_wpan_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 			break;
 		}
 
-		priv->pan_id = cpu_to_le16(sa->addr.pan_id);
-		priv->short_addr = cpu_to_le16(sa->addr.short_addr);
+		priv->pan_id = sa->addr.pan_id;
+		priv->short_addr = sa->addr.short_addr;
 
-		err = mac802154_wpan_update_llsec(dev);
+		err = 0;
 		break;
 	}
 
@@ -121,194 +122,191 @@ static int mac802154_wpan_mac_addr(struct net_device *dev, void *p)
 	/* FIXME: validate addr */
 	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
 	mac802154_dev_set_ieee_addr(dev);
-	return mac802154_wpan_update_llsec(dev);
-}
-
-int mac802154_set_mac_params(struct net_device *dev,
-			     const struct ieee802154_mac_params *params)
-{
-	struct mac802154_sub_if_data *priv = netdev_priv(dev);
-
-	mutex_lock(&priv->hw->slaves_mtx);
-	priv->mac_params = *params;
-	mutex_unlock(&priv->hw->slaves_mtx);
-
-	return 0;
-}
-
-void mac802154_get_mac_params(struct net_device *dev,
-			      struct ieee802154_mac_params *params)
-{
-	struct mac802154_sub_if_data *priv = netdev_priv(dev);
-
-	mutex_lock(&priv->hw->slaves_mtx);
-	*params = priv->mac_params;
-	mutex_unlock(&priv->hw->slaves_mtx);
-}
-
-static int mac802154_wpan_open(struct net_device *dev)
-{
-	int rc;
-	struct mac802154_sub_if_data *priv = netdev_priv(dev);
-	struct wpan_phy *phy = priv->hw->phy;
-
-	rc = mac802154_slave_open(dev);
-	if (rc < 0)
-		return rc;
-
-	mutex_lock(&phy->pib_lock);
-
-	if (phy->set_txpower) {
-		rc = phy->set_txpower(phy, priv->mac_params.transmit_power);
-		if (rc < 0)
-			goto out;
-	}
-
-	if (phy->set_lbt) {
-		rc = phy->set_lbt(phy, priv->mac_params.lbt);
-		if (rc < 0)
-			goto out;
-	}
-
-	if (phy->set_cca_mode) {
-		rc = phy->set_cca_mode(phy, priv->mac_params.cca_mode);
-		if (rc < 0)
-			goto out;
-	}
-
-	if (phy->set_cca_ed_level) {
-		rc = phy->set_cca_ed_level(phy, priv->mac_params.cca_ed_level);
-		if (rc < 0)
-			goto out;
-	}
-
-	if (phy->set_csma_params) {
-		rc = phy->set_csma_params(phy, priv->mac_params.min_be,
-					  priv->mac_params.max_be,
-					  priv->mac_params.csma_retries);
-		if (rc < 0)
-			goto out;
-	}
-
-	if (phy->set_frame_retries) {
-		rc = phy->set_frame_retries(phy,
-					    priv->mac_params.frame_retries);
-		if (rc < 0)
-			goto out;
-	}
-
-	mutex_unlock(&phy->pib_lock);
-	return 0;
-
-out:
-	mutex_unlock(&phy->pib_lock);
-	return rc;
-}
-
-static int mac802154_set_header_security(struct mac802154_sub_if_data *priv,
-					 struct ieee802154_hdr *hdr,
-					 const struct ieee802154_mac_cb *cb)
-{
-	struct ieee802154_llsec_params params;
-	u8 level;
-
-	mac802154_llsec_get_params(&priv->sec, &params);
-
-	if (!params.enabled && cb->secen_override && cb->secen)
-		return -EINVAL;
-	if (!params.enabled ||
-	    (cb->secen_override && !cb->secen) ||
-	    !params.out_level)
-		return 0;
-	if (cb->seclevel_override && !cb->seclevel)
-		return -EINVAL;
-
-	level = cb->seclevel_override ? cb->seclevel : params.out_level;
-
-	hdr->fc.security_enabled = 1;
-	hdr->sec.level = level;
-	hdr->sec.key_id_mode = params.out_key.mode;
-	if (params.out_key.mode == IEEE802154_SCF_KEY_SHORT_INDEX)
-		hdr->sec.short_src = params.out_key.short_source;
-	else if (params.out_key.mode == IEEE802154_SCF_KEY_HW_INDEX)
-		hdr->sec.extended_src = params.out_key.extended_source;
-	hdr->sec.key_id = params.out_key.id;
-
 	return 0;
 }
 
 static int mac802154_header_create(struct sk_buff *skb,
 				   struct net_device *dev,
 				   unsigned short type,
-				   const void *daddr,
-				   const void *saddr,
+				   const void *_daddr,
+				   const void *_saddr,
 				   unsigned len)
 {
-	struct ieee802154_hdr hdr;
+	const struct ieee802154_addr *saddr = _saddr;
+	const struct ieee802154_addr *daddr = _daddr;
+	struct ieee802154_addr dev_addr;
 	struct mac802154_sub_if_data *priv = netdev_priv(dev);
-	struct ieee802154_mac_cb *cb = mac_cb(skb);
-	int hlen;
+	int pos = 2;
+	u8 head[MAC802154_FRAME_HARD_HEADER_LEN];
+	u16 fc;
 
 	if (!daddr)
 		return -EINVAL;
 
-	memset(&hdr.fc, 0, sizeof(hdr.fc));
-	hdr.fc.type = cb->type;
-	hdr.fc.security_enabled = cb->secen;
-	hdr.fc.ack_request = cb->ackreq;
-	hdr.seq = ieee802154_mlme_ops(dev)->get_dsn(dev);
-
-	if (mac802154_set_header_security(priv, &hdr, cb) < 0)
-		return -EINVAL;
+	head[pos++] = mac_cb(skb)->seq; /* DSN/BSN */
+	fc = mac_cb_type(skb);
+	if (mac_cb_is_ackreq(skb))
+		fc |= IEEE802154_FC_ACK_REQ;
 
 	if (!saddr) {
 		spin_lock_bh(&priv->mib_lock);
 
-		if (priv->short_addr == cpu_to_le16(IEEE802154_ADDR_BROADCAST) ||
-		    priv->short_addr == cpu_to_le16(IEEE802154_ADDR_UNDEF) ||
-		    priv->pan_id == cpu_to_le16(IEEE802154_PANID_BROADCAST)) {
-			hdr.source.mode = IEEE802154_ADDR_LONG;
-			hdr.source.extended_addr = priv->extended_addr;
+		if (priv->short_addr == IEEE802154_ADDR_BROADCAST ||
+		    priv->short_addr == IEEE802154_ADDR_UNDEF ||
+		    priv->pan_id == IEEE802154_PANID_BROADCAST) {
+			dev_addr.addr_type = IEEE802154_ADDR_LONG;
+			memcpy(dev_addr.hwaddr, dev->dev_addr,
+			       IEEE802154_ADDR_LEN);
 		} else {
-			hdr.source.mode = IEEE802154_ADDR_SHORT;
-			hdr.source.short_addr = priv->short_addr;
+			dev_addr.addr_type = IEEE802154_ADDR_SHORT;
+			dev_addr.short_addr = priv->short_addr;
 		}
 
-		hdr.source.pan_id = priv->pan_id;
+		dev_addr.pan_id = priv->pan_id;
+		saddr = &dev_addr;
 
 		spin_unlock_bh(&priv->mib_lock);
-	} else {
-		hdr.source = *(const struct ieee802154_addr *)saddr;
 	}
 
-	hdr.dest = *(const struct ieee802154_addr *)daddr;
+	if (daddr->addr_type != IEEE802154_ADDR_NONE) {
+		fc |= (daddr->addr_type << IEEE802154_FC_DAMODE_SHIFT);
 
-	hlen = ieee802154_hdr_push(skb, &hdr);
-	if (hlen < 0)
-		return -EINVAL;
+		head[pos++] = daddr->pan_id & 0xff;
+		head[pos++] = daddr->pan_id >> 8;
 
-	skb_reset_mac_header(skb);
-	skb->mac_len = hlen;
+		if (daddr->addr_type == IEEE802154_ADDR_SHORT) {
+			head[pos++] = daddr->short_addr & 0xff;
+			head[pos++] = daddr->short_addr >> 8;
+		} else {
+			mac802154_haddr_copy_swap(head + pos, daddr->hwaddr);
+			pos += IEEE802154_ADDR_LEN;
+		}
+	}
 
-	if (len > ieee802154_max_payload(&hdr))
-		return -EMSGSIZE;
+	if (saddr->addr_type != IEEE802154_ADDR_NONE) {
+		fc |= (saddr->addr_type << IEEE802154_FC_SAMODE_SHIFT);
 
-	return hlen;
+		if ((saddr->pan_id == daddr->pan_id) &&
+		    (saddr->pan_id != IEEE802154_PANID_BROADCAST)) {
+			/* PANID compression/intra PAN */
+			fc |= IEEE802154_FC_INTRA_PAN;
+		} else {
+			head[pos++] = saddr->pan_id & 0xff;
+			head[pos++] = saddr->pan_id >> 8;
+		}
+
+		if (saddr->addr_type == IEEE802154_ADDR_SHORT) {
+			head[pos++] = saddr->short_addr & 0xff;
+			head[pos++] = saddr->short_addr >> 8;
+		} else {
+			mac802154_haddr_copy_swap(head + pos, saddr->hwaddr);
+			pos += IEEE802154_ADDR_LEN;
+		}
+	}
+
+	head[0] = fc;
+	head[1] = fc >> 8;
+
+	memcpy(skb_push(skb, pos), head, pos);
+
+	return pos;
 }
 
 static int
 mac802154_header_parse(const struct sk_buff *skb, unsigned char *haddr)
 {
-	struct ieee802154_hdr hdr;
+	const u8 *hdr = skb_mac_header(skb);
+	const u8 *tail = skb_tail_pointer(skb);
 	struct ieee802154_addr *addr = (struct ieee802154_addr *)haddr;
+	u16 fc;
+	int da_type;
 
-	if (ieee802154_hdr_peek_addrs(skb, &hdr) < 0) {
-		pr_debug("malformed packet\n");
-		return 0;
+	if (hdr + 3 > tail)
+		goto malformed;
+
+	fc = hdr[0] | (hdr[1] << 8);
+
+	hdr += 3;
+
+	da_type = IEEE802154_FC_DAMODE(fc);
+	addr->addr_type = IEEE802154_FC_SAMODE(fc);
+
+	switch (da_type) {
+	case IEEE802154_ADDR_NONE:
+		if (fc & IEEE802154_FC_INTRA_PAN)
+			goto malformed;
+		break;
+	case IEEE802154_ADDR_LONG:
+		if (fc & IEEE802154_FC_INTRA_PAN) {
+			if (hdr + 2 > tail)
+				goto malformed;
+			addr->pan_id = hdr[0] | (hdr[1] << 8);
+			hdr += 2;
+		}
+
+		if (hdr + IEEE802154_ADDR_LEN > tail)
+			goto malformed;
+
+		hdr += IEEE802154_ADDR_LEN;
+		break;
+	case IEEE802154_ADDR_SHORT:
+		if (fc & IEEE802154_FC_INTRA_PAN) {
+			if (hdr + 2 > tail)
+				goto malformed;
+			addr->pan_id = hdr[0] | (hdr[1] << 8);
+			hdr += 2;
+		}
+
+		if (hdr + 2 > tail)
+			goto malformed;
+
+		hdr += 2;
+		break;
+	default:
+		goto malformed;
+
 	}
 
-	*addr = hdr.source;
-	return sizeof(*addr);
+	switch (addr->addr_type) {
+	case IEEE802154_ADDR_NONE:
+		break;
+	case IEEE802154_ADDR_LONG:
+		if (!(fc & IEEE802154_FC_INTRA_PAN)) {
+			if (hdr + 2 > tail)
+				goto malformed;
+			addr->pan_id = hdr[0] | (hdr[1] << 8);
+			hdr += 2;
+		}
+
+		if (hdr + IEEE802154_ADDR_LEN > tail)
+			goto malformed;
+
+		mac802154_haddr_copy_swap(addr->hwaddr, hdr);
+		hdr += IEEE802154_ADDR_LEN;
+		break;
+	case IEEE802154_ADDR_SHORT:
+		if (!(fc & IEEE802154_FC_INTRA_PAN)) {
+			if (hdr + 2 > tail)
+				goto malformed;
+			addr->pan_id = hdr[0] | (hdr[1] << 8);
+			hdr += 2;
+		}
+
+		if (hdr + 2 > tail)
+			goto malformed;
+
+		addr->short_addr = hdr[0] | (hdr[1] << 8);
+		hdr += 2;
+		break;
+	default:
+		goto malformed;
+	}
+
+	return sizeof(struct ieee802154_addr);
+
+malformed:
+	pr_debug("malformed packet\n");
+	return 0;
 }
 
 static netdev_tx_t
@@ -316,7 +314,6 @@ mac802154_wpan_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct mac802154_sub_if_data *priv;
 	u8 chan, page;
-	int rc;
 
 	priv = netdev_priv(dev);
 
@@ -328,13 +325,6 @@ mac802154_wpan_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (chan == MAC802154_CHAN_NONE ||
 	    page >= WPAN_NUM_PAGES ||
 	    chan >= WPAN_NUM_CHANNELS) {
-		kfree_skb(skb);
-		return NETDEV_TX_OK;
-	}
-
-	rc = mac802154_llsec_encrypt(&priv->sec, skb);
-	if (rc) {
-		pr_warn("encryption failed: %i\n", rc);
 		kfree_skb(skb);
 		return NETDEV_TX_OK;
 	}
@@ -352,21 +342,12 @@ static struct header_ops mac802154_header_ops = {
 };
 
 static const struct net_device_ops mac802154_wpan_ops = {
-	.ndo_open		= mac802154_wpan_open,
+	.ndo_open		= mac802154_slave_open,
 	.ndo_stop		= mac802154_slave_close,
 	.ndo_start_xmit		= mac802154_wpan_xmit,
 	.ndo_do_ioctl		= mac802154_wpan_ioctl,
 	.ndo_set_mac_address	= mac802154_wpan_mac_addr,
 };
-
-static void mac802154_wpan_free(struct net_device *dev)
-{
-	struct mac802154_sub_if_data *priv = netdev_priv(dev);
-
-	mac802154_llsec_destroy(&priv->sec);
-
-	free_netdev(dev);
-}
 
 void mac802154_wpan_setup(struct net_device *dev)
 {
@@ -377,14 +358,14 @@ void mac802154_wpan_setup(struct net_device *dev)
 
 	dev->hard_header_len	= MAC802154_FRAME_HARD_HEADER_LEN;
 	dev->header_ops		= &mac802154_header_ops;
-	dev->needed_tailroom	= 2 + 16; /* FCS + MIC */
+	dev->needed_tailroom	= 2; /* FCS */
 	dev->mtu		= IEEE802154_MTU;
 	dev->tx_queue_len	= 300;
 	dev->type		= ARPHRD_IEEE802154;
 	dev->flags		= IFF_NOARP | IFF_BROADCAST;
 	dev->watchdog_timeo	= 0;
 
-	dev->destructor		= mac802154_wpan_free;
+	dev->destructor		= free_netdev;
 	dev->netdev_ops		= &mac802154_wpan_ops;
 	dev->ml_priv		= &mac802154_mlme_wpan;
 
@@ -395,21 +376,12 @@ void mac802154_wpan_setup(struct net_device *dev)
 	priv->page = 0;
 
 	spin_lock_init(&priv->mib_lock);
-	mutex_init(&priv->sec_mtx);
 
 	get_random_bytes(&priv->bsn, 1);
 	get_random_bytes(&priv->dsn, 1);
 
-	/* defaults per 802.15.4-2011 */
-	priv->mac_params.min_be = 3;
-	priv->mac_params.max_be = 5;
-	priv->mac_params.csma_retries = 4;
-	priv->mac_params.frame_retries = -1; /* for compatibility, actual default is 3 */
-
-	priv->pan_id = cpu_to_le16(IEEE802154_PANID_BROADCAST);
-	priv->short_addr = cpu_to_le16(IEEE802154_ADDR_BROADCAST);
-
-	mac802154_llsec_init(&priv->sec);
+	priv->pan_id = IEEE802154_PANID_BROADCAST;
+	priv->short_addr = IEEE802154_ADDR_BROADCAST;
 }
 
 static int mac802154_process_data(struct net_device *dev, struct sk_buff *skb)
@@ -418,22 +390,15 @@ static int mac802154_process_data(struct net_device *dev, struct sk_buff *skb)
 }
 
 static int
-mac802154_subif_frame(struct mac802154_sub_if_data *sdata, struct sk_buff *skb,
-		      const struct ieee802154_hdr *hdr)
+mac802154_subif_frame(struct mac802154_sub_if_data *sdata, struct sk_buff *skb)
 {
-	__le16 span, sshort;
-	int rc;
-
 	pr_debug("getting packet via slave interface %s\n", sdata->dev->name);
 
 	spin_lock_bh(&sdata->mib_lock);
 
-	span = sdata->pan_id;
-	sshort = sdata->short_addr;
-
-	switch (mac_cb(skb)->dest.mode) {
+	switch (mac_cb(skb)->da.addr_type) {
 	case IEEE802154_ADDR_NONE:
-		if (mac_cb(skb)->dest.mode != IEEE802154_ADDR_NONE)
+		if (mac_cb(skb)->sa.addr_type != IEEE802154_ADDR_NONE)
 			/* FIXME: check if we are PAN coordinator */
 			skb->pkt_type = PACKET_OTHERHOST;
 		else
@@ -441,159 +406,153 @@ mac802154_subif_frame(struct mac802154_sub_if_data *sdata, struct sk_buff *skb,
 			skb->pkt_type = PACKET_HOST;
 		break;
 	case IEEE802154_ADDR_LONG:
-		if (mac_cb(skb)->dest.pan_id != span &&
-		    mac_cb(skb)->dest.pan_id != cpu_to_le16(IEEE802154_PANID_BROADCAST))
+		if (mac_cb(skb)->da.pan_id != sdata->pan_id &&
+		    mac_cb(skb)->da.pan_id != IEEE802154_PANID_BROADCAST)
 			skb->pkt_type = PACKET_OTHERHOST;
-		else if (mac_cb(skb)->dest.extended_addr == sdata->extended_addr)
+		else if (!memcmp(mac_cb(skb)->da.hwaddr, sdata->dev->dev_addr,
+				 IEEE802154_ADDR_LEN))
 			skb->pkt_type = PACKET_HOST;
 		else
 			skb->pkt_type = PACKET_OTHERHOST;
 		break;
 	case IEEE802154_ADDR_SHORT:
-		if (mac_cb(skb)->dest.pan_id != span &&
-		    mac_cb(skb)->dest.pan_id != cpu_to_le16(IEEE802154_PANID_BROADCAST))
+		if (mac_cb(skb)->da.pan_id != sdata->pan_id &&
+		    mac_cb(skb)->da.pan_id != IEEE802154_PANID_BROADCAST)
 			skb->pkt_type = PACKET_OTHERHOST;
-		else if (mac_cb(skb)->dest.short_addr == sshort)
+		else if (mac_cb(skb)->da.short_addr == sdata->short_addr)
 			skb->pkt_type = PACKET_HOST;
-		else if (mac_cb(skb)->dest.short_addr ==
-			  cpu_to_le16(IEEE802154_ADDR_BROADCAST))
+		else if (mac_cb(skb)->da.short_addr ==
+					IEEE802154_ADDR_BROADCAST)
 			skb->pkt_type = PACKET_BROADCAST;
 		else
 			skb->pkt_type = PACKET_OTHERHOST;
 		break;
 	default:
-		spin_unlock_bh(&sdata->mib_lock);
-		pr_debug("invalid dest mode\n");
-		kfree_skb(skb);
-		return NET_RX_DROP;
+		break;
 	}
 
 	spin_unlock_bh(&sdata->mib_lock);
 
 	skb->dev = sdata->dev;
 
-	rc = mac802154_llsec_decrypt(&sdata->sec, skb);
-	if (rc) {
-		pr_debug("decryption failed: %i\n", rc);
-		goto fail;
-	}
-
 	sdata->dev->stats.rx_packets++;
 	sdata->dev->stats.rx_bytes += skb->len;
 
-	switch (mac_cb(skb)->type) {
+	switch (mac_cb_type(skb)) {
 	case IEEE802154_FC_TYPE_DATA:
 		return mac802154_process_data(sdata->dev, skb);
 	default:
-		pr_warn("ieee802154: bad frame received (type = %d)\n",
-			mac_cb(skb)->type);
-		goto fail;
-	}
-
-fail:
-	kfree_skb(skb);
-	return NET_RX_DROP;
-}
-
-static void mac802154_print_addr(const char *name,
-				 const struct ieee802154_addr *addr)
-{
-	if (addr->mode == IEEE802154_ADDR_NONE)
-		pr_debug("%s not present\n", name);
-
-	pr_debug("%s PAN ID: %04x\n", name, le16_to_cpu(addr->pan_id));
-	if (addr->mode == IEEE802154_ADDR_SHORT) {
-		pr_debug("%s is short: %04x\n", name,
-			 le16_to_cpu(addr->short_addr));
-	} else {
-		u64 hw = swab64((__force u64) addr->extended_addr);
-
-		pr_debug("%s is hardware: %8phC\n", name, &hw);
+		pr_warning("ieee802154: bad frame received (type = %d)\n",
+			   mac_cb_type(skb));
+		kfree_skb(skb);
+		return NET_RX_DROP;
 	}
 }
 
-static int mac802154_parse_frame_start(struct sk_buff *skb,
-				       struct ieee802154_hdr *hdr)
+static int mac802154_parse_frame_start(struct sk_buff *skb)
 {
-	int hlen;
-	struct ieee802154_mac_cb *cb = mac_cb_init(skb);
+	u8 *head = skb->data;
+	u16 fc;
 
-	hlen = ieee802154_hdr_pull(skb, hdr);
-	if (hlen < 0)
-		return -EINVAL;
+	if (mac802154_fetch_skb_u16(skb, &fc) ||
+	    mac802154_fetch_skb_u8(skb, &(mac_cb(skb)->seq)))
+		goto err;
 
-	skb->mac_len = hlen;
+	pr_debug("fc: %04x dsn: %02x\n", fc, head[2]);
 
-	pr_debug("fc: %04x dsn: %02x\n", le16_to_cpup((__le16 *)&hdr->fc),
-		 hdr->seq);
+	mac_cb(skb)->flags = IEEE802154_FC_TYPE(fc);
+	mac_cb(skb)->sa.addr_type = IEEE802154_FC_SAMODE(fc);
+	mac_cb(skb)->da.addr_type = IEEE802154_FC_DAMODE(fc);
 
-	cb->type = hdr->fc.type;
-	cb->ackreq = hdr->fc.ack_request;
-	cb->secen = hdr->fc.security_enabled;
+	if (fc & IEEE802154_FC_INTRA_PAN)
+		mac_cb(skb)->flags |= MAC_CB_FLAG_INTRAPAN;
 
-	mac802154_print_addr("destination", &hdr->dest);
-	mac802154_print_addr("source", &hdr->source);
+	if (mac_cb(skb)->da.addr_type != IEEE802154_ADDR_NONE) {
+		if (mac802154_fetch_skb_u16(skb, &(mac_cb(skb)->da.pan_id)))
+			goto err;
 
-	cb->source = hdr->source;
-	cb->dest = hdr->dest;
+		/* source PAN id compression */
+		if (mac_cb_is_intrapan(skb))
+			mac_cb(skb)->sa.pan_id = mac_cb(skb)->da.pan_id;
 
-	if (hdr->fc.security_enabled) {
-		u64 key;
+		pr_debug("dest PAN addr: %04x\n", mac_cb(skb)->da.pan_id);
 
-		pr_debug("seclevel %i\n", hdr->sec.level);
+		if (mac_cb(skb)->da.addr_type == IEEE802154_ADDR_SHORT) {
+			u16 *da = &(mac_cb(skb)->da.short_addr);
 
-		switch (hdr->sec.key_id_mode) {
-		case IEEE802154_SCF_KEY_IMPLICIT:
-			pr_debug("implicit key\n");
-			break;
+			if (mac802154_fetch_skb_u16(skb, da))
+				goto err;
 
-		case IEEE802154_SCF_KEY_INDEX:
-			pr_debug("key %02x\n", hdr->sec.key_id);
-			break;
+			pr_debug("destination address is short: %04x\n",
+				 mac_cb(skb)->da.short_addr);
+		} else {
+			if (!pskb_may_pull(skb, IEEE802154_ADDR_LEN))
+				goto err;
 
-		case IEEE802154_SCF_KEY_SHORT_INDEX:
-			pr_debug("key %04x:%04x %02x\n",
-				 le32_to_cpu(hdr->sec.short_src) >> 16,
-				 le32_to_cpu(hdr->sec.short_src) & 0xffff,
-				 hdr->sec.key_id);
-			break;
+			mac802154_haddr_copy_swap(mac_cb(skb)->da.hwaddr,
+						  skb->data);
+			skb_pull(skb, IEEE802154_ADDR_LEN);
 
-		case IEEE802154_SCF_KEY_HW_INDEX:
-			key = swab64((__force u64) hdr->sec.extended_src);
-			pr_debug("key source %8phC %02x\n", &key,
-				 hdr->sec.key_id);
-			break;
+			pr_debug("destination address is hardware\n");
+		}
+	}
+
+	if (mac_cb(skb)->sa.addr_type != IEEE802154_ADDR_NONE) {
+		/* non PAN-compression, fetch source address id */
+		if (!(mac_cb_is_intrapan(skb))) {
+			u16 *sa_pan = &(mac_cb(skb)->sa.pan_id);
+
+			if (mac802154_fetch_skb_u16(skb, sa_pan))
+				goto err;
+		}
+
+		pr_debug("source PAN addr: %04x\n", mac_cb(skb)->da.pan_id);
+
+		if (mac_cb(skb)->sa.addr_type == IEEE802154_ADDR_SHORT) {
+			u16 *sa = &(mac_cb(skb)->sa.short_addr);
+
+			if (mac802154_fetch_skb_u16(skb, sa))
+				goto err;
+
+			pr_debug("source address is short: %04x\n",
+				 mac_cb(skb)->sa.short_addr);
+		} else {
+			if (!pskb_may_pull(skb, IEEE802154_ADDR_LEN))
+				goto err;
+
+			mac802154_haddr_copy_swap(mac_cb(skb)->sa.hwaddr,
+						  skb->data);
+			skb_pull(skb, IEEE802154_ADDR_LEN);
+
+			pr_debug("source address is hardware\n");
 		}
 	}
 
 	return 0;
+err:
+	return -EINVAL;
 }
 
 void mac802154_wpans_rx(struct mac802154_priv *priv, struct sk_buff *skb)
 {
 	int ret;
+	struct sk_buff *sskb;
 	struct mac802154_sub_if_data *sdata;
-	struct ieee802154_hdr hdr;
 
-	ret = mac802154_parse_frame_start(skb, &hdr);
+	ret = mac802154_parse_frame_start(skb);
 	if (ret) {
 		pr_debug("got invalid frame\n");
-		kfree_skb(skb);
 		return;
 	}
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(sdata, &priv->slaves, list) {
-		if (sdata->type != IEEE802154_DEV_WPAN ||
-		    !netif_running(sdata->dev))
+		if (sdata->type != IEEE802154_DEV_WPAN)
 			continue;
 
-		mac802154_subif_frame(sdata, skb, &hdr);
-		skb = NULL;
-		break;
+		sskb = skb_clone(skb, GFP_ATOMIC);
+		if (sskb)
+			mac802154_subif_frame(sdata, sskb);
 	}
 	rcu_read_unlock();
-
-	if (skb)
-		kfree_skb(skb);
 }

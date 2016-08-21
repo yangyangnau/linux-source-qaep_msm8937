@@ -139,6 +139,8 @@ struct oz_app_hdr {
 /* Values for app_id.
  */
 #define OZ_APPID_USB				0x1
+#define OZ_APPID_UNUSED1			0x2
+#define OZ_APPID_UNUSED2			0x3
 #define OZ_APPID_SERIAL				0x4
 #define OZ_APPID_MAX				OZ_APPID_SERIAL
 #define OZ_NB_APPS				(OZ_APPID_MAX+1)
@@ -190,7 +192,7 @@ struct oz_get_desc_req {
 	u16	size;
 	u8	req_type;
 	u8	desc_type;
-	__le16	w_index;
+	u16	w_index;
 	u8	index;
 } PACKED;
 
@@ -217,8 +219,8 @@ struct oz_get_desc_rsp {
 	u8	elt_seq_num;
 	u8	type;
 	u8	req_id;
-	__le16	offset;
-	__le16	total_size;
+	u16	offset;
+	u16	total_size;
 	u8	rcode;
 	u8	data[1];
 } PACKED;

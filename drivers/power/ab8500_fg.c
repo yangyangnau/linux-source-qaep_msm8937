@@ -25,7 +25,6 @@
 #include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/time.h>
-#include <linux/time64.h>
 #include <linux/of.h>
 #include <linux/completion.h>
 #include <linux/mfd/core.h>
@@ -109,7 +108,7 @@ enum ab8500_fg_calibration_state {
 struct ab8500_fg_avg_cap {
 	int avg;
 	int samples[NBR_AVG_SAMPLES];
-	time64_t time_stamps[NBR_AVG_SAMPLES];
+	__kernel_time_t time_stamps[NBR_AVG_SAMPLES];
 	int pos;
 	int nbr_samples;
 	int sum;
@@ -387,15 +386,15 @@ static int ab8500_fg_is_low_curr(struct ab8500_fg *di, int curr)
  */
 static int ab8500_fg_add_cap_sample(struct ab8500_fg *di, int sample)
 {
-	struct timespec64 ts64;
+	struct timespec ts;
 	struct ab8500_fg_avg_cap *avg = &di->avg_cap;
 
-	getnstimeofday64(&ts64);
+	getnstimeofday(&ts);
 
 	do {
 		avg->sum += sample - avg->samples[avg->pos];
 		avg->samples[avg->pos] = sample;
-		avg->time_stamps[avg->pos] = ts64.tv_sec;
+		avg->time_stamps[avg->pos] = ts.tv_sec;
 		avg->pos++;
 
 		if (avg->pos == NBR_AVG_SAMPLES)
@@ -408,7 +407,7 @@ static int ab8500_fg_add_cap_sample(struct ab8500_fg *di, int sample)
 		 * Check the time stamp for each sample. If too old,
 		 * replace with latest sample
 		 */
-	} while (ts64.tv_sec - VALID_CAPACITY_SEC > avg->time_stamps[avg->pos]);
+	} while (ts.tv_sec - VALID_CAPACITY_SEC > avg->time_stamps[avg->pos]);
 
 	avg->avg = avg->sum / avg->nbr_samples;
 
@@ -447,14 +446,14 @@ static void ab8500_fg_clear_cap_samples(struct ab8500_fg *di)
 static void ab8500_fg_fill_cap_sample(struct ab8500_fg *di, int sample)
 {
 	int i;
-	struct timespec64 ts64;
+	struct timespec ts;
 	struct ab8500_fg_avg_cap *avg = &di->avg_cap;
 
-	getnstimeofday64(&ts64);
+	getnstimeofday(&ts);
 
 	for (i = 0; i < NBR_AVG_SAMPLES; i++) {
 		avg->samples[i] = sample;
-		avg->time_stamps[i] = ts64.tv_sec;
+		avg->time_stamps[i] = ts.tv_sec;
 	}
 
 	avg->pos = 0;
@@ -575,8 +574,8 @@ int ab8500_fg_inst_curr_start(struct ab8500_fg *di)
 	}
 
 	/* Return and WFI */
-	reinit_completion(&di->ab8500_fg_started);
-	reinit_completion(&di->ab8500_fg_complete);
+	INIT_COMPLETION(di->ab8500_fg_started);
+	INIT_COMPLETION(di->ab8500_fg_complete);
 	enable_irq(di->irq);
 
 	/* Note: cc_lock is still locked */
@@ -2466,9 +2465,9 @@ static ssize_t charge_full_store(struct ab8500_fg *di, const char *buf,
 				 size_t count)
 {
 	unsigned long charge_full;
-	ssize_t ret;
+	ssize_t ret = -EINVAL;
 
-	ret = kstrtoul(buf, 10, &charge_full);
+	ret = strict_strtoul(buf, 10, &charge_full);
 
 	dev_dbg(di->dev, "Ret %zd charge_full %lu", ret, charge_full);
 
@@ -2490,7 +2489,7 @@ static ssize_t charge_now_store(struct ab8500_fg *di, const char *buf,
 	unsigned long charge_now;
 	ssize_t ret;
 
-	ret = kstrtoul(buf, 10, &charge_now);
+	ret = strict_strtoul(buf, 10, &charge_now);
 
 	dev_dbg(di->dev, "Ret %zd charge_now %lu was %d",
 		ret, charge_now, di->bat_cap.prev_mah);
@@ -2970,7 +2969,7 @@ static struct device_attribute ab8505_fg_sysfs_psy_attrs[] = {
 
 static int ab8500_fg_sysfs_psy_create_attrs(struct device *dev)
 {
-	unsigned int i;
+	unsigned int i, j;
 	struct power_supply *psy = dev_get_drvdata(dev);
 	struct ab8500_fg *di;
 
@@ -2979,15 +2978,14 @@ static int ab8500_fg_sysfs_psy_create_attrs(struct device *dev)
 	if (((is_ab8505(di->parent) || is_ab9540(di->parent)) &&
 	     abx500_get_chip_id(dev->parent) >= AB8500_CUT2P0)
 	    || is_ab8540(di->parent)) {
-		for (i = 0; i < ARRAY_SIZE(ab8505_fg_sysfs_psy_attrs); i++)
-			if (device_create_file(dev,
-					       &ab8505_fg_sysfs_psy_attrs[i]))
+		for (j = 0; j < ARRAY_SIZE(ab8505_fg_sysfs_psy_attrs); j++)
+			if (device_create_file(dev, &ab8505_fg_sysfs_psy_attrs[j]))
 				goto sysfs_psy_create_attrs_failed_ab8505;
 	}
 	return 0;
 sysfs_psy_create_attrs_failed_ab8505:
 	dev_err(dev, "Failed creating sysfs psy attrs for ab8505.\n");
-	while (i--)
+	while (j--)
 		device_remove_file(dev, &ab8505_fg_sysfs_psy_attrs[i]);
 
 	return -EIO;
@@ -3072,6 +3070,7 @@ static int ab8500_fg_remove(struct platform_device *pdev)
 	flush_scheduled_work();
 	ab8500_fg_sysfs_psy_remove_attrs(di->fg_psy.dev);
 	power_supply_unregister(&di->fg_psy);
+	platform_set_drvdata(pdev, NULL);
 	return ret;
 }
 

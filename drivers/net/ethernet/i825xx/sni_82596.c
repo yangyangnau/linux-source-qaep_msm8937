@@ -13,6 +13,7 @@
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/skbuff.h>
+#include <linux/init.h>
 #include <linux/types.h>
 #include <linux/bitops.h>
 #include <linux/platform_device.h>

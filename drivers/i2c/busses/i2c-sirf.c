@@ -12,6 +12,7 @@
 #include <linux/slab.h>
 #include <linux/platform_device.h>
 #include <linux/i2c.h>
+#include <linux/of_i2c.h>
 #include <linux/clk.h>
 #include <linux/err.h>
 #include <linux/io.h>
@@ -64,8 +65,6 @@
 #define SIRFSOC_I2C_START		BIT(7)
 
 #define SIRFSOC_I2C_DEFAULT_SPEED 100000
-#define SIRFSOC_I2C_ERR_NOACK      1
-#define SIRFSOC_I2C_ERR_TIMEOUT    2
 
 struct sirfsoc_i2c {
 	void __iomem *base;
@@ -144,23 +143,13 @@ static irqreturn_t i2c_sirfsoc_irq(int irq, void *dev_id)
 
 	if (i2c_stat & SIRFSOC_I2C_STAT_ERR) {
 		/* Error conditions */
-		siic->err_status = SIRFSOC_I2C_ERR_NOACK;
+		siic->err_status = 1;
 		writel(SIRFSOC_I2C_STAT_ERR, siic->base + SIRFSOC_I2C_STATUS);
 
 		if (i2c_stat & SIRFSOC_I2C_STAT_NACK)
-			dev_dbg(&siic->adapter.dev, "ACK not received\n");
+			dev_err(&siic->adapter.dev, "ACK not received\n");
 		else
 			dev_err(&siic->adapter.dev, "I2C error\n");
-
-		/*
-		 * Due to hardware ANOMALY, we need to reset I2C earlier after
-		 * we get NOACK while accessing non-existing clients, otherwise
-		 * we will get errors even we access existing clients later
-		 */
-		writel(readl(siic->base + SIRFSOC_I2C_CTRL) | SIRFSOC_I2C_RESET,
-				siic->base + SIRFSOC_I2C_CTRL);
-		while (readl(siic->base + SIRFSOC_I2C_CTRL) & SIRFSOC_I2C_RESET)
-			cpu_relax();
 
 		complete(&siic->done);
 	} else if (i2c_stat & SIRFSOC_I2C_STAT_CMD_DONE) {
@@ -194,10 +183,6 @@ static void i2c_sirfsoc_set_address(struct sirfsoc_i2c *siic,
 	if (msg->flags & I2C_M_RD)
 		addr |= 1;
 
-	/* Reverse direction bit */
-	if (msg->flags & I2C_M_REV_DIR_ADDR)
-		addr ^= 1;
-
 	writel(addr, siic->base + SIRFSOC_I2C_CMD(siic->cmd_ptr++));
 }
 
@@ -206,6 +191,7 @@ static int i2c_sirfsoc_xfer_msg(struct sirfsoc_i2c *siic, struct i2c_msg *msg)
 	u32 regval = readl(siic->base + SIRFSOC_I2C_CTRL);
 	/* timeout waiting for the xfer to finish or fail */
 	int timeout = msecs_to_jiffies((msg->len + 1) * 50);
+	int ret = 0;
 
 	i2c_sirfsoc_set_address(siic, msg);
 
@@ -214,7 +200,7 @@ static int i2c_sirfsoc_xfer_msg(struct sirfsoc_i2c *siic, struct i2c_msg *msg)
 	i2c_sirfsoc_queue_cmd(siic);
 
 	if (wait_for_completion_timeout(&siic->done, timeout) == 0) {
-		siic->err_status = SIRFSOC_I2C_ERR_TIMEOUT;
+		siic->err_status = 1;
 		dev_err(&siic->adapter.dev, "Transfer timeout\n");
 	}
 
@@ -222,14 +208,16 @@ static int i2c_sirfsoc_xfer_msg(struct sirfsoc_i2c *siic, struct i2c_msg *msg)
 		siic->base + SIRFSOC_I2C_CTRL);
 	writel(0, siic->base + SIRFSOC_I2C_CMD_START);
 
-	/* i2c control doesn't response, reset it */
-	if (siic->err_status == SIRFSOC_I2C_ERR_TIMEOUT) {
+	if (siic->err_status) {
 		writel(readl(siic->base + SIRFSOC_I2C_CTRL) | SIRFSOC_I2C_RESET,
 			siic->base + SIRFSOC_I2C_CTRL);
 		while (readl(siic->base + SIRFSOC_I2C_CTRL) & SIRFSOC_I2C_RESET)
 			cpu_relax();
+
+		ret = -EIO;
 	}
-	return siic->err_status ? -EAGAIN : 0;
+
+	return ret;
 }
 
 static u32 i2c_sirfsoc_func(struct i2c_adapter *adap)
@@ -307,11 +295,12 @@ static int i2c_sirfsoc_probe(struct platform_device *pdev)
 
 	siic = devm_kzalloc(&pdev->dev, sizeof(*siic), GFP_KERNEL);
 	if (!siic) {
+		dev_err(&pdev->dev, "Can't allocate driver data\n");
 		err = -ENOMEM;
 		goto out;
 	}
 	adap = &siic->adapter;
-	adap->class = I2C_CLASS_DEPRECATED;
+	adap->class = I2C_CLASS_HWMON;
 
 	mem_res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	siic->base = devm_ioremap_resource(&pdev->dev, mem_res);
@@ -332,7 +321,6 @@ static int i2c_sirfsoc_probe(struct platform_device *pdev)
 
 	adap->algo = &i2c_sirfsoc_algo;
 	adap->algo_data = siic;
-	adap->retries = 3;
 
 	adap->dev.of_node = pdev->dev.of_node;
 	adap->dev.parent = &pdev->dev;
@@ -360,7 +348,7 @@ static int i2c_sirfsoc_probe(struct platform_device *pdev)
 
 	if (bitrate < 100000)
 		regval =
-			(2 * ctrl_speed) / (bitrate * 11);
+			(2 * ctrl_speed) / (2 * bitrate * 11);
 	else
 		regval = ctrl_speed / (bitrate * 5);
 
@@ -377,6 +365,8 @@ static int i2c_sirfsoc_probe(struct platform_device *pdev)
 	}
 
 	clk_disable(clk);
+
+	of_i2c_register_devices(adap);
 
 	dev_info(&pdev->dev, " I2C adapter ready to operate\n");
 
@@ -426,8 +416,6 @@ static int i2c_sirfsoc_resume(struct device *dev)
 
 	clk_enable(siic->clk);
 	writel(SIRFSOC_I2C_RESET, siic->base + SIRFSOC_I2C_CTRL);
-	while (readl(siic->base + SIRFSOC_I2C_CTRL) & SIRFSOC_I2C_RESET)
-		cpu_relax();
 	writel(SIRFSOC_I2C_CORE_EN | SIRFSOC_I2C_MASTER_MODE,
 		siic->base + SIRFSOC_I2C_CTRL);
 	writel(siic->clk_div, siic->base + SIRFSOC_I2C_CLK_CTRL);

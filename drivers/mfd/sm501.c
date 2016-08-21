@@ -514,9 +514,9 @@ unsigned long sm501_set_clock(struct device *dev,
 	unsigned long mode = smc501_readl(sm->regs + SM501_POWER_MODE_CONTROL);
 	unsigned long gate = smc501_readl(sm->regs + SM501_CURRENT_GATE);
 	unsigned long clock = smc501_readl(sm->regs + SM501_CURRENT_CLOCK);
+	unsigned char reg;
 	unsigned int pll_reg = 0;
 	unsigned long sm501_freq; /* the actual frequency achieved */
-	u64 reg;
 
 	struct sm501_clock to;
 
@@ -840,7 +840,7 @@ static int sm501_register_uart(struct sm501_devdata *sm, int devices)
 	if (!pdev)
 		return -ENOMEM;
 
-	uart_data = dev_get_platdata(&pdev->dev);
+	uart_data = pdev->dev.platform_data;
 
 	if (devices & SM501_USE_UART0) {
 		sm501_setup_uart_data(sm, uart_data++, 0x30000);
@@ -1047,6 +1047,7 @@ static int sm501_register_gpio(struct sm501_devdata *sm)
 	struct sm501_gpio *gpio = &sm->gpio;
 	resource_size_t iobase = sm->io_res->start + SM501_GPIO;
 	int ret;
+	int tmp;
 
 	dev_dbg(sm->dev, "registering gpio block %08llx\n",
 		(unsigned long long)iobase);
@@ -1085,7 +1086,11 @@ static int sm501_register_gpio(struct sm501_devdata *sm)
 	return 0;
 
  err_low_chip:
-	gpiochip_remove(&gpio->low.gpio);
+	tmp = gpiochip_remove(&gpio->low.gpio);
+	if (tmp) {
+		dev_err(sm->dev, "cannot remove low chip, cannot tidy up\n");
+		return ret;
+	}
 
  err_mapped:
 	iounmap(gpio->regs);
@@ -1100,12 +1105,18 @@ static int sm501_register_gpio(struct sm501_devdata *sm)
 static void sm501_gpio_remove(struct sm501_devdata *sm)
 {
 	struct sm501_gpio *gpio = &sm->gpio;
+	int ret;
 
 	if (!sm->gpio.registered)
 		return;
 
-	gpiochip_remove(&gpio->low.gpio);
-	gpiochip_remove(&gpio->high.gpio);
+	ret = gpiochip_remove(&gpio->low.gpio);
+	if (ret)
+		dev_err(sm->dev, "cannot remove low chip, cannot tidy up\n");
+
+	ret = gpiochip_remove(&gpio->high.gpio);
+	if (ret)
+		dev_err(sm->dev, "cannot remove high chip, cannot tidy up\n");
 
 	iounmap(gpio->regs);
 	release_resource(gpio->regs_res);
@@ -1156,7 +1167,7 @@ static int sm501_register_gpio_i2c_instance(struct sm501_devdata *sm,
 	if (!pdev)
 		return -ENOMEM;
 
-	icd = dev_get_platdata(&pdev->dev);
+	icd = pdev->dev.platform_data;
 
 	/* We keep the pin_sda and pin_scl fields relative in case the
 	 * same platform data is passed to >1 SM501.
@@ -1221,7 +1232,7 @@ static ssize_t sm501_dbg_regs(struct device *dev,
 }
 
 
-static DEVICE_ATTR(dbg_regs, 0444, sm501_dbg_regs, NULL);
+static DEVICE_ATTR(dbg_regs, 0666, sm501_dbg_regs, NULL);
 
 /* sm501_init_reg
  *
@@ -1392,7 +1403,7 @@ static int sm501_plat_probe(struct platform_device *dev)
 
 	sm->dev = &dev->dev;
 	sm->pdev_id = dev->id;
-	sm->platdata = dev_get_platdata(&dev->dev);
+	sm->platdata = dev->dev.platform_data;
 
 	ret = platform_get_irq(dev, 0);
 	if (ret < 0) {
@@ -1649,6 +1660,7 @@ static int sm501_pci_probe(struct pci_dev *dev,
  err3:
 	pci_disable_device(dev);
  err2:
+	pci_set_drvdata(dev, NULL);
 	kfree(sm);
  err1:
 	return err;
@@ -1683,6 +1695,7 @@ static void sm501_pci_remove(struct pci_dev *dev)
 	release_resource(sm->regs_claim);
 	kfree(sm->regs_claim);
 
+	pci_set_drvdata(dev, NULL);
 	pci_disable_device(dev);
 }
 
@@ -1699,7 +1712,7 @@ static int sm501_plat_remove(struct platform_device *dev)
 	return 0;
 }
 
-static const struct pci_device_id sm501_pci_tbl[] = {
+static DEFINE_PCI_DEVICE_TABLE(sm501_pci_tbl) = {
 	{ 0x126f, 0x0501, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0 },
 	{ 0, },
 };
@@ -1715,7 +1728,7 @@ static struct pci_driver sm501_pci_driver = {
 
 MODULE_ALIAS("platform:sm501");
 
-static const struct of_device_id of_sm501_match_tbl[] = {
+static struct of_device_id of_sm501_match_tbl[] = {
 	{ .compatible = "smi,sm501", },
 	{ /* end */ }
 };

@@ -21,7 +21,6 @@
 #include <linux/module.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
-#include <linux/err.h>
 
 #include <mach/msm_gpiomux.h>
 
@@ -631,7 +630,7 @@ static struct irq_chip msm_gpio_irq_chip = {
 	.irq_set_type  = msm_gpio_irq_set_type,
 };
 
-static int gpio_msm_v1_probe(struct platform_device *pdev)
+static int __devinit gpio_msm_v1_probe(struct platform_device *pdev)
 {
 	int i, j = 0;
 	const struct platform_device_id *dev_id = platform_get_device_id(pdev);
@@ -653,14 +652,14 @@ static int gpio_msm_v1_probe(struct platform_device *pdev)
 		return irq2;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	base1 = devm_ioremap_resource(&pdev->dev, res);
-	if (IS_ERR(base1))
-		return PTR_ERR(base1);
+	base1 = devm_request_and_ioremap(&pdev->dev, res);
+	if (!base1)
+		return -EADDRNOTAVAIL;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
-	base2 = devm_ioremap_resource(&pdev->dev, res);
-	if (IS_ERR(base2))
-		return PTR_ERR(base2);
+	base2 = devm_request_and_ioremap(&pdev->dev, res);
+	if (!base2)
+		return -EADDRNOTAVAIL;
 
 	for (i = FIRST_GPIO_IRQ; i < FIRST_GPIO_IRQ + NR_GPIO_IRQS; i++) {
 		if (i - FIRST_GPIO_IRQ >=

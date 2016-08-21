@@ -11,14 +11,6 @@
 #include <linux/in6.h>
 #include <linux/atomic.h>
 
-/*
- * ifindex generation is per-net namespace, and loopback is
- * always the 1st device in ns (see net_dev_init), thus any
- * loopback device should get ifindex 1
- */
-
-#define LOOPBACK_IFINDEX	1
-
 struct flowi_common {
 	int	flowic_oif;
 	int	flowic_iif;
@@ -28,7 +20,8 @@ struct flowi_common {
 	__u8	flowic_proto;
 	__u8	flowic_flags;
 #define FLOWI_FLAG_ANYSRC		0x01
-#define FLOWI_FLAG_KNOWN_NH		0x02
+#define FLOWI_FLAG_CAN_SLEEP		0x02
+#define FLOWI_FLAG_KNOWN_NH		0x04
 	__u32	flowic_secid;
 };
 
@@ -88,7 +81,7 @@ static inline void flowi4_init_output(struct flowi4 *fl4, int oif,
 				      __be16 dport, __be16 sport)
 {
 	fl4->flowi4_oif = oif;
-	fl4->flowi4_iif = LOOPBACK_IFINDEX;
+	fl4->flowi4_iif = 0;
 	fl4->flowi4_mark = mark;
 	fl4->flowi4_tos = tos;
 	fl4->flowi4_scope = scope;
@@ -222,15 +215,12 @@ typedef struct flow_cache_object *(*flow_resolve_t)(
 		struct net *net, const struct flowi *key, u16 family,
 		u8 dir, struct flow_cache_object *oldobj, void *ctx);
 
-struct flow_cache_object *flow_cache_lookup(struct net *net,
-					    const struct flowi *key, u16 family,
-					    u8 dir, flow_resolve_t resolver,
-					    void *ctx);
-int flow_cache_init(struct net *net);
-void flow_cache_fini(struct net *net);
+extern struct flow_cache_object *flow_cache_lookup(
+		struct net *net, const struct flowi *key, u16 family,
+		u8 dir, flow_resolve_t resolver, void *ctx);
 
-void flow_cache_flush(struct net *net);
-void flow_cache_flush_deferred(struct net *net);
+extern void flow_cache_flush(void);
+extern void flow_cache_flush_deferred(void);
 extern atomic_t flow_cache_genid;
 
 #endif

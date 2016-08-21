@@ -18,7 +18,7 @@
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/wireless.h>
-#include <net/cfg80211.h>
+#include <linux/ieee80211.h>
 #include <net/iw_handler.h>
 #include <linux/string.h>
 #include <linux/if_arp.h>
@@ -75,10 +75,8 @@ static int zd1201_fw_upload(struct usb_device *dev, int apfw)
         len = fw_entry->size;
 
 	buf = kmalloc(1024, GFP_ATOMIC);
-	if (!buf) {
-		err = -ENOMEM;
+	if (!buf)
 		goto exit;
-	}
 	
 	while (len > 0) {
 		int translen = (len > 1024) ? 1024 : len;
@@ -914,8 +912,11 @@ static int zd1201_set_freq(struct net_device *dev,
 
 	if (freq->e == 0)
 		channel = freq->m;
-	else
-		channel = ieee80211_frequency_to_channel(freq->m);
+	else {
+		channel = ieee80211_freq_to_dsss_chan(freq->m);
+		if (channel < 0)
+			channel = 0;
+	}
 
 	err = zd1201_setconfig16(zd, ZD1201_RID_CNFOWNCHANNEL, channel);
 	if (err)
@@ -1763,10 +1764,8 @@ static int zd1201_probe(struct usb_interface *interface,
 	zd->endp_out2 = 2;
 	zd->rx_urb = usb_alloc_urb(0, GFP_KERNEL);
 	zd->tx_urb = usb_alloc_urb(0, GFP_KERNEL);
-	if (!zd->rx_urb || !zd->tx_urb) {
-		err = -ENOMEM;
+	if (!zd->rx_urb || !zd->tx_urb)
 		goto err_zd;
-	}
 
 	mdelay(100);
 	err = zd1201_drvr_start(zd);

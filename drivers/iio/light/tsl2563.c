@@ -460,14 +460,10 @@ static int tsl2563_write_raw(struct iio_dev *indio_dev,
 {
 	struct tsl2563_chip *chip = iio_priv(indio_dev);
 
-	if (mask != IIO_CHAN_INFO_CALIBSCALE)
-		return -EINVAL;
-	if (chan->channel2 == IIO_MOD_LIGHT_BOTH)
+	if (chan->channel == IIO_MOD_LIGHT_BOTH)
 		chip->calib0 = calib_from_sysfs(val);
-	else if (chan->channel2 == IIO_MOD_LIGHT_IR)
-		chip->calib1 = calib_from_sysfs(val);
 	else
-		return -EINVAL;
+		chip->calib1 = calib_from_sysfs(val);
 
 	return 0;
 }
@@ -476,14 +472,14 @@ static int tsl2563_read_raw(struct iio_dev *indio_dev,
 			    struct iio_chan_spec const *chan,
 			    int *val,
 			    int *val2,
-			    long mask)
+			    long m)
 {
 	int ret = -EINVAL;
 	u32 calib0, calib1;
 	struct tsl2563_chip *chip = iio_priv(indio_dev);
 
 	mutex_lock(&chip->lock);
-	switch (mask) {
+	switch (m) {
 	case IIO_CHAN_INFO_RAW:
 	case IIO_CHAN_INFO_PROCESSED:
 		switch (chan->type) {
@@ -502,7 +498,7 @@ static int tsl2563_read_raw(struct iio_dev *indio_dev,
 			ret = tsl2563_get_adc(chip);
 			if (ret)
 				goto error_ret;
-			if (chan->channel2 == IIO_MOD_LIGHT_BOTH)
+			if (chan->channel == 0)
 				*val = chip->data0;
 			else
 				*val = chip->data1;
@@ -514,7 +510,7 @@ static int tsl2563_read_raw(struct iio_dev *indio_dev,
 		break;
 
 	case IIO_CHAN_INFO_CALIBSCALE:
-		if (chan->channel2 == IIO_MOD_LIGHT_BOTH)
+		if (chan->channel == 0)
 			*val = calib_to_sysfs(chip->calib0);
 		else
 			*val = calib_to_sysfs(chip->calib1);
@@ -530,20 +526,6 @@ error_ret:
 	return ret;
 }
 
-static const struct iio_event_spec tsl2563_events[] = {
-	{
-		.type = IIO_EV_TYPE_THRESH,
-		.dir = IIO_EV_DIR_RISING,
-		.mask_separate = BIT(IIO_EV_INFO_VALUE) |
-				BIT(IIO_EV_INFO_ENABLE),
-	}, {
-		.type = IIO_EV_TYPE_THRESH,
-		.dir = IIO_EV_DIR_FALLING,
-		.mask_separate = BIT(IIO_EV_INFO_VALUE) |
-				BIT(IIO_EV_INFO_ENABLE),
-	},
-};
-
 static const struct iio_chan_spec tsl2563_channels[] = {
 	{
 		.type = IIO_LIGHT,
@@ -556,8 +538,10 @@ static const struct iio_chan_spec tsl2563_channels[] = {
 		.channel2 = IIO_MOD_LIGHT_BOTH,
 		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW) |
 		BIT(IIO_CHAN_INFO_CALIBSCALE),
-		.event_spec = tsl2563_events,
-		.num_event_specs = ARRAY_SIZE(tsl2563_events),
+		.event_mask = (IIO_EV_BIT(IIO_EV_TYPE_THRESH,
+					  IIO_EV_DIR_RISING) |
+			       IIO_EV_BIT(IIO_EV_TYPE_THRESH,
+					  IIO_EV_DIR_FALLING)),
 	}, {
 		.type = IIO_INTENSITY,
 		.modified = 1,
@@ -568,13 +552,12 @@ static const struct iio_chan_spec tsl2563_channels[] = {
 };
 
 static int tsl2563_read_thresh(struct iio_dev *indio_dev,
-	const struct iio_chan_spec *chan, enum iio_event_type type,
-	enum iio_event_direction dir, enum iio_event_info info, int *val,
-	int *val2)
+			       u64 event_code,
+			       int *val)
 {
 	struct tsl2563_chip *chip = iio_priv(indio_dev);
 
-	switch (dir) {
+	switch (IIO_EVENT_CODE_EXTRACT_DIR(event_code)) {
 	case IIO_EV_DIR_RISING:
 		*val = chip->high_thres;
 		break;
@@ -585,19 +568,18 @@ static int tsl2563_read_thresh(struct iio_dev *indio_dev,
 		return -EINVAL;
 	}
 
-	return IIO_VAL_INT;
+	return 0;
 }
 
 static int tsl2563_write_thresh(struct iio_dev *indio_dev,
-	const struct iio_chan_spec *chan, enum iio_event_type type,
-	enum iio_event_direction dir, enum iio_event_info info, int val,
-	int val2)
+				  u64 event_code,
+				  int val)
 {
 	struct tsl2563_chip *chip = iio_priv(indio_dev);
 	int ret;
 	u8 address;
 
-	if (dir == IIO_EV_DIR_RISING)
+	if (IIO_EVENT_CODE_EXTRACT_DIR(event_code) == IIO_EV_DIR_RISING)
 		address = TSL2563_REG_HIGHLOW;
 	else
 		address = TSL2563_REG_LOWLOW;
@@ -609,7 +591,7 @@ static int tsl2563_write_thresh(struct iio_dev *indio_dev,
 	ret = i2c_smbus_write_byte_data(chip->client,
 					TSL2563_CMD | (address + 1),
 					(val >> 8) & 0xFF);
-	if (dir == IIO_EV_DIR_RISING)
+	if (IIO_EVENT_CODE_EXTRACT_DIR(event_code) == IIO_EV_DIR_RISING)
 		chip->high_thres = val;
 	else
 		chip->low_thres = val;
@@ -638,8 +620,8 @@ static irqreturn_t tsl2563_event_handler(int irq, void *private)
 }
 
 static int tsl2563_write_interrupt_config(struct iio_dev *indio_dev,
-	const struct iio_chan_spec *chan, enum iio_event_type type,
-	enum iio_event_direction dir, int state)
+					  u64 event_code,
+					  int state)
 {
 	struct tsl2563_chip *chip = iio_priv(indio_dev);
 	int ret = 0;
@@ -680,8 +662,7 @@ out:
 }
 
 static int tsl2563_read_interrupt_config(struct iio_dev *indio_dev,
-	const struct iio_chan_spec *chan, enum iio_event_type type,
-	enum iio_event_direction dir)
+					 u64 event_code)
 {
 	struct tsl2563_chip *chip = iio_priv(indio_dev);
 	int ret;
@@ -718,11 +699,10 @@ static int tsl2563_probe(struct i2c_client *client,
 	struct iio_dev *indio_dev;
 	struct tsl2563_chip *chip;
 	struct tsl2563_platform_data *pdata = client->dev.platform_data;
-	struct device_node *np = client->dev.of_node;
 	int err = 0;
 	u8 id = 0;
 
-	indio_dev = devm_iio_device_alloc(&client->dev, sizeof(*chip));
+	indio_dev = iio_device_alloc(sizeof(*chip));
 	if (!indio_dev)
 		return -ENOMEM;
 
@@ -734,13 +714,13 @@ static int tsl2563_probe(struct i2c_client *client,
 	err = tsl2563_detect(chip);
 	if (err) {
 		dev_err(&client->dev, "detect error %d\n", -err);
-		return err;
+		goto fail1;
 	}
 
 	err = tsl2563_read_id(chip, &id);
 	if (err) {
 		dev_err(&client->dev, "read id error %d\n", -err);
-		return err;
+		goto fail1;
 	}
 
 	mutex_init(&chip->lock);
@@ -755,9 +735,6 @@ static int tsl2563_probe(struct i2c_client *client,
 
 	if (pdata)
 		chip->cover_comp_gain = pdata->cover_comp_gain;
-	else if (np)
-		of_property_read_u32(np, "amstaos,cover-comp-gain",
-				     &chip->cover_comp_gain);
 	else
 		chip->cover_comp_gain = 1;
 
@@ -774,7 +751,7 @@ static int tsl2563_probe(struct i2c_client *client,
 		indio_dev->info = &tsl2563_info_no_irq;
 
 	if (client->irq) {
-		err = devm_request_threaded_irq(&client->dev, client->irq,
+		err = request_threaded_irq(client->irq,
 					   NULL,
 					   &tsl2563_event_handler,
 					   IRQF_TRIGGER_RISING | IRQF_ONESHOT,
@@ -782,14 +759,14 @@ static int tsl2563_probe(struct i2c_client *client,
 					   indio_dev);
 		if (err) {
 			dev_err(&client->dev, "irq request error %d\n", -err);
-			return err;
+			goto fail1;
 		}
 	}
 
 	err = tsl2563_configure(chip);
 	if (err) {
 		dev_err(&client->dev, "configure error %d\n", -err);
-		return err;
+		goto fail2;
 	}
 
 	INIT_DELAYED_WORK(&chip->poweroff_work, tsl2563_poweroff_work);
@@ -800,14 +777,19 @@ static int tsl2563_probe(struct i2c_client *client,
 	err = iio_device_register(indio_dev);
 	if (err) {
 		dev_err(&client->dev, "iio registration error %d\n", -err);
-		goto fail;
+		goto fail3;
 	}
 
 	return 0;
 
-fail:
+fail3:
 	cancel_delayed_work(&chip->poweroff_work);
 	flush_scheduled_work();
+fail2:
+	if (client->irq)
+		free_irq(client->irq, indio_dev);
+fail1:
+	iio_device_free(indio_dev);
 	return err;
 }
 
@@ -825,6 +807,10 @@ static int tsl2563_remove(struct i2c_client *client)
 				  chip->intr);
 	flush_scheduled_work();
 	tsl2563_set_power(chip, 0);
+	if (client->irq)
+		free_irq(client->irq, indio_dev);
+
+	iio_device_free(indio_dev);
 
 	return 0;
 }

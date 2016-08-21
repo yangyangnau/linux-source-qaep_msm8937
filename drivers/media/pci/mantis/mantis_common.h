@@ -127,7 +127,7 @@ struct mantis_pci {
 	u32			last_block;
 	u8			*buf_cpu;
 	dma_addr_t		buf_dma;
-	__le32			*risc_cpu;
+	u32			*risc_cpu;
 	dma_addr_t		risc_dma;
 
 	struct tasklet_struct	tasklet;

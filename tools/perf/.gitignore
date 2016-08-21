@@ -13,9 +13,7 @@ perf*.html
 common-cmds.h
 perf.data
 perf.data.old
-output.svg
 perf-archive
-perf-with-kcore
 tags
 TAGS
 cscope*

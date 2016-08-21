@@ -1,7 +1,7 @@
 /*
  * Radio tuning for Maxim max2820 on RTL8180
  *
- * Copyright 2007 Andrea Merello <andrea.merello@gmail.com>
+ * Copyright 2007 Andrea Merello <andreamrl@tiscali.it>
  *
  * Code from the BSD driver and the rtl8181 project have been
  * very useful to understand certain things
@@ -18,6 +18,7 @@
  * published by the Free Software Foundation.
  */
 
+#include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/delay.h>
 #include <net/mac80211.h>

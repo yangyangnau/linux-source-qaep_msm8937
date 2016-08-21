@@ -21,14 +21,13 @@
 #include <linux/io.h>
 #include <linux/errno.h>
 #include <linux/gpio.h>
-#include <linux/of.h>
 #include <linux/of_gpio.h>
 #include <linux/platform_device.h>
 #include <linux/module.h>
-#include <linux/platform_data/gpio-lpc32xx.h>
 
 #include <mach/hardware.h>
 #include <mach/platform.h>
+#include <mach/gpio-lpc32xx.h>
 #include <mach/irqs.h>
 
 #define LPC32XX_GPIO_P3_INP_STATE		_GPREG(0x000)
@@ -448,7 +447,7 @@ static struct lpc32xx_gpio_chip lpc32xx_gpiochip[] = {
 			.base			= LPC32XX_GPIO_P0_GRP,
 			.ngpio			= LPC32XX_GPIO_P0_MAX,
 			.names			= gpio_p0_names,
-			.can_sleep		= false,
+			.can_sleep		= 0,
 		},
 		.gpio_grp = &gpio_grp_regs_p0,
 	},
@@ -464,7 +463,7 @@ static struct lpc32xx_gpio_chip lpc32xx_gpiochip[] = {
 			.base			= LPC32XX_GPIO_P1_GRP,
 			.ngpio			= LPC32XX_GPIO_P1_MAX,
 			.names			= gpio_p1_names,
-			.can_sleep		= false,
+			.can_sleep		= 0,
 		},
 		.gpio_grp = &gpio_grp_regs_p1,
 	},
@@ -479,7 +478,7 @@ static struct lpc32xx_gpio_chip lpc32xx_gpiochip[] = {
 			.base			= LPC32XX_GPIO_P2_GRP,
 			.ngpio			= LPC32XX_GPIO_P2_MAX,
 			.names			= gpio_p2_names,
-			.can_sleep		= false,
+			.can_sleep		= 0,
 		},
 		.gpio_grp = &gpio_grp_regs_p2,
 	},
@@ -495,7 +494,7 @@ static struct lpc32xx_gpio_chip lpc32xx_gpiochip[] = {
 			.base			= LPC32XX_GPIO_P3_GRP,
 			.ngpio			= LPC32XX_GPIO_P3_MAX,
 			.names			= gpio_p3_names,
-			.can_sleep		= false,
+			.can_sleep		= 0,
 		},
 		.gpio_grp = &gpio_grp_regs_p3,
 	},
@@ -509,7 +508,7 @@ static struct lpc32xx_gpio_chip lpc32xx_gpiochip[] = {
 			.base			= LPC32XX_GPI_P3_GRP,
 			.ngpio			= LPC32XX_GPI_P3_MAX,
 			.names			= gpi_p3_names,
-			.can_sleep		= false,
+			.can_sleep		= 0,
 		},
 		.gpio_grp = &gpio_grp_regs_p3,
 	},
@@ -523,7 +522,7 @@ static struct lpc32xx_gpio_chip lpc32xx_gpiochip[] = {
 			.base			= LPC32XX_GPO_P3_GRP,
 			.ngpio			= LPC32XX_GPO_P3_MAX,
 			.names			= gpo_p3_names,
-			.can_sleep		= false,
+			.can_sleep		= 0,
 		},
 		.gpio_grp = &gpio_grp_regs_p3,
 	},
@@ -560,7 +559,7 @@ static int lpc32xx_gpio_probe(struct platform_device *pdev)
 }
 
 #ifdef CONFIG_OF
-static const struct of_device_id lpc32xx_gpio_of_match[] = {
+static struct of_device_id lpc32xx_gpio_of_match[] = {
 	{ .compatible = "nxp,lpc3220-gpio", },
 	{ },
 };

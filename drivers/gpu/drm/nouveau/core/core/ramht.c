@@ -22,6 +22,7 @@
 
 #include <core/object.h>
 #include <core/ramht.h>
+#include <core/math.h>
 
 #include <subdev/bar.h>
 
@@ -103,6 +104,6 @@ nouveau_ramht_new(struct nouveau_object *parent, struct nouveau_object *pargpu,
 	if (ret)
 		return ret;
 
-	ramht->bits = order_base_2(nv_gpuobj(ramht)->size >> 3);
+	ramht->bits = log2i(nv_gpuobj(ramht)->size >> 3);
 	return 0;
 }

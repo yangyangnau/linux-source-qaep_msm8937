@@ -250,15 +250,15 @@ void rpc_destroy_wait_queue(struct rpc_wait_queue *queue)
 }
 EXPORT_SYMBOL_GPL(rpc_destroy_wait_queue);
 
-static int rpc_wait_bit_killable(struct wait_bit_key *key)
+static int rpc_wait_bit_killable(void *word)
 {
 	if (fatal_signal_pending(current))
 		return -ERESTARTSYS;
-	freezable_schedule_unsafe();
+	freezable_schedule();
 	return 0;
 }
 
-#if defined(RPC_DEBUG) || defined(RPC_TRACEPOINTS)
+#ifdef RPC_DEBUG
 static void rpc_task_set_debuginfo(struct rpc_task *task)
 {
 	static atomic_t rpc_pid;
@@ -309,7 +309,7 @@ static int rpc_complete_task(struct rpc_task *task)
  * to enforce taking of the wq->lock and hence avoid races with
  * rpc_complete_task().
  */
-int __rpc_wait_for_completion_task(struct rpc_task *task, wait_bit_action_f *action)
+int __rpc_wait_for_completion_task(struct rpc_task *task, int (*action)(void *))
 {
 	if (action == NULL)
 		action = rpc_wait_bit_killable;
@@ -444,6 +444,20 @@ static void rpc_wake_up_task_queue_locked(struct rpc_wait_queue *queue, struct r
 			__rpc_do_wake_up_task(queue, task);
 	}
 }
+
+/*
+ * Tests whether rpc queue is empty
+ */
+int rpc_queue_empty(struct rpc_wait_queue *queue)
+{
+	int res;
+
+	spin_lock_bh(&queue->lock);
+	res = queue->qlen;
+	spin_unlock_bh(&queue->lock);
+	return res == 0;
+}
+EXPORT_SYMBOL_GPL(rpc_queue_empty);
 
 /*
  * Wake up a task on a specific queue
@@ -637,8 +651,7 @@ static void __rpc_queue_timer_fn(unsigned long ptr)
 
 static void __rpc_atrun(struct rpc_task *task)
 {
-	if (task->tk_status == -ETIMEDOUT)
-		task->tk_status = 0;
+	task->tk_status = 0;
 }
 
 /*
@@ -791,6 +804,7 @@ static void __rpc_execute(struct rpc_task *task)
 			task->tk_flags |= RPC_TASK_KILLED;
 			rpc_exit(task, -ERESTARTSYS);
 		}
+		rpc_set_running(task);
 		dprintk("RPC: %5u sync task resuming\n", task->tk_pid);
 	}
 
@@ -811,17 +825,17 @@ static void __rpc_execute(struct rpc_task *task)
  */
 void rpc_execute(struct rpc_task *task)
 {
-	bool is_async = RPC_IS_ASYNC(task);
-
 	rpc_set_active(task);
 	rpc_make_runnable(task);
-	if (!is_async)
+	if (!RPC_IS_ASYNC(task))
 		__rpc_execute(task);
 }
 
 static void rpc_async_schedule(struct work_struct *work)
 {
+	current->flags |= PF_FSTRANS;
 	__rpc_execute(container_of(work, struct rpc_task, u.tk_work));
+	current->flags &= ~PF_FSTRANS;
 }
 
 /**
@@ -830,8 +844,7 @@ static void rpc_async_schedule(struct work_struct *work)
  * @size: requested byte size
  *
  * To prevent rpciod from hanging, this allocator never sleeps,
- * returning NULL and suppressing warning if the request cannot be serviced
- * immediately.
+ * returning NULL if the request cannot be serviced immediately.
  * The caller can arrange to sleep in a way that is safe for rpciod.
  *
  * Most requests are 'small' (under 2KiB) and can be serviced from a
@@ -844,7 +857,7 @@ static void rpc_async_schedule(struct work_struct *work)
 void *rpc_malloc(struct rpc_task *task, size_t size)
 {
 	struct rpc_buffer *buf;
-	gfp_t gfp = GFP_NOWAIT | __GFP_NOWARN;
+	gfp_t gfp = GFP_NOWAIT;
 
 	if (RPC_IS_SWAPPER(task))
 		gfp |= __GFP_MEMALLOC;

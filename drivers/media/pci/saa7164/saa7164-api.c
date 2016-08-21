@@ -680,6 +680,7 @@ static int saa7164_api_set_dif(struct saa7164_port *port, u8 reg, u8 val)
 int saa7164_api_configure_dif(struct saa7164_port *port, u32 std)
 {
 	struct saa7164_dev *dev = port->dev;
+	int ret = 0;
 	u8 agc_disable;
 
 	dprintk(DBGLVL_API, "%s(nr=%d, 0x%x)\n", __func__, port->nr, std);
@@ -732,7 +733,7 @@ int saa7164_api_configure_dif(struct saa7164_port *port, u32 std)
 	saa7164_api_set_dif(port, 0x04, 0x00); /* Active (again) */
 	msleep(100);
 
-	return 0;
+	return ret;
 }
 
 /* Ensure the dif is in the correct state for the operating mode

@@ -1,5 +1,8 @@
-#ifndef __MMC_MSM_SDCC_H
-#define __MMC_MSM_SDCC_H
+/*
+ *  arch/arm/include/asm/mach/mmc.h
+ */
+#ifndef ASMARM_MACH_MMC_H
+#define ASMARM_MACH_MMC_H
 
 #include <linux/mmc/host.h>
 #include <linux/mmc/card.h>

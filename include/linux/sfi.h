@@ -59,9 +59,6 @@
 #ifndef _LINUX_SFI_H
 #define _LINUX_SFI_H
 
-#include <linux/init.h>
-#include <linux/types.h>
-
 /* Table signatures reserved by the SFI specification */
 #define SFI_SIG_SYST		"SYST"
 #define SFI_SIG_FREQ		"FREQ"

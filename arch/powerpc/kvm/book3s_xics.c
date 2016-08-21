@@ -64,12 +64,8 @@
 static void icp_deliver_irq(struct kvmppc_xics *xics, struct kvmppc_icp *icp,
 			    u32 new_irq);
 
-/*
- * Return value ideally indicates how the interrupt was handled, but no
- * callers look at it (given that we don't implement KVM_IRQ_LINE_STATUS),
- * so just return 0.
- */
-static int ics_deliver_irq(struct kvmppc_xics *xics, u32 irq, u32 level)
+static int ics_deliver_irq(struct kvmppc_xics *xics, u32 irq, u32 level,
+			   bool report_status)
 {
 	struct ics_irq_state *state;
 	struct kvmppc_ics *ics;
@@ -86,14 +82,17 @@ static int ics_deliver_irq(struct kvmppc_xics *xics, u32 irq, u32 level)
 	if (!state->exists)
 		return -EINVAL;
 
+	if (report_status)
+		return state->asserted;
+
 	/*
 	 * We set state->asserted locklessly. This should be fine as
 	 * we are the only setter, thus concurrent access is undefined
 	 * to begin with.
 	 */
-	if (level == 1 || level == KVM_INTERRUPT_SET_LEVEL)
+	if (level == KVM_INTERRUPT_SET_LEVEL)
 		state->asserted = 1;
-	else if (level == 0 || level == KVM_INTERRUPT_UNSET) {
+	else if (level == KVM_INTERRUPT_UNSET) {
 		state->asserted = 0;
 		return 0;
 	}
@@ -101,7 +100,7 @@ static int ics_deliver_irq(struct kvmppc_xics *xics, u32 irq, u32 level)
 	/* Attempt delivery */
 	icp_deliver_irq(xics, NULL, irq);
 
-	return 0;
+	return state->asserted;
 }
 
 static void ics_check_resend(struct kvmppc_xics *xics, struct kvmppc_ics *ics,
@@ -773,8 +772,6 @@ static noinline int kvmppc_h_eoi(struct kvm_vcpu *vcpu, unsigned long xirr)
 	if (state->asserted)
 		icp_deliver_irq(xics, icp, irq);
 
-	kvm_notify_acked_irq(vcpu->kvm, 0, irq);
-
 	return H_SUCCESS;
 }
 
@@ -792,8 +789,6 @@ static noinline int kvmppc_xics_rm_complete(struct kvm_vcpu *vcpu, u32 hcall)
 		icp_check_resend(xics, icp);
 	if (icp->rm_action & XICS_RM_REJECT)
 		icp_deliver_irq(xics, icp, icp->rm_reject);
-	if (icp->rm_action & XICS_RM_NOTIFY_EOI)
-		kvm_notify_acked_irq(vcpu->kvm, 0, icp->rm_eoied_irq);
 
 	icp->rm_action = 0;
 
@@ -823,7 +818,7 @@ int kvmppc_xics_hcall(struct kvm_vcpu *vcpu, u32 req)
 	}
 
 	/* Check for real mode returning too hard */
-	if (xics->real_mode && is_kvmppc_hv_enabled(vcpu->kvm))
+	if (xics->real_mode)
 		return kvmppc_xics_rm_complete(vcpu, req);
 
 	switch (req) {
@@ -845,7 +840,6 @@ int kvmppc_xics_hcall(struct kvm_vcpu *vcpu, u32 req)
 
 	return rc;
 }
-EXPORT_SYMBOL_GPL(kvmppc_xics_hcall);
 
 
 /* -- Initialisation code etc. -- */
@@ -1175,16 +1169,7 @@ int kvm_set_irq(struct kvm *kvm, int irq_source_id, u32 irq, int level,
 {
 	struct kvmppc_xics *xics = kvm->arch.xics;
 
-	return ics_deliver_irq(xics, irq, level);
-}
-
-int kvm_set_msi(struct kvm_kernel_irq_routing_entry *irq_entry, struct kvm *kvm,
-		int irq_source_id, int level, bool line_status)
-{
-	if (!level)
-		return -1;
-	return kvm_set_irq(kvm, irq_source_id, irq_entry->gsi,
-			   level, line_status);
+	return ics_deliver_irq(xics, irq, level, line_status);
 }
 
 static int xics_set_attr(struct kvm_device *dev, struct kvm_device_attr *attr)
@@ -1260,20 +1245,18 @@ static int kvmppc_xics_create(struct kvm_device *dev, u32 type)
 		kvm->arch.xics = xics;
 	mutex_unlock(&kvm->lock);
 
-	if (ret) {
-		kfree(xics);
+	if (ret)
 		return ret;
-	}
 
 	xics_debugfs_init(xics);
 
-#ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
+#ifdef CONFIG_KVM_BOOK3S_64_HV
 	if (cpu_has_feature(CPU_FTR_ARCH_206)) {
 		/* Enable real mode support */
 		xics->real_mode = ENABLE_REALMODE;
 		xics->real_mode_dbg = DEBUG_REALMODE;
 	}
-#endif /* CONFIG_KVM_BOOK3S_HV_POSSIBLE */
+#endif /* CONFIG_KVM_BOOK3S_64_HV */
 
 	return 0;
 }
@@ -1314,27 +1297,4 @@ void kvmppc_xics_free_icp(struct kvm_vcpu *vcpu)
 	kfree(vcpu->arch.icp);
 	vcpu->arch.icp = NULL;
 	vcpu->arch.irq_type = KVMPPC_IRQ_DEFAULT;
-}
-
-static int xics_set_irq(struct kvm_kernel_irq_routing_entry *e,
-			struct kvm *kvm, int irq_source_id, int level,
-			bool line_status)
-{
-	return kvm_set_irq(kvm, irq_source_id, e->gsi, level, line_status);
-}
-
-int kvm_irq_map_gsi(struct kvm *kvm,
-		    struct kvm_kernel_irq_routing_entry *entries, int gsi)
-{
-	entries->gsi = gsi;
-	entries->type = KVM_IRQ_ROUTING_IRQCHIP;
-	entries->set = xics_set_irq;
-	entries->irqchip.irqchip = 0;
-	entries->irqchip.pin = gsi;
-	return 1;
-}
-
-int kvm_irq_map_chip_pin(struct kvm *kvm, unsigned irqchip, unsigned pin)
-{
-	return pin;
 }

@@ -30,7 +30,6 @@
 #include <linux/mtd/ndfc.h>
 #include <linux/slab.h>
 #include <linux/mtd/mtd.h>
-#include <linux/of_address.h>
 #include <linux/of_platform.h>
 #include <asm/io.h>
 
@@ -203,8 +202,7 @@ static int ndfc_probe(struct platform_device *ofdev)
 	struct ndfc_controller *ndfc;
 	const __be32 *reg;
 	u32 ccr;
-	u32 cs;
-	int err, len;
+	int err, len, cs;
 
 	/* Read the reg property to get the chip select */
 	reg = of_get_property(ofdev->dev.of_node, "reg", &len);

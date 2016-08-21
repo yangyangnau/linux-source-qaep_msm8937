@@ -517,16 +517,16 @@ static int wm8971_pcm_hw_params(struct snd_pcm_substream *substream,
 	int coeff = get_coeff(wm8971->sysclk, params_rate(params));
 
 	/* bit size */
-	switch (params_width(params)) {
-	case 16:
+	switch (params_format(params)) {
+	case SNDRV_PCM_FORMAT_S16_LE:
 		break;
-	case 20:
+	case SNDRV_PCM_FORMAT_S20_3LE:
 		iface |= 0x0004;
 		break;
-	case 24:
+	case SNDRV_PCM_FORMAT_S24_LE:
 		iface |= 0x0008;
 		break;
-	case 32:
+	case SNDRV_PCM_FORMAT_S32_LE:
 		iface |= 0x000c;
 		break;
 	}
@@ -615,7 +615,7 @@ static void wm8971_work(struct work_struct *work)
 	struct snd_soc_dapm_context *dapm =
 		container_of(work, struct snd_soc_dapm_context,
 			     delayed_work.work);
-	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(dapm);
+	struct snd_soc_codec *codec = dapm->codec;
 	wm8971_set_bias_level(codec, codec->dapm.bias_level);
 }
 
@@ -647,6 +647,12 @@ static int wm8971_probe(struct snd_soc_codec *codec)
 {
 	int ret = 0;
 	u16 reg;
+
+	ret = snd_soc_codec_set_cache_io(codec, 7, 9, SND_SOC_REGMAP);
+	if (ret < 0) {
+		printk(KERN_ERR "wm8971: failed to set cache I/O: %d\n", ret);
+		return ret;
+	}
 
 	INIT_DELAYED_WORK(&codec->dapm.delayed_work, wm8971_work);
 	wm8971_workq = create_workqueue("wm8971");

@@ -63,7 +63,20 @@ struct p9_fd_opts {
 	int rfd;
 	int wfd;
 	u16 port;
-	int privport;
+};
+
+/**
+ * struct p9_trans_fd - transport state
+ * @rd: reference to file to read from
+ * @wr: reference of file to write to
+ * @conn: connection state reference
+ *
+ */
+
+struct p9_trans_fd {
+	struct file *rd;
+	struct file *wr;
+	struct p9_conn *conn;
 };
 
 /*
@@ -74,15 +87,12 @@ struct p9_fd_opts {
 enum {
 	/* Options that take integer arguments */
 	Opt_port, Opt_rfdno, Opt_wfdno, Opt_err,
-	/* Options that take no arguments */
-	Opt_privport,
 };
 
 static const match_table_t tokens = {
 	{Opt_port, "port=%u"},
 	{Opt_rfdno, "rfdno=%u"},
 	{Opt_wfdno, "wfdno=%u"},
-	{Opt_privport, "privport"},
 	{Opt_err, NULL},
 };
 
@@ -145,28 +155,11 @@ struct p9_conn {
 	unsigned long wsched;
 };
 
-/**
- * struct p9_trans_fd - transport state
- * @rd: reference to file to read from
- * @wr: reference of file to write to
- * @conn: connection state reference
- *
- */
-
-struct p9_trans_fd {
-	struct file *rd;
-	struct file *wr;
-	struct p9_conn conn;
-};
-
 static void p9_poll_workfn(struct work_struct *work);
 
 static DEFINE_SPINLOCK(p9_poll_lock);
 static LIST_HEAD(p9_poll_pending_list);
 static DECLARE_WORK(p9_poll_work, p9_poll_workfn);
-
-static unsigned int p9_ipport_resv_min = P9_DEF_MIN_RESVPORT;
-static unsigned int p9_ipport_resv_max = P9_DEF_MAX_RESVPORT;
 
 static void p9_mux_poll_stop(struct p9_conn *m)
 {
@@ -212,9 +205,15 @@ static void p9_conn_cancel(struct p9_conn *m, int err)
 	m->err = err;
 
 	list_for_each_entry_safe(req, rtmp, &m->req_list, req_list) {
+		req->status = REQ_STATUS_ERROR;
+		if (!req->t_err)
+			req->t_err = err;
 		list_move(&req->req_list, &cancel_list);
 	}
 	list_for_each_entry_safe(req, rtmp, &m->unsent_req_list, req_list) {
+		req->status = REQ_STATUS_ERROR;
+		if (!req->t_err)
+			req->t_err = err;
 		list_move(&req->req_list, &cancel_list);
 	}
 	spin_unlock_irqrestore(&m->client->lock, flags);
@@ -222,9 +221,7 @@ static void p9_conn_cancel(struct p9_conn *m, int err)
 	list_for_each_entry_safe(req, rtmp, &cancel_list, req_list) {
 		p9_debug(P9_DEBUG_ERROR, "call back req %p\n", req);
 		list_del(&req->req_list);
-		if (!req->t_err)
-			req->t_err = err;
-		p9_client_cb(m->client, req, REQ_STATUS_ERROR);
+		p9_client_cb(m->client, req);
 	}
 }
 
@@ -240,10 +237,10 @@ p9_fd_poll(struct p9_client *client, struct poll_table_struct *pt)
 	if (!ts)
 		return -EREMOTEIO;
 
-	if (!ts->rd->f_op->poll)
+	if (!ts->rd->f_op || !ts->rd->f_op->poll)
 		return -EIO;
 
-	if (!ts->wr->f_op->poll)
+	if (!ts->wr->f_op || !ts->wr->f_op->poll)
 		return -EIO;
 
 	ret = ts->rd->f_op->poll(ts->rd, pt);
@@ -298,7 +295,6 @@ static void p9_read_work(struct work_struct *work)
 {
 	int n, err;
 	struct p9_conn *m;
-	int status = REQ_STATUS_ERROR;
 
 	m = container_of(work, struct p9_conn, rq);
 
@@ -345,7 +341,8 @@ static void p9_read_work(struct work_struct *work)
 			 "mux %p pkt: size: %d bytes tag: %d\n", m, n, tag);
 
 		m->req = p9_tag_lookup(m->client, tag);
-		if (!m->req || (m->req->status != REQ_STATUS_SENT)) {
+		if (!m->req || (m->req->status != REQ_STATUS_SENT &&
+					m->req->status != REQ_STATUS_FLSH)) {
 			p9_debug(P9_DEBUG_ERROR, "Unexpected packet tag %d\n",
 				 tag);
 			err = -EIO;
@@ -371,10 +368,10 @@ static void p9_read_work(struct work_struct *work)
 		p9_debug(P9_DEBUG_TRANS, "got new packet\n");
 		spin_lock(&m->client->lock);
 		if (m->req->status != REQ_STATUS_ERROR)
-			status = REQ_STATUS_RCVD;
+			m->req->status = REQ_STATUS_RCVD;
 		list_del(&m->req->req_list);
 		spin_unlock(&m->client->lock);
-		p9_client_cb(m->client, m->req, status);
+		p9_client_cb(m->client, m->req);
 		m->rbuf = NULL;
 		m->rpos = 0;
 		m->rsize = 0;
@@ -569,19 +566,21 @@ p9_pollwait(struct file *filp, wait_queue_head_t *wait_address, poll_table *p)
 }
 
 /**
- * p9_conn_create - initialize the per-session mux data
+ * p9_conn_create - allocate and initialize the per-session mux data
  * @client: client instance
  *
  * Note: Creates the polling task if this is the first session.
  */
 
-static void p9_conn_create(struct p9_client *client)
+static struct p9_conn *p9_conn_create(struct p9_client *client)
 {
 	int n;
-	struct p9_trans_fd *ts = client->trans;
-	struct p9_conn *m = &ts->conn;
+	struct p9_conn *m;
 
 	p9_debug(P9_DEBUG_TRANS, "client %p msize %d\n", client, client->msize);
+	m = kzalloc(sizeof(struct p9_conn), GFP_KERNEL);
+	if (!m)
+		return ERR_PTR(-ENOMEM);
 
 	INIT_LIST_HEAD(&m->mux_list);
 	m->client = client;
@@ -603,6 +602,8 @@ static void p9_conn_create(struct p9_client *client)
 		p9_debug(P9_DEBUG_TRANS, "mux %p can write\n", m);
 		set_bit(Wpending, &m->wsched);
 	}
+
+	return m;
 }
 
 /**
@@ -661,7 +662,7 @@ static int p9_fd_request(struct p9_client *client, struct p9_req_t *req)
 {
 	int n;
 	struct p9_trans_fd *ts = client->trans;
-	struct p9_conn *m = &ts->conn;
+	struct p9_conn *m = ts->conn;
 
 	p9_debug(P9_DEBUG_TRANS, "mux %p task %p tcall %p id %d\n",
 		 m, current, req->tc, req->tc->id);
@@ -696,24 +697,12 @@ static int p9_fd_cancel(struct p9_client *client, struct p9_req_t *req)
 		list_del(&req->req_list);
 		req->status = REQ_STATUS_FLSHD;
 		ret = 0;
-	}
+	} else if (req->status == REQ_STATUS_SENT)
+		req->status = REQ_STATUS_FLSH;
+
 	spin_unlock(&client->lock);
 
 	return ret;
-}
-
-static int p9_fd_cancelled(struct p9_client *client, struct p9_req_t *req)
-{
-	p9_debug(P9_DEBUG_TRANS, "client %p req %p\n", client, req);
-
-	/* we haven't received a response for oldreq,
-	 * remove it from the list.
-	 */
-	spin_lock(&client->lock);
-	list_del(&req->req_list);
-	spin_unlock(&client->lock);
-
-	return 0;
 }
 
 /**
@@ -752,7 +741,7 @@ static int parse_opts(char *params, struct p9_fd_opts *opts)
 		if (!*p)
 			continue;
 		token = match_token(p, tokens, args);
-		if ((token != Opt_err) && (token != Opt_privport)) {
+		if (token != Opt_err) {
 			r = match_int(&args[0], &option);
 			if (r < 0) {
 				p9_debug(P9_DEBUG_ERROR,
@@ -770,9 +759,6 @@ static int parse_opts(char *params, struct p9_fd_opts *opts)
 		case Opt_wfdno:
 			opts->wfd = option;
 			break;
-		case Opt_privport:
-			opts->privport = 1;
-			break;
 		default:
 			continue;
 		}
@@ -784,7 +770,7 @@ static int parse_opts(char *params, struct p9_fd_opts *opts)
 
 static int p9_fd_open(struct p9_client *client, int rfd, int wfd)
 {
-	struct p9_trans_fd *ts = kzalloc(sizeof(struct p9_trans_fd),
+	struct p9_trans_fd *ts = kmalloc(sizeof(struct p9_trans_fd),
 					   GFP_KERNEL);
 	if (!ts)
 		return -ENOMEM;
@@ -810,8 +796,9 @@ static int p9_socket_open(struct p9_client *client, struct socket *csocket)
 {
 	struct p9_trans_fd *p;
 	struct file *file;
+	int ret;
 
-	p = kzalloc(sizeof(struct p9_trans_fd), GFP_KERNEL);
+	p = kmalloc(sizeof(struct p9_trans_fd), GFP_KERNEL);
 	if (!p)
 		return -ENOMEM;
 
@@ -832,12 +819,20 @@ static int p9_socket_open(struct p9_client *client, struct socket *csocket)
 
 	p->rd->f_flags |= O_NONBLOCK;
 
-	p9_conn_create(client);
+	p->conn = p9_conn_create(client);
+	if (IS_ERR(p->conn)) {
+		ret = PTR_ERR(p->conn);
+		p->conn = NULL;
+		kfree(p);
+		sockfd_put(csocket);
+		sockfd_put(csocket);
+		return ret;
+	}
 	return 0;
 }
 
 /**
- * p9_mux_destroy - cancels all pending requests of mux
+ * p9_mux_destroy - cancels all pending requests and frees mux resources
  * @m: mux to destroy
  *
  */
@@ -854,6 +849,7 @@ static void p9_conn_destroy(struct p9_conn *m)
 	p9_conn_cancel(m, -ECONNRESET);
 
 	m->client = NULL;
+	kfree(m);
 }
 
 /**
@@ -875,7 +871,7 @@ static void p9_fd_close(struct p9_client *client)
 
 	client->status = Disconnected;
 
-	p9_conn_destroy(&ts->conn);
+	p9_conn_destroy(ts->conn);
 
 	if (ts->rd)
 		fput(ts->rd);
@@ -901,24 +897,6 @@ static inline int valid_ipaddr4(const char *buf)
 	}
 	return 0;
 }
-
-static int p9_bind_privport(struct socket *sock)
-{
-	struct sockaddr_in cl;
-	int port, err = -EINVAL;
-
-	memset(&cl, 0, sizeof(cl));
-	cl.sin_family = AF_INET;
-	cl.sin_addr.s_addr = INADDR_ANY;
-	for (port = p9_ipport_resv_max; port >= p9_ipport_resv_min; port--) {
-		cl.sin_port = htons((ushort)port);
-		err = kernel_bind(sock, (struct sockaddr *)&cl, sizeof(cl));
-		if (err != -EADDRINUSE)
-			break;
-	}
-	return err;
-}
-
 
 static int
 p9_fd_create_tcp(struct p9_client *client, const char *addr, char *args)
@@ -946,16 +924,6 @@ p9_fd_create_tcp(struct p9_client *client, const char *addr, char *args)
 		pr_err("%s (%d): problem creating socket\n",
 		       __func__, task_pid_nr(current));
 		return err;
-	}
-
-	if (opts.privport) {
-		err = p9_bind_privport(csocket);
-		if (err < 0) {
-			pr_err("%s (%d): problem binding to privport\n",
-			       __func__, task_pid_nr(current));
-			sock_release(csocket);
-			return err;
-		}
 	}
 
 	err = csocket->ops->connect(csocket,
@@ -1027,7 +995,14 @@ p9_fd_create(struct p9_client *client, const char *addr, char *args)
 		return err;
 
 	p = (struct p9_trans_fd *) client->trans;
-	p9_conn_create(client);
+	p->conn = p9_conn_create(client);
+	if (IS_ERR(p->conn)) {
+		err = PTR_ERR(p->conn);
+		p->conn = NULL;
+		fput(p->rd);
+		fput(p->wr);
+		return err;
+	}
 
 	return 0;
 }
@@ -1035,12 +1010,11 @@ p9_fd_create(struct p9_client *client, const char *addr, char *args)
 static struct p9_trans_module p9_tcp_trans = {
 	.name = "tcp",
 	.maxsize = MAX_SOCK_BUF,
-	.def = 0,
+	.def = 1,
 	.create = p9_fd_create_tcp,
 	.close = p9_fd_close,
 	.request = p9_fd_request,
 	.cancel = p9_fd_cancel,
-	.cancelled = p9_fd_cancelled,
 	.owner = THIS_MODULE,
 };
 
@@ -1052,7 +1026,6 @@ static struct p9_trans_module p9_unix_trans = {
 	.close = p9_fd_close,
 	.request = p9_fd_request,
 	.cancel = p9_fd_cancel,
-	.cancelled = p9_fd_cancelled,
 	.owner = THIS_MODULE,
 };
 
@@ -1064,7 +1037,6 @@ static struct p9_trans_module p9_fd_trans = {
 	.close = p9_fd_close,
 	.request = p9_fd_request,
 	.cancel = p9_fd_cancel,
-	.cancelled = p9_fd_cancelled,
 	.owner = THIS_MODULE,
 };
 

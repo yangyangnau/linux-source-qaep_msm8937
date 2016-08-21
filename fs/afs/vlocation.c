@@ -130,6 +130,7 @@ static int afs_vlocation_access_vl_by_id(struct afs_vlocation *vl,
 					/* second+ BUSY - sleep a little bit */
 					set_current_state(TASK_UNINTERRUPTIBLE);
 					schedule_timeout(1);
+					__set_current_state(TASK_RUNNING);
 				}
 				continue;
 			}
@@ -307,8 +308,7 @@ static int afs_vlocation_fill_in_record(struct afs_vlocation *vl,
 	/* see if we have an in-cache copy (will set vl->valid if there is) */
 #ifdef CONFIG_AFS_FSCACHE
 	vl->cache = fscache_acquire_cookie(vl->cell->cache,
-					   &afs_vlocation_cache_index_def, vl,
-					   true);
+					   &afs_vlocation_cache_index_def, vl);
 #endif
 
 	if (vl->valid) {

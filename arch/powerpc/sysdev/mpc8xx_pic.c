@@ -1,5 +1,6 @@
 #include <linux/kernel.h>
 #include <linux/stddef.h>
+#include <linux/init.h>
 #include <linux/sched.h>
 #include <linux/signal.h>
 #include <linux/irq.h>

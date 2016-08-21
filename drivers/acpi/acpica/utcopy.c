@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2014, Intel Corp.
+ * Copyright (C) 2000 - 2013, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -178,6 +178,7 @@ acpi_ut_copy_isimple_to_esimple(union acpi_operand_object *internal_object,
 
 		switch (internal_object->reference.class) {
 		case ACPI_REFCLASS_NAME:
+
 			/*
 			 * For namepath, return the object handle ("reference")
 			 * We are referring to the namespace node
@@ -263,6 +264,7 @@ acpi_ut_copy_ielement_to_eelement(u8 object_type,
 
 	switch (object_type) {
 	case ACPI_COPY_TYPE_SIMPLE:
+
 		/*
 		 * This is a simple or null object
 		 */
@@ -276,6 +278,7 @@ acpi_ut_copy_ielement_to_eelement(u8 object_type,
 		break;
 
 	case ACPI_COPY_TYPE_PACKAGE:
+
 		/*
 		 * Build the package object
 		 */
@@ -301,7 +304,6 @@ acpi_ut_copy_ielement_to_eelement(u8 object_type,
 		break;
 
 	default:
-
 		return (AE_BAD_PARAMETER);
 	}
 
@@ -479,7 +481,6 @@ acpi_ut_copy_esimple_to_isimple(union acpi_object *external_object,
 		return_ACPI_STATUS(AE_OK);
 
 	default:
-
 		/* All other types are not supported */
 
 		ACPI_ERROR((AE_INFO,
@@ -535,24 +536,22 @@ acpi_ut_copy_esimple_to_isimple(union acpi_object *external_object,
 
 	case ACPI_TYPE_LOCAL_REFERENCE:
 
-		/* An incoming reference is defined to be a namespace node */
+		/* TBD: should validate incoming handle */
 
-		internal_object->reference.class = ACPI_REFCLASS_REFOF;
-		internal_object->reference.object =
+		internal_object->reference.class = ACPI_REFCLASS_NAME;
+		internal_object->reference.node =
 		    external_object->reference.handle;
 		break;
 
 	default:
-
 		/* Other types can't get here */
-
 		break;
 	}
 
 	*ret_internal_object = internal_object;
 	return_ACPI_STATUS(AE_OK);
 
-error_exit:
+      error_exit:
 	acpi_ut_remove_reference(internal_object);
 	return_ACPI_STATUS(AE_NO_MEMORY);
 }
@@ -801,9 +800,7 @@ acpi_ut_copy_simple_object(union acpi_operand_object *source_desc,
 		break;
 
 	default:
-
 		/* Nothing to do for other simple objects */
-
 		break;
 	}
 
@@ -871,6 +868,7 @@ acpi_ut_copy_ielement_to_ielement(u8 object_type,
 		break;
 
 	case ACPI_COPY_TYPE_PACKAGE:
+
 		/*
 		 * This object is a package - go down another nesting level
 		 * Create and build the package object
@@ -893,13 +891,12 @@ acpi_ut_copy_ielement_to_ielement(u8 object_type,
 		break;
 
 	default:
-
 		return (AE_BAD_PARAMETER);
 	}
 
 	return (status);
 
-error_exit:
+      error_exit:
 	acpi_ut_remove_reference(target_object);
 	return (status);
 }
@@ -999,12 +996,6 @@ acpi_ut_copy_iobject_to_iobject(union acpi_operand_object *source_desc,
 						      walk_state);
 	} else {
 		status = acpi_ut_copy_simple_object(source_desc, *dest_desc);
-	}
-
-	/* Delete the allocated object if copy failed */
-
-	if (ACPI_FAILURE(status)) {
-		acpi_ut_remove_reference(*dest_desc);
 	}
 
 	return_ACPI_STATUS(status);

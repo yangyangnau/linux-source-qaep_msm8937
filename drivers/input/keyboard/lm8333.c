@@ -131,8 +131,7 @@ static irqreturn_t lm8333_irq_thread(int irq, void *data)
 static int lm8333_probe(struct i2c_client *client,
 				  const struct i2c_device_id *id)
 {
-	const struct lm8333_platform_data *pdata =
-			dev_get_platdata(&client->dev);
+	const struct lm8333_platform_data *pdata = client->dev.platform_data;
 	struct lm8333 *lm8333;
 	struct input_dev *input;
 	int err, active_time;

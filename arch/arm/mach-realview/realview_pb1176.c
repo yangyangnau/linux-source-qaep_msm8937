@@ -31,8 +31,6 @@
 #include <linux/io.h>
 #include <linux/irqchip/arm-gic.h>
 #include <linux/platform_data/clk-realview.h>
-#include <linux/reboot.h>
-#include <linux/memblock.h>
 
 #include <mach/hardware.h>
 #include <asm/irq.h>
@@ -331,7 +329,7 @@ static void __init realview_pb1176_timer_init(void)
 	realview_timer_init(IRQ_DC1176_TIMER0);
 }
 
-static void realview_pb1176_restart(enum reboot_mode mode, const char *cmd)
+static void realview_pb1176_restart(char mode, const char *cmd)
 {
 	void __iomem *reset_ctrl = __io_address(REALVIEW_SYS_RESETCTL);
 	void __iomem *lock_ctrl = __io_address(REALVIEW_SYS_LOCK);
@@ -340,12 +338,15 @@ static void realview_pb1176_restart(enum reboot_mode mode, const char *cmd)
 	dsb();
 }
 
-static void realview_pb1176_fixup(struct tag *tags, char **from)
+static void realview_pb1176_fixup(struct tag *tags, char **from,
+				  struct meminfo *meminfo)
 {
 	/*
 	 * RealView PB1176 only has 128MB of RAM mapped at 0.
 	 */
-	memblock_add(0, SZ_128M);
+	meminfo->bank[0].start = 0;
+	meminfo->bank[0].size = SZ_128M;
+	meminfo->nr_banks = 1;
 }
 
 static void __init realview_pb1176_init(void)
@@ -353,13 +354,7 @@ static void __init realview_pb1176_init(void)
 	int i;
 
 #ifdef CONFIG_CACHE_L2X0
-	/*
-	 * The PL220 needs to be manually configured as the hardware
-	 * doesn't report the correct sizes.
-	 * 128kB (16kB/way), 8-way associativity, event monitor and
-	 * parity enabled, ignore share bit, no force write allocate
-	 * Bits:  .... ...0 0111 0011 0000 .... .... ....
-	 */
+	/* 128Kb (16Kb/way) 8-way associativity. evmon/parity/share enabled. */
 	l2x0_init(__io_address(REALVIEW_PB1176_L220_BASE), 0x00730000, 0xfe000fff);
 #endif
 
@@ -371,7 +366,6 @@ static void __init realview_pb1176_init(void)
 	realview_usb_register(realview_pb1176_isp1761_resources);
 	platform_device_register(&pmu_device);
 	platform_device_register(&char_lcd_device);
-	platform_device_register(&realview_leds_device);
 
 	for (i = 0; i < ARRAY_SIZE(amba_devs); i++) {
 		struct amba_device *d = amba_devs[i];

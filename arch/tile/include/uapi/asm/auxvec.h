@@ -15,7 +15,6 @@
 #ifndef _ASM_TILE_AUXVEC_H
 #define _ASM_TILE_AUXVEC_H
 
-/* The vDSO location. */
-#define AT_SYSINFO_EHDR         33
+/* No extensions to auxvec */
 
 #endif /* _ASM_TILE_AUXVEC_H */

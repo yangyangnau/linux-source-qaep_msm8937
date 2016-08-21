@@ -35,7 +35,6 @@
 
 #include "dma.h"
 #include "registers.h"
-#include "dma_v2.h"
 
 /*
  * Bit 7 of a tag map entry is the "valid" bit, if it is set then bits 0:6
@@ -148,7 +147,7 @@ static int ioat_dca_add_requester(struct dca_provider *dca, struct device *dev)
 	u16 id;
 
 	/* This implementation only supports PCI-Express */
-	if (!dev_is_pci(dev))
+	if (dev->bus != &pci_bus_type)
 		return -ENODEV;
 	pdev = to_pci_dev(dev);
 	id = dcaid_from_pcidev(pdev);
@@ -180,7 +179,7 @@ static int ioat_dca_remove_requester(struct dca_provider *dca,
 	int i;
 
 	/* This implementation only supports PCI-Express */
-	if (!dev_is_pci(dev))
+	if (dev->bus != &pci_bus_type)
 		return -ENODEV;
 	pdev = to_pci_dev(dev);
 
@@ -321,7 +320,7 @@ static int ioat2_dca_add_requester(struct dca_provider *dca, struct device *dev)
 	u16 global_req_table;
 
 	/* This implementation only supports PCI-Express */
-	if (!dev_is_pci(dev))
+	if (dev->bus != &pci_bus_type)
 		return -ENODEV;
 	pdev = to_pci_dev(dev);
 	id = dcaid_from_pcidev(pdev);
@@ -355,7 +354,7 @@ static int ioat2_dca_remove_requester(struct dca_provider *dca,
 	u16 global_req_table;
 
 	/* This implementation only supports PCI-Express */
-	if (!dev_is_pci(dev))
+	if (dev->bus != &pci_bus_type)
 		return -ENODEV;
 	pdev = to_pci_dev(dev);
 
@@ -497,7 +496,7 @@ static int ioat3_dca_add_requester(struct dca_provider *dca, struct device *dev)
 	u16 global_req_table;
 
 	/* This implementation only supports PCI-Express */
-	if (!dev_is_pci(dev))
+	if (dev->bus != &pci_bus_type)
 		return -ENODEV;
 	pdev = to_pci_dev(dev);
 	id = dcaid_from_pcidev(pdev);
@@ -531,7 +530,7 @@ static int ioat3_dca_remove_requester(struct dca_provider *dca,
 	u16 global_req_table;
 
 	/* This implementation only supports PCI-Express */
-	if (!dev_is_pci(dev))
+	if (dev->bus != &pci_bus_type)
 		return -ENODEV;
 	pdev = to_pci_dev(dev);
 

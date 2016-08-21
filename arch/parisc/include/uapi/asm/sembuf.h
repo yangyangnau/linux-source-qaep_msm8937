@@ -1,8 +1,6 @@
 #ifndef _PARISC_SEMBUF_H
 #define _PARISC_SEMBUF_H
 
-#include <asm/bitsperlong.h>
-
 /* 
  * The semid64_ds structure for parisc architecture.
  * Note extra padding because this structure is passed back and forth
@@ -15,11 +13,11 @@
 
 struct semid64_ds {
 	struct ipc64_perm sem_perm;		/* permissions .. see ipc.h */
-#if __BITS_PER_LONG != 64
+#ifndef CONFIG_64BIT
 	unsigned int	__pad1;
 #endif
 	__kernel_time_t	sem_otime;		/* last semop time */
-#if __BITS_PER_LONG != 64
+#ifndef CONFIG_64BIT
 	unsigned int	__pad2;
 #endif
 	__kernel_time_t	sem_ctime;		/* last change time */

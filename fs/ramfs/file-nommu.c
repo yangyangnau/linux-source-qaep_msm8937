@@ -27,23 +27,24 @@
 #include "internal.h"
 
 static int ramfs_nommu_setattr(struct dentry *, struct iattr *);
-static unsigned long ramfs_nommu_get_unmapped_area(struct file *file,
-						   unsigned long addr,
-						   unsigned long len,
-						   unsigned long pgoff,
-						   unsigned long flags);
-static int ramfs_nommu_mmap(struct file *file, struct vm_area_struct *vma);
+
+const struct address_space_operations ramfs_aops = {
+	.readpage		= simple_readpage,
+	.write_begin		= simple_write_begin,
+	.write_end		= simple_write_end,
+	.set_page_dirty		= __set_page_dirty_no_writeback,
+};
 
 const struct file_operations ramfs_file_operations = {
 	.mmap			= ramfs_nommu_mmap,
 	.get_unmapped_area	= ramfs_nommu_get_unmapped_area,
-	.read			= new_sync_read,
-	.read_iter		= generic_file_read_iter,
-	.write			= new_sync_write,
-	.write_iter		= generic_file_write_iter,
+	.read			= do_sync_read,
+	.aio_read		= generic_file_aio_read,
+	.write			= do_sync_write,
+	.aio_write		= generic_file_aio_write,
 	.fsync			= noop_fsync,
 	.splice_read		= generic_file_splice_read,
-	.splice_write		= iter_file_splice_write,
+	.splice_write		= generic_file_splice_write,
 	.llseek			= generic_file_llseek,
 };
 
@@ -196,7 +197,7 @@ static int ramfs_nommu_setattr(struct dentry *dentry, struct iattr *ia)
  *   - the pages to be mapped must exist
  *   - the pages be physically contiguous in sequence
  */
-static unsigned long ramfs_nommu_get_unmapped_area(struct file *file,
+unsigned long ramfs_nommu_get_unmapped_area(struct file *file,
 					    unsigned long addr, unsigned long len,
 					    unsigned long pgoff, unsigned long flags)
 {
@@ -222,7 +223,7 @@ static unsigned long ramfs_nommu_get_unmapped_area(struct file *file,
 
 	/* gang-find the pages */
 	ret = -ENOMEM;
-	pages = kcalloc(lpages, sizeof(struct page *), GFP_KERNEL);
+	pages = kzalloc(lpages * sizeof(struct page *), GFP_KERNEL);
 	if (!pages)
 		goto out_free;
 
@@ -255,7 +256,7 @@ out:
 /*
  * set up a mapping for shared memory segments
  */
-static int ramfs_nommu_mmap(struct file *file, struct vm_area_struct *vma)
+int ramfs_nommu_mmap(struct file *file, struct vm_area_struct *vma)
 {
 	if (!(vma->vm_flags & VM_SHARED))
 		return -ENOSYS;

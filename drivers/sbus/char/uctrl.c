@@ -11,6 +11,7 @@
 #include <linux/slab.h>
 #include <linux/mutex.h>
 #include <linux/ioport.h>
+#include <linux/init.h>
 #include <linux/miscdevice.h>
 #include <linux/mm.h>
 #include <linux/of.h>

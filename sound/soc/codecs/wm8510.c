@@ -449,16 +449,16 @@ static int wm8510_pcm_hw_params(struct snd_pcm_substream *substream,
 	u16 adn = snd_soc_read(codec, WM8510_ADD) & 0x1f1;
 
 	/* bit size */
-	switch (params_width(params)) {
-	case 16:
+	switch (params_format(params)) {
+	case SNDRV_PCM_FORMAT_S16_LE:
 		break;
-	case 20:
+	case SNDRV_PCM_FORMAT_S20_3LE:
 		iface |= 0x0020;
 		break;
-	case 24:
+	case SNDRV_PCM_FORMAT_S24_LE:
 		iface |= 0x0040;
 		break;
-	case 32:
+	case SNDRV_PCM_FORMAT_S32_LE:
 		iface |= 0x0060;
 		break;
 	}
@@ -589,12 +589,20 @@ static int wm8510_resume(struct snd_soc_codec *codec)
 
 static int wm8510_probe(struct snd_soc_codec *codec)
 {
+	int ret;
+
+	ret = snd_soc_codec_set_cache_io(codec, 7, 9, SND_SOC_REGMAP);
+	if (ret < 0) {
+		printk(KERN_ERR "wm8510: failed to set cache I/O: %d\n", ret);
+		return ret;
+	}
+
 	wm8510_reset(codec);
 
 	/* power on device */
 	wm8510_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
 
-	return 0;
+	return ret;
 }
 
 /* power down chip */
@@ -676,7 +684,7 @@ static struct spi_driver wm8510_spi_driver = {
 };
 #endif /* CONFIG_SPI_MASTER */
 
-#if IS_ENABLED(CONFIG_I2C)
+#if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
 static int wm8510_i2c_probe(struct i2c_client *i2c,
 			    const struct i2c_device_id *id)
 {
@@ -727,7 +735,7 @@ static struct i2c_driver wm8510_i2c_driver = {
 static int __init wm8510_modinit(void)
 {
 	int ret = 0;
-#if IS_ENABLED(CONFIG_I2C)
+#if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
 	ret = i2c_add_driver(&wm8510_i2c_driver);
 	if (ret != 0) {
 		printk(KERN_ERR "Failed to register WM8510 I2C driver: %d\n",
@@ -747,7 +755,7 @@ module_init(wm8510_modinit);
 
 static void __exit wm8510_exit(void)
 {
-#if IS_ENABLED(CONFIG_I2C)
+#if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
 	i2c_del_driver(&wm8510_i2c_driver);
 #endif
 #if defined(CONFIG_SPI_MASTER)

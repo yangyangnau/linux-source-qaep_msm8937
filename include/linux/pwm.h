@@ -7,7 +7,7 @@
 struct pwm_device;
 struct seq_file;
 
-#if IS_ENABLED(CONFIG_PWM)
+#if IS_ENABLED(CONFIG_PWM) || IS_ENABLED(CONFIG_HAVE_PWM)
 /*
  * pwm_request - request a PWM device
  */
@@ -76,7 +76,6 @@ enum pwm_polarity {
 enum {
 	PWMF_REQUESTED = 1 << 0,
 	PWMF_ENABLED = 1 << 1,
-	PWMF_EXPORTED = 1 << 2,
 };
 
 struct pwm_device {
@@ -87,9 +86,7 @@ struct pwm_device {
 	struct pwm_chip		*chip;
 	void			*chip_data;
 
-	unsigned int		period; 	/* in nanoseconds */
-	unsigned int		duty_cycle;	/* in nanoseconds */
-	enum pwm_polarity	polarity;
+	unsigned int		period; /* in nanoseconds */
 };
 
 static inline void pwm_set_period(struct pwm_device *pwm, unsigned int period)
@@ -101,17 +98,6 @@ static inline void pwm_set_period(struct pwm_device *pwm, unsigned int period)
 static inline unsigned int pwm_get_period(struct pwm_device *pwm)
 {
 	return pwm ? pwm->period : 0;
-}
-
-static inline void pwm_set_duty_cycle(struct pwm_device *pwm, unsigned int duty)
-{
-	if (pwm)
-		pwm->duty_cycle = duty;
-}
-
-static inline unsigned int pwm_get_duty_cycle(struct pwm_device *pwm)
-{
-	return pwm ? pwm->duty_cycle : 0;
 }
 
 /*
@@ -274,18 +260,14 @@ struct pwm_lookup {
 	unsigned int index;
 	const char *dev_id;
 	const char *con_id;
-	unsigned int period;
-	enum pwm_polarity polarity;
 };
 
-#define PWM_LOOKUP(_provider, _index, _dev_id, _con_id, _period, _polarity) \
+#define PWM_LOOKUP(_provider, _index, _dev_id, _con_id)	\
 	{						\
 		.provider = _provider,			\
 		.index = _index,			\
 		.dev_id = _dev_id,			\
 		.con_id = _con_id,			\
-		.period = _period,			\
-		.polarity = _polarity			\
 	}
 
 #if IS_ENABLED(CONFIG_PWM)
@@ -295,18 +277,5 @@ static inline void pwm_add_table(struct pwm_lookup *table, size_t num)
 {
 }
 #endif
-
-#ifdef CONFIG_PWM_SYSFS
-void pwmchip_sysfs_export(struct pwm_chip *chip);
-void pwmchip_sysfs_unexport(struct pwm_chip *chip);
-#else
-static inline void pwmchip_sysfs_export(struct pwm_chip *chip)
-{
-}
-
-static inline void pwmchip_sysfs_unexport(struct pwm_chip *chip)
-{
-}
-#endif /* CONFIG_PWM_SYSFS */
 
 #endif /* __LINUX_PWM_H */

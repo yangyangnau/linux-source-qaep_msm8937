@@ -7,7 +7,7 @@
  *
  * Written Doug Thompson <norsk5@xmission.com> www.softwarebitmaker.com
  *
- * (c) 2012-2013 - Mauro Carvalho Chehab
+ * (c) 2012-2013 - Mauro Carvalho Chehab <mchehab@redhat.com>
  *	The entire API were re-written, and ported to use struct device
  *
  */
@@ -108,9 +108,7 @@ static const char * const mem_types[] = {
 	[MEM_RDDR2] = "Registered-DDR2",
 	[MEM_XDR] = "XDR",
 	[MEM_DDR3] = "Unbuffered-DDR3",
-	[MEM_RDDR3] = "Registered-DDR3",
-	[MEM_DDR4] = "Unbuffered-DDR4",
-	[MEM_RDDR4] = "Registered-DDR4"
+	[MEM_RDDR3] = "Registered-DDR3"
 };
 
 static const char * const dev_types[] = {
@@ -684,7 +682,7 @@ static ssize_t mci_sdram_scrub_rate_store(struct device *dev,
 	unsigned long bandwidth = 0;
 	int new_bw = 0;
 
-	if (kstrtoul(data, 10, &bandwidth) < 0)
+	if (strict_strtoul(data, 10, &bandwidth) < 0)
 		return -EINVAL;
 
 	new_bw = mci->set_sdram_scrub_rate(mci, bandwidth);
@@ -918,7 +916,7 @@ void __exit edac_debugfs_exit(void)
 	debugfs_remove(edac_debugfs);
 }
 
-static int edac_create_debug_nodes(struct mem_ctl_info *mci)
+int edac_create_debug_nodes(struct mem_ctl_info *mci)
 {
 	struct dentry *d, *parent;
 	char name[80];

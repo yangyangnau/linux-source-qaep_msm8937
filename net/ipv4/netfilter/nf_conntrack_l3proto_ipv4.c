@@ -25,7 +25,6 @@
 #include <net/netfilter/nf_conntrack_l3proto.h>
 #include <net/netfilter/nf_conntrack_zones.h>
 #include <net/netfilter/nf_conntrack_core.h>
-#include <net/netfilter/nf_conntrack_seqadj.h>
 #include <net/netfilter/ipv4/nf_conntrack_ipv4.h>
 #include <net/netfilter/nf_nat_helper.h>
 #include <net/netfilter/ipv4/nf_defrag_ipv4.h>
@@ -92,7 +91,7 @@ static int ipv4_get_l4proto(const struct sk_buff *skb, unsigned int nhoff,
 	return NF_ACCEPT;
 }
 
-static unsigned int ipv4_helper(const struct nf_hook_ops *ops,
+static unsigned int ipv4_helper(unsigned int hooknum,
 				struct sk_buff *skb,
 				const struct net_device *in,
 				const struct net_device *out,
@@ -121,7 +120,7 @@ static unsigned int ipv4_helper(const struct nf_hook_ops *ops,
 			    ct, ctinfo);
 }
 
-static unsigned int ipv4_confirm(const struct nf_hook_ops *ops,
+static unsigned int ipv4_confirm(unsigned int hooknum,
 				 struct sk_buff *skb,
 				 const struct net_device *in,
 				 const struct net_device *out,
@@ -137,7 +136,11 @@ static unsigned int ipv4_confirm(const struct nf_hook_ops *ops,
 	/* adjust seqs for loopback traffic only in outgoing direction */
 	if (test_bit(IPS_SEQ_ADJUST_BIT, &ct->status) &&
 	    !nf_is_loopback_packet(skb)) {
-		if (!nf_ct_seq_adjust(skb, ct, ctinfo, ip_hdrlen(skb))) {
+		typeof(nf_nat_seq_adjust_hook) seq_adjust;
+
+		seq_adjust = rcu_dereference(nf_nat_seq_adjust_hook);
+		if (!seq_adjust ||
+		    !seq_adjust(skb, ct, ctinfo, ip_hdrlen(skb))) {
 			NF_CT_STAT_INC_ATOMIC(nf_ct_net(ct), drop);
 			return NF_DROP;
 		}
@@ -147,16 +150,16 @@ out:
 	return nf_conntrack_confirm(skb);
 }
 
-static unsigned int ipv4_conntrack_in(const struct nf_hook_ops *ops,
+static unsigned int ipv4_conntrack_in(unsigned int hooknum,
 				      struct sk_buff *skb,
 				      const struct net_device *in,
 				      const struct net_device *out,
 				      int (*okfn)(struct sk_buff *))
 {
-	return nf_conntrack_in(dev_net(in), PF_INET, ops->hooknum, skb);
+	return nf_conntrack_in(dev_net(in), PF_INET, hooknum, skb);
 }
 
-static unsigned int ipv4_conntrack_local(const struct nf_hook_ops *ops,
+static unsigned int ipv4_conntrack_local(unsigned int hooknum,
 					 struct sk_buff *skb,
 					 const struct net_device *in,
 					 const struct net_device *out,
@@ -166,7 +169,7 @@ static unsigned int ipv4_conntrack_local(const struct nf_hook_ops *ops,
 	if (skb->len < sizeof(struct iphdr) ||
 	    ip_hdrlen(skb) < sizeof(struct iphdr))
 		return NF_ACCEPT;
-	return nf_conntrack_in(dev_net(out), PF_INET, ops->hooknum, skb);
+	return nf_conntrack_in(dev_net(out), PF_INET, hooknum, skb);
 }
 
 /* Connection tracking may drop packets, but never alters them, so
@@ -220,7 +223,7 @@ static struct nf_hook_ops ipv4_conntrack_ops[] __read_mostly = {
 static int log_invalid_proto_min = 0;
 static int log_invalid_proto_max = 255;
 
-static struct ctl_table ip_ct_sysctl_table[] = {
+static ctl_table ip_ct_sysctl_table[] = {
 	{
 		.procname	= "ip_conntrack_max",
 		.maxlen		= sizeof(int),
@@ -314,7 +317,7 @@ getorigdst(struct sock *sk, int optval, void __user *user, int *len)
 	return -ENOENT;
 }
 
-#if IS_ENABLED(CONFIG_NF_CT_NETLINK)
+#if defined(CONFIG_NF_CT_NETLINK) || defined(CONFIG_NF_CT_NETLINK_MODULE)
 
 #include <linux/netfilter/nfnetlink.h>
 #include <linux/netfilter/nfnetlink_conntrack.h>
@@ -358,7 +361,7 @@ static struct nf_sockopt_ops so_getorigdst = {
 	.pf		= PF_INET,
 	.get_optmin	= SO_ORIGINAL_DST,
 	.get_optmax	= SO_ORIGINAL_DST+1,
-	.get		= getorigdst,
+	.get		= &getorigdst,
 	.owner		= THIS_MODULE,
 };
 
@@ -388,7 +391,7 @@ struct nf_conntrack_l3proto nf_conntrack_l3proto_ipv4 __read_mostly = {
 	.invert_tuple	 = ipv4_invert_tuple,
 	.print_tuple	 = ipv4_print_tuple,
 	.get_l4proto	 = ipv4_get_l4proto,
-#if IS_ENABLED(CONFIG_NF_CT_NETLINK)
+#if defined(CONFIG_NF_CT_NETLINK) || defined(CONFIG_NF_CT_NETLINK_MODULE)
 	.tuple_to_nlattr = ipv4_tuple_to_nlattr,
 	.nlattr_tuple_size = ipv4_nlattr_tuple_size,
 	.nlattr_to_tuple = ipv4_nlattr_to_tuple,
@@ -548,3 +551,9 @@ static void __exit nf_conntrack_l3proto_ipv4_fini(void)
 
 module_init(nf_conntrack_l3proto_ipv4_init);
 module_exit(nf_conntrack_l3proto_ipv4_fini);
+
+void need_ipv4_conntrack(void)
+{
+	return;
+}
+EXPORT_SYMBOL_GPL(need_ipv4_conntrack);

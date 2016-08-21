@@ -10,8 +10,6 @@
  *
  * ------------------------------------------------------------------------- */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/fs.h>
@@ -150,10 +148,10 @@ static inline struct super_block *pts_sb_from_inode(struct inode *inode)
 
 /*
  * parse_mount_options():
- *	Set @opts to mount options specified in @data. If an option is not
- *	specified in @data, set it to its default value. The exception is
- *	'newinstance' option which can only be set/cleared on a mount (i.e.
- *	cannot be changed during remount).
+ * 	Set @opts to mount options specified in @data. If an option is not
+ * 	specified in @data, set it to its default value. The exception is
+ * 	'newinstance' option which can only be set/cleared on a mount (i.e.
+ * 	cannot be changed during remount).
  *
  * Note: @data may be NULL (in which case all options are set to default).
  */
@@ -227,7 +225,7 @@ static int parse_mount_options(char *data, int op, struct pts_mount_opts *opts)
 			break;
 #endif
 		default:
-			pr_err("called with bogus options\n");
+			printk(KERN_ERR "devpts: called with bogus options\n");
 			return -EINVAL;
 		}
 	}
@@ -263,7 +261,7 @@ static int mknod_ptmx(struct super_block *sb)
 
 	dentry = d_alloc_name(root, "ptmx");
 	if (!dentry) {
-		pr_err("Unable to alloc dentry for ptmx node\n");
+		printk(KERN_NOTICE "Unable to alloc dentry for ptmx node\n");
 		goto out;
 	}
 
@@ -272,7 +270,7 @@ static int mknod_ptmx(struct super_block *sb)
 	 */
 	inode = new_inode(sb);
 	if (!inode) {
-		pr_err("Unable to alloc inode for ptmx node\n");
+		printk(KERN_ERR "Unable to alloc inode for ptmx node\n");
 		dput(dentry);
 		goto out;
 	}
@@ -305,7 +303,7 @@ static void update_ptmx_mode(struct pts_fs_info *fsi)
 #else
 static inline void update_ptmx_mode(struct pts_fs_info *fsi)
 {
-	return;
+       return;
 }
 #endif
 
@@ -315,7 +313,6 @@ static int devpts_remount(struct super_block *sb, int *flags, char *data)
 	struct pts_fs_info *fsi = DEVPTS_SB(sb);
 	struct pts_mount_opts *opts = &fsi->mount_opts;
 
-	sync_filesystem(sb);
 	err = parse_mount_options(data, PARSE_REMOUNT, opts);
 
 	/*
@@ -335,11 +332,9 @@ static int devpts_show_options(struct seq_file *seq, struct dentry *root)
 	struct pts_mount_opts *opts = &fsi->mount_opts;
 
 	if (opts->setuid)
-		seq_printf(seq, ",uid=%u",
-			   from_kuid_munged(&init_user_ns, opts->uid));
+		seq_printf(seq, ",uid=%u", from_kuid_munged(&init_user_ns, opts->uid));
 	if (opts->setgid)
-		seq_printf(seq, ",gid=%u",
-			   from_kgid_munged(&init_user_ns, opts->gid));
+		seq_printf(seq, ",gid=%u", from_kgid_munged(&init_user_ns, opts->gid));
 	seq_printf(seq, ",mode=%03o", opts->mode);
 #ifdef CONFIG_DEVPTS_MULTIPLE_INSTANCES
 	seq_printf(seq, ",ptmxmode=%03o", opts->ptmxmode);
@@ -400,7 +395,7 @@ devpts_fill_super(struct super_block *s, void *data, int silent)
 	if (s->s_root)
 		return 0;
 
-	pr_err("get root dentry failed\n");
+	printk(KERN_ERR "devpts: get root dentry failed\n");
 
 fail:
 	return -ENOMEM;

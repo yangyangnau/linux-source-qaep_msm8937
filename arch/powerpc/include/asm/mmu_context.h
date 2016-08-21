@@ -18,6 +18,7 @@ extern int init_new_context(struct task_struct *tsk, struct mm_struct *mm);
 extern void destroy_context(struct mm_struct *mm);
 
 extern void switch_mmu_context(struct mm_struct *prev, struct mm_struct *next);
+extern void switch_stab(struct task_struct *tsk, struct mm_struct *mm);
 extern void switch_slb(struct task_struct *tsk, struct mm_struct *mm);
 extern void set_context(unsigned long id, pgd_t *pgd);
 
@@ -37,7 +38,7 @@ extern void drop_cop(unsigned long acop, struct mm_struct *mm);
 
 /*
  * switch_mm is the entry point called from the architecture independent
- * code in kernel/sched/core.c
+ * code in kernel/sched.c
  */
 static inline void switch_mm(struct mm_struct *prev, struct mm_struct *next,
 			     struct task_struct *tsk)
@@ -76,7 +77,10 @@ static inline void switch_mm(struct mm_struct *prev, struct mm_struct *next,
 	 * sub architectures.
 	 */
 #ifdef CONFIG_PPC_STD_MMU_64
-	switch_slb(tsk, next);
+	if (mmu_has_feature(MMU_FTR_SLB))
+		switch_slb(tsk, next);
+	else
+		switch_stab(tsk, next);
 #else
 	/* Out of line for now */
 	switch_mmu_context(prev, next);

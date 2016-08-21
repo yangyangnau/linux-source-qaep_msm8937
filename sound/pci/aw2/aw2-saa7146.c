@@ -204,7 +204,8 @@ void snd_aw2_saa7146_pcm_init_playback(struct snd_aw2_saa7146 *chip,
 		/* Define upper limit for DMA access */
 		WRITEREG(dma_addr + buffer_size, ProtA1_out);
 	} else {
-		pr_err("aw2: snd_aw2_saa7146_pcm_init_playback: "
+		printk(KERN_ERR
+		       "aw2: snd_aw2_saa7146_pcm_init_playback: "
 		       "Substream number is not 0 or 1 -> not managed\n");
 	}
 }
@@ -250,7 +251,8 @@ void snd_aw2_saa7146_pcm_init_capture(struct snd_aw2_saa7146 *chip,
 		/* Define upper limit for DMA access  */
 		WRITEREG(dma_addr + buffer_size, ProtA1_in);
 	} else {
-		pr_err("aw2: snd_aw2_saa7146_pcm_init_capture: "
+		printk(KERN_ERR
+		       "aw2: snd_aw2_saa7146_pcm_init_capture: "
 		       "Substream number is not 0 -> not managed\n");
 	}
 }

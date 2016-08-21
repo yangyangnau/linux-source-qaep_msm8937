@@ -63,12 +63,12 @@ void clk_rate_table_build(struct clk *clk,
 		else
 			freq = clk->parent->rate * mult / div;
 
-		freq_table[i].driver_data = i;
+		freq_table[i].index = i;
 		freq_table[i].frequency = freq;
 	}
 
 	/* Termination entry */
-	freq_table[i].driver_data = i;
+	freq_table[i].index = i;
 	freq_table[i].frequency = CPUFREQ_TABLE_END;
 }
 
@@ -196,11 +196,17 @@ int clk_rate_table_find(struct clk *clk,
 			struct cpufreq_frequency_table *freq_table,
 			unsigned long rate)
 {
-	struct cpufreq_frequency_table *pos;
+	int i;
 
-	cpufreq_for_each_valid_entry(pos, freq_table)
-		if (pos->frequency == rate)
-			return pos - freq_table;
+	for (i = 0; freq_table[i].frequency != CPUFREQ_TABLE_END; i++) {
+		unsigned long freq = freq_table[i].frequency;
+
+		if (freq == CPUFREQ_ENTRY_INVALID)
+			continue;
+
+		if (freq == rate)
+			return i;
+	}
 
 	return -ENOENT;
 }
@@ -569,7 +575,11 @@ long clk_round_parent(struct clk *clk, unsigned long target,
 		return abs(target - *best_freq);
 	}
 
-	cpufreq_for_each_valid_entry(freq, parent->freq_table) {
+	for (freq = parent->freq_table; freq->frequency != CPUFREQ_TABLE_END;
+	     freq++) {
+		if (freq->frequency == CPUFREQ_ENTRY_INVALID)
+			continue;
+
 		if (unlikely(freq->frequency / target <= div_min - 1)) {
 			unsigned long freq_max;
 

@@ -31,7 +31,8 @@
 #include <linux/io.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
-#include <linux/uaccess.h>
+
+#include <asm/uaccess.h>
 
 #include "rtc-at91rm9200.h"
 
@@ -385,8 +386,7 @@ static int __init at91_rtc_probe(struct platform_device *pdev)
 		return -ENXIO;
 	}
 
-	at91_rtc_regs = devm_ioremap(&pdev->dev, regs->start,
-				     resource_size(regs));
+	at91_rtc_regs = ioremap(regs->start, resource_size(regs));
 	if (!at91_rtc_regs) {
 		dev_err(&pdev->dev, "failed to map registers, aborting.\n");
 		return -ENOMEM;
@@ -400,12 +400,12 @@ static int __init at91_rtc_probe(struct platform_device *pdev)
 					AT91_RTC_SECEV | AT91_RTC_TIMEV |
 					AT91_RTC_CALEV);
 
-	ret = devm_request_irq(&pdev->dev, irq, at91_rtc_interrupt,
+	ret = request_irq(irq, at91_rtc_interrupt,
 				IRQF_SHARED,
 				"at91_rtc", pdev);
 	if (ret) {
 		dev_err(&pdev->dev, "IRQ %d already in use.\n", irq);
-		return ret;
+		goto err_unmap;
 	}
 
 	/* cpu init code should really have flagged this device as
@@ -414,10 +414,12 @@ static int __init at91_rtc_probe(struct platform_device *pdev)
 	if (!device_can_wakeup(&pdev->dev))
 		device_init_wakeup(&pdev->dev, 1);
 
-	rtc = devm_rtc_device_register(&pdev->dev, pdev->name,
+	rtc = rtc_device_register(pdev->name, &pdev->dev,
 				&at91_rtc_ops, THIS_MODULE);
-	if (IS_ERR(rtc))
-		return PTR_ERR(rtc);
+	if (IS_ERR(rtc)) {
+		ret = PTR_ERR(rtc);
+		goto err_free_irq;
+	}
 	platform_set_drvdata(pdev, rtc);
 
 	/* enable SECEV interrupt in order to initialize at91_rtc_upd_rdy
@@ -427,6 +429,13 @@ static int __init at91_rtc_probe(struct platform_device *pdev)
 
 	dev_info(&pdev->dev, "AT91 Real Time Clock driver.\n");
 	return 0;
+
+err_free_irq:
+	free_irq(irq, pdev);
+err_unmap:
+	iounmap(at91_rtc_regs);
+
+	return ret;
 }
 
 /*
@@ -434,20 +443,19 @@ static int __init at91_rtc_probe(struct platform_device *pdev)
  */
 static int __exit at91_rtc_remove(struct platform_device *pdev)
 {
+	struct rtc_device *rtc = platform_get_drvdata(pdev);
+
 	/* Disable all interrupts */
 	at91_rtc_write_idr(AT91_RTC_ACKUPD | AT91_RTC_ALARM |
 					AT91_RTC_SECEV | AT91_RTC_TIMEV |
 					AT91_RTC_CALEV);
+	free_irq(irq, pdev);
+
+	rtc_device_unregister(rtc);
+	iounmap(at91_rtc_regs);
+	platform_set_drvdata(pdev, NULL);
 
 	return 0;
-}
-
-static void at91_rtc_shutdown(struct platform_device *pdev)
-{
-	/* Disable all interrupts */
-	at91_rtc_write(AT91_RTC_IDR, AT91_RTC_ACKUPD | AT91_RTC_ALARM |
-					AT91_RTC_SECEV | AT91_RTC_TIMEV |
-					AT91_RTC_CALEV);
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -488,7 +496,6 @@ static SIMPLE_DEV_PM_OPS(at91_rtc_pm_ops, at91_rtc_suspend, at91_rtc_resume);
 
 static struct platform_driver at91_rtc_driver = {
 	.remove		= __exit_p(at91_rtc_remove),
-	.shutdown	= at91_rtc_shutdown,
 	.driver		= {
 		.name	= "at91_rtc",
 		.owner	= THIS_MODULE,

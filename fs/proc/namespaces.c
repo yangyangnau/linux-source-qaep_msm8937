@@ -42,6 +42,12 @@ static const struct inode_operations ns_inode_operations = {
 	.setattr	= proc_setattr,
 };
 
+static int ns_delete_dentry(const struct dentry *dentry)
+{
+	/* Don't cache namespace inodes when not in use */
+	return 1;
+}
+
 static char *ns_dname(struct dentry *dentry, char *buffer, int buflen)
 {
 	struct inode *inode = dentry->d_inode;
@@ -53,7 +59,7 @@ static char *ns_dname(struct dentry *dentry, char *buffer, int buflen)
 
 const struct dentry_operations ns_dentry_operations =
 {
-	.d_delete	= always_delete_dentry,
+	.d_delete	= ns_delete_dentry,
 	.d_dname	= ns_dname,
 };
 
@@ -146,7 +152,7 @@ static int proc_ns_readlink(struct dentry *dentry, char __user *buffer, int bufl
 	struct task_struct *task;
 	void *ns;
 	char name[50];
-	int res = -EACCES;
+	int len = -EACCES;
 
 	task = get_proc_task(inode);
 	if (!task)
@@ -155,18 +161,24 @@ static int proc_ns_readlink(struct dentry *dentry, char __user *buffer, int bufl
 	if (!ptrace_may_access(task, PTRACE_MODE_READ))
 		goto out_put_task;
 
-	res = -ENOENT;
+	len = -ENOENT;
 	ns = ns_ops->get(task);
 	if (!ns)
 		goto out_put_task;
 
 	snprintf(name, sizeof(name), "%s:[%u]", ns_ops->name, ns_ops->inum(ns));
-	res = readlink_copy(buffer, buflen, name);
+	len = strlen(name);
+
+	if (len > buflen)
+		len = buflen;
+	if (copy_to_user(buffer, name, len))
+		len = -EFAULT;
+
 	ns_ops->put(ns);
 out_put_task:
 	put_task_struct(task);
 out:
-	return res;
+	return len;
 }
 
 static const struct inode_operations proc_ns_link_inode_operations = {
@@ -175,12 +187,13 @@ static const struct inode_operations proc_ns_link_inode_operations = {
 	.setattr	= proc_setattr,
 };
 
-static int proc_ns_instantiate(struct inode *dir,
+static struct dentry *proc_ns_instantiate(struct inode *dir,
 	struct dentry *dentry, struct task_struct *task, const void *ptr)
 {
 	const struct proc_ns_operations *ns_ops = ptr;
 	struct inode *inode;
 	struct proc_inode *ei;
+	struct dentry *error = ERR_PTR(-ENOENT);
 
 	inode = proc_pid_make_inode(dir->i_sb, task);
 	if (!inode)
@@ -195,52 +208,90 @@ static int proc_ns_instantiate(struct inode *dir,
 	d_add(dentry, inode);
 	/* Close the race of the process dying before we return the dentry */
 	if (pid_revalidate(dentry, 0))
-		return 0;
+		error = NULL;
 out:
-	return -ENOENT;
+	return error;
 }
 
-static int proc_ns_dir_readdir(struct file *file, struct dir_context *ctx)
+static int proc_ns_fill_cache(struct file *filp, void *dirent,
+	filldir_t filldir, struct task_struct *task,
+	const struct proc_ns_operations *ops)
 {
-	struct task_struct *task = get_proc_task(file_inode(file));
+	return proc_fill_cache(filp, dirent, filldir,
+				ops->name, strlen(ops->name),
+				proc_ns_instantiate, task, ops);
+}
+
+static int proc_ns_dir_readdir(struct file *filp, void *dirent,
+				filldir_t filldir)
+{
+	int i;
+	struct dentry *dentry = filp->f_path.dentry;
+	struct inode *inode = dentry->d_inode;
+	struct task_struct *task = get_proc_task(inode);
 	const struct proc_ns_operations **entry, **last;
+	ino_t ino;
+	int ret;
 
+	ret = -ENOENT;
 	if (!task)
-		return -ENOENT;
+		goto out_no_task;
 
-	if (!dir_emit_dots(file, ctx))
-		goto out;
-	if (ctx->pos >= 2 + ARRAY_SIZE(ns_entries))
-		goto out;
-	entry = ns_entries + (ctx->pos - 2);
-	last = &ns_entries[ARRAY_SIZE(ns_entries) - 1];
-	while (entry <= last) {
-		const struct proc_ns_operations *ops = *entry;
-		if (!proc_fill_cache(file, ctx, ops->name, strlen(ops->name),
-				     proc_ns_instantiate, task, ops))
-			break;
-		ctx->pos++;
-		entry++;
+	ret = 0;
+	i = filp->f_pos;
+	switch (i) {
+	case 0:
+		ino = inode->i_ino;
+		if (filldir(dirent, ".", 1, i, ino, DT_DIR) < 0)
+			goto out;
+		i++;
+		filp->f_pos++;
+		/* fall through */
+	case 1:
+		ino = parent_ino(dentry);
+		if (filldir(dirent, "..", 2, i, ino, DT_DIR) < 0)
+			goto out;
+		i++;
+		filp->f_pos++;
+		/* fall through */
+	default:
+		i -= 2;
+		if (i >= ARRAY_SIZE(ns_entries)) {
+			ret = 1;
+			goto out;
+		}
+		entry = ns_entries + i;
+		last = &ns_entries[ARRAY_SIZE(ns_entries) - 1];
+		while (entry <= last) {
+			if (proc_ns_fill_cache(filp, dirent, filldir,
+						task, *entry) < 0)
+				goto out;
+			filp->f_pos++;
+			entry++;
+		}
 	}
+
+	ret = 1;
 out:
 	put_task_struct(task);
-	return 0;
+out_no_task:
+	return ret;
 }
 
 const struct file_operations proc_ns_dir_operations = {
 	.read		= generic_read_dir,
-	.iterate	= proc_ns_dir_readdir,
+	.readdir	= proc_ns_dir_readdir,
 };
 
 static struct dentry *proc_ns_dir_lookup(struct inode *dir,
 				struct dentry *dentry, unsigned int flags)
 {
-	int error;
+	struct dentry *error;
 	struct task_struct *task = get_proc_task(dir);
 	const struct proc_ns_operations **entry, **last;
 	unsigned int len = dentry->d_name.len;
 
-	error = -ENOENT;
+	error = ERR_PTR(-ENOENT);
 
 	if (!task)
 		goto out_no_task;
@@ -259,7 +310,7 @@ static struct dentry *proc_ns_dir_lookup(struct inode *dir,
 out:
 	put_task_struct(task);
 out_no_task:
-	return ERR_PTR(error);
+	return error;
 }
 
 const struct inode_operations proc_ns_dir_inode_operations = {

@@ -14,6 +14,10 @@
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 */
 
 /*
@@ -29,6 +33,7 @@
 #include <linux/stddef.h>
 #include <linux/ioport.h>
 #include <linux/i2c.h>
+#include <linux/init.h>
 #include <linux/io.h>
 #include <linux/acpi.h>
 
@@ -270,8 +275,7 @@ static int smbus_sch_probe(struct platform_device *dev)
 	if (!res)
 		return -EBUSY;
 
-	if (!devm_request_region(&dev->dev, res->start, resource_size(res),
-				 dev->name)) {
+	if (!request_region(res->start, resource_size(res), dev->name)) {
 		dev_err(&dev->dev, "SMBus region 0x%x already in use!\n",
 			sch_smba);
 		return -EBUSY;
@@ -290,6 +294,7 @@ static int smbus_sch_probe(struct platform_device *dev)
 	retval = i2c_add_adapter(&sch_adapter);
 	if (retval) {
 		dev_err(&dev->dev, "Couldn't register adapter!\n");
+		release_region(res->start, resource_size(res));
 		sch_smba = 0;
 	}
 
@@ -298,8 +303,11 @@ static int smbus_sch_probe(struct platform_device *dev)
 
 static int smbus_sch_remove(struct platform_device *pdev)
 {
+	struct resource *res;
 	if (sch_smba) {
 		i2c_del_adapter(&sch_adapter);
+		res = platform_get_resource(pdev, IORESOURCE_IO, 0);
+		release_region(res->start, resource_size(res));
 		sch_smba = 0;
 	}
 

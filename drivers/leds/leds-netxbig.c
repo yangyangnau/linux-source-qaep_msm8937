@@ -21,6 +21,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/init.h>
 #include <linux/irq.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
@@ -293,14 +294,10 @@ static ssize_t netxbig_led_sata_show(struct device *dev,
 
 static DEVICE_ATTR(sata, 0644, netxbig_led_sata_show, netxbig_led_sata_store);
 
-static struct attribute *netxbig_led_attrs[] = {
-	&dev_attr_sata.attr,
-	NULL
-};
-ATTRIBUTE_GROUPS(netxbig_led);
-
 static void delete_netxbig_led(struct netxbig_led_data *led_dat)
 {
+	if (led_dat->mode_val[NETXBIG_LED_SATA] != NETXBIG_LED_INVALID_MODE)
+		device_remove_file(led_dat->cdev.dev, &dev_attr_sata);
 	led_classdev_unregister(&led_dat->cdev);
 }
 
@@ -309,7 +306,8 @@ create_netxbig_led(struct platform_device *pdev,
 		   struct netxbig_led_data *led_dat,
 		   const struct netxbig_led *template)
 {
-	struct netxbig_led_platform_data *pdata = dev_get_platdata(&pdev->dev);
+	struct netxbig_led_platform_data *pdata = pdev->dev.platform_data;
+	int ret;
 
 	spin_lock_init(&led_dat->lock);
 	led_dat->gpio_ext = pdata->gpio_ext;
@@ -336,19 +334,27 @@ create_netxbig_led(struct platform_device *pdev,
 	led_dat->bright_max = (1 << pdata->gpio_ext->num_data) - 1;
 	led_dat->timer = pdata->timer;
 	led_dat->num_timer = pdata->num_timer;
+
+	ret = led_classdev_register(&pdev->dev, &led_dat->cdev);
+	if (ret < 0)
+		return ret;
+
 	/*
 	 * If available, expose the SATA activity blink capability through
 	 * a "sata" sysfs attribute.
 	 */
-	if (led_dat->mode_val[NETXBIG_LED_SATA] != NETXBIG_LED_INVALID_MODE)
-		led_dat->cdev.groups = netxbig_led_groups;
+	if (led_dat->mode_val[NETXBIG_LED_SATA] != NETXBIG_LED_INVALID_MODE) {
+		ret = device_create_file(led_dat->cdev.dev, &dev_attr_sata);
+		if (ret)
+			led_classdev_unregister(&led_dat->cdev);
+	}
 
-	return led_classdev_register(&pdev->dev, &led_dat->cdev);
+	return ret;
 }
 
 static int netxbig_led_probe(struct platform_device *pdev)
 {
-	struct netxbig_led_platform_data *pdata = dev_get_platdata(&pdev->dev);
+	struct netxbig_led_platform_data *pdata = pdev->dev.platform_data;
 	struct netxbig_led_data *leds_data;
 	int i;
 	int ret;
@@ -385,7 +391,7 @@ err_free_leds:
 
 static int netxbig_led_remove(struct platform_device *pdev)
 {
-	struct netxbig_led_platform_data *pdata = dev_get_platdata(&pdev->dev);
+	struct netxbig_led_platform_data *pdata = pdev->dev.platform_data;
 	struct netxbig_led_data *leds_data;
 	int i;
 

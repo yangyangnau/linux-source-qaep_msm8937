@@ -6,8 +6,15 @@
  *
  */
 #include <linux/linkage.h>
+#include <asm/alternative-asm.h>
+#include <asm/frame.h>
 #include <asm/dwarf2.h>
-#include <asm/percpu.h>
+
+#ifdef CONFIG_SMP
+#define SEG_PREFIX %gs:
+#else
+#define SEG_PREFIX
+#endif
 
 .text
 
@@ -32,25 +39,24 @@ CFI_STARTPROC
 # *atomic* on a single cpu (as provided by the this_cpu_xx class of
 # macros).
 #
-	pushfq_cfi
+this_cpu_cmpxchg16b_emu:
+	pushf
 	cli
 
-	cmpq PER_CPU_VAR((%rsi)), %rax
-	jne .Lnot_same
-	cmpq PER_CPU_VAR(8(%rsi)), %rdx
-	jne .Lnot_same
+	cmpq SEG_PREFIX(%rsi), %rax
+	jne not_same
+	cmpq SEG_PREFIX 8(%rsi), %rdx
+	jne not_same
 
-	movq %rbx, PER_CPU_VAR((%rsi))
-	movq %rcx, PER_CPU_VAR(8(%rsi))
+	movq %rbx, SEG_PREFIX(%rsi)
+	movq %rcx, SEG_PREFIX 8(%rsi)
 
-	CFI_REMEMBER_STATE
-	popfq_cfi
+	popf
 	mov $1, %al
 	ret
 
-	CFI_RESTORE_STATE
-.Lnot_same:
-	popfq_cfi
+ not_same:
+	popf
 	xor %al,%al
 	ret
 

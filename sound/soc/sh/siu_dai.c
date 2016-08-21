@@ -543,8 +543,7 @@ static void siu_dai_shutdown(struct snd_pcm_substream *substream,
 	/* Stop the siu if the other stream is not using it */
 	if (!port_info->play_cap) {
 		/* during stmread or stmwrite ? */
-		if (WARN_ON(port_info->playback.rw_flg || port_info->capture.rw_flg))
-			return;
+		BUG_ON(port_info->playback.rw_flg || port_info->capture.rw_flg);
 		siu_dai_spbstop(port_info);
 		siu_dai_stop(port_info);
 	}

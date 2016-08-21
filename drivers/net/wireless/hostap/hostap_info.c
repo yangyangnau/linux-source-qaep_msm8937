@@ -217,7 +217,7 @@ static void prism2_host_roaming(local_info_t *local)
 		}
 	}
 
-	memcpy(req.bssid, selected->bssid, ETH_ALEN);
+	memcpy(req.bssid, selected->bssid, 6);
 	req.channel = selected->chid;
 	spin_unlock_irqrestore(&local->lock, flags);
 

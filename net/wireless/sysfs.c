@@ -30,8 +30,7 @@ static ssize_t name ## _show(struct device *dev,			\
 			      char *buf)				\
 {									\
 	return sprintf(buf, fmt "\n", dev_to_rdev(dev)->member);	\
-}									\
-static DEVICE_ATTR_RO(name)
+}
 
 SHOW_FMT(index, "%d", wiphy_idx);
 SHOW_FMT(macaddress, "%pM", wiphy.perm_addr);
@@ -43,7 +42,7 @@ static ssize_t name_show(struct device *dev,
 	struct wiphy *wiphy = &dev_to_rdev(dev)->wiphy;
 	return sprintf(buf, "%s\n", dev_name(&wiphy->dev));
 }
-static DEVICE_ATTR_RO(name);
+
 
 static ssize_t addresses_show(struct device *dev,
 			      struct device_attribute *attr,
@@ -61,17 +60,15 @@ static ssize_t addresses_show(struct device *dev,
 
 	return buf - start;
 }
-static DEVICE_ATTR_RO(addresses);
 
-static struct attribute *ieee80211_attrs[] = {
-	&dev_attr_index.attr,
-	&dev_attr_macaddress.attr,
-	&dev_attr_address_mask.attr,
-	&dev_attr_addresses.attr,
-	&dev_attr_name.attr,
-	NULL,
+static struct device_attribute ieee80211_dev_attrs[] = {
+	__ATTR_RO(index),
+	__ATTR_RO(macaddress),
+	__ATTR_RO(address_mask),
+	__ATTR_RO(addresses),
+	__ATTR_RO(name),
+	{}
 };
-ATTRIBUTE_GROUPS(ieee80211);
 
 static void wiphy_dev_release(struct device *dev)
 {
@@ -86,7 +83,6 @@ static int wiphy_uevent(struct device *dev, struct kobj_uevent_env *env)
 	return 0;
 }
 
-#ifdef CONFIG_PM
 static void cfg80211_leave_all(struct cfg80211_registered_device *rdev)
 {
 	struct wireless_dev *wdev;
@@ -104,10 +100,10 @@ static int wiphy_suspend(struct device *dev, pm_message_t state)
 
 	rtnl_lock();
 	if (rdev->wiphy.registered) {
-		if (!rdev->wiphy.wowlan_config)
+		if (!rdev->wowlan)
 			cfg80211_leave_all(rdev);
 		if (rdev->ops->suspend)
-			ret = rdev_suspend(rdev, rdev->wiphy.wowlan_config);
+			ret = rdev_suspend(rdev, rdev->wowlan);
 		if (ret == 1) {
 			/* Driver refuse to configure wowlan */
 			cfg80211_leave_all(rdev);
@@ -136,7 +132,6 @@ static int wiphy_resume(struct device *dev)
 
 	return ret;
 }
-#endif
 
 static const void *wiphy_namespace(struct device *d)
 {
@@ -149,12 +144,10 @@ struct class ieee80211_class = {
 	.name = "ieee80211",
 	.owner = THIS_MODULE,
 	.dev_release = wiphy_dev_release,
-	.dev_groups = ieee80211_groups,
+	.dev_attrs = ieee80211_dev_attrs,
 	.dev_uevent = wiphy_uevent,
-#ifdef CONFIG_PM
 	.suspend = wiphy_suspend,
 	.resume = wiphy_resume,
-#endif
 	.ns_type = &net_ns_type_operations,
 	.namespace = wiphy_namespace,
 };

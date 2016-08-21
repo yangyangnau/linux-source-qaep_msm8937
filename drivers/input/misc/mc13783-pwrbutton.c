@@ -20,6 +20,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/input.h>
@@ -249,6 +250,7 @@ static int mc13783_pwrbutton_remove(struct platform_device *pdev)
 
 	input_unregister_device(priv->pwr);
 	kfree(priv);
+	platform_set_drvdata(pdev, NULL);
 
 	return 0;
 }

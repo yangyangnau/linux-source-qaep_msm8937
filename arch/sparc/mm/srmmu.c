@@ -14,7 +14,6 @@
 #include <linux/pagemap.h>
 #include <linux/vmalloc.h>
 #include <linux/kdebug.h>
-#include <linux/export.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/log2.h>
@@ -49,7 +48,7 @@
 #include <asm/mxcc.h>
 #include <asm/ross.h>
 
-#include "mm_32.h"
+#include "srmmu.h"
 
 enum mbus_module srmmu_modtype;
 static unsigned int hwbug_bitmask;
@@ -63,7 +62,6 @@ extern unsigned long last_valid_pfn;
 static pgd_t *srmmu_swapper_pg_dir;
 
 const struct sparc32_cachetlb_ops *sparc32_cachetlb_ops;
-EXPORT_SYMBOL(sparc32_cachetlb_ops);
 
 #ifdef CONFIG_SMP
 const struct sparc32_cachetlb_ops *local_ops;
@@ -100,6 +98,7 @@ static unsigned long srmmu_nocache_end;
 #define SRMMU_NOCACHE_ALIGN_MAX (sizeof(ctxd_t)*SRMMU_MAX_CONTEXTS)
 
 void *srmmu_nocache_pool;
+void *srmmu_nocache_bitmap;
 static struct bit_map srmmu_nocache_map;
 
 static inline int srmmu_pmd_none(pmd_t pmd)
@@ -172,7 +171,7 @@ static void *__srmmu_get_nocache(int size, int align)
 		printk(KERN_ERR "srmmu: out of nocache %d: %d/%d\n",
 		       size, (int) srmmu_nocache_size,
 		       srmmu_nocache_map.used << SRMMU_NOCACHE_BITMAP_SHIFT);
-		return NULL;
+		return 0;
 	}
 
 	addr = SRMMU_NOCACHE_VADDR + (offset << SRMMU_NOCACHE_BITMAP_SHIFT);
@@ -268,7 +267,6 @@ static void __init srmmu_nocache_calcsize(void)
 
 static void __init srmmu_nocache_init(void)
 {
-	void *srmmu_nocache_bitmap;
 	unsigned int bitmap_bits;
 	pgd_t *pgd;
 	pmd_t *pmd;
@@ -347,10 +345,7 @@ pgtable_t pte_alloc_one(struct mm_struct *mm, unsigned long address)
 	if ((pte = (unsigned long)pte_alloc_one_kernel(mm, address)) == 0)
 		return NULL;
 	page = pfn_to_page(__nocache_pa(pte) >> PAGE_SHIFT);
-	if (!pgtable_page_ctor(page)) {
-		__free_page(page);
-		return NULL;
-	}
+	pgtable_page_ctor(page);
 	return page;
 }
 
@@ -460,12 +455,10 @@ static void __init sparc_context_init(int numctx)
 void switch_mm(struct mm_struct *old_mm, struct mm_struct *mm,
 	       struct task_struct *tsk)
 {
-	unsigned long flags;
-
 	if (mm->context == NO_CONTEXT) {
-		spin_lock_irqsave(&srmmu_context_spinlock, flags);
+		spin_lock(&srmmu_context_spinlock);
 		alloc_context(old_mm, mm);
-		spin_unlock_irqrestore(&srmmu_context_spinlock, flags);
+		spin_unlock(&srmmu_context_spinlock);
 		srmmu_ctxd_set(&srmmu_context_table[mm->context], mm->pgd);
 	}
 
@@ -730,7 +723,7 @@ static inline unsigned long srmmu_probe(unsigned long vaddr)
 				     "=r" (retval) :
 				     "r" (vaddr | 0x400), "i" (ASI_M_FLUSH_PROBE));
 	} else {
-		retval = leon_swprobe(vaddr, NULL);
+		retval = leon_swprobe(vaddr, 0);
 	}
 	return retval;
 }
@@ -865,7 +858,9 @@ static void __init map_kernel(void)
 	}
 }
 
-void (*poke_srmmu)(void) = NULL;
+void (*poke_srmmu)(void) __cpuinitdata = NULL;
+
+extern unsigned long bootmem_init(unsigned long *pages_avail);
 
 void __init srmmu_paging_init(void)
 {
@@ -988,15 +983,14 @@ int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
 
 void destroy_context(struct mm_struct *mm)
 {
-	unsigned long flags;
 
 	if (mm->context != NO_CONTEXT) {
 		flush_cache_mm(mm);
 		srmmu_ctxd_set(&srmmu_context_table[mm->context], srmmu_swapper_pg_dir);
 		flush_tlb_mm(mm);
-		spin_lock_irqsave(&srmmu_context_spinlock, flags);
+		spin_lock(&srmmu_context_spinlock);
 		free_context(mm->context);
-		spin_unlock_irqrestore(&srmmu_context_spinlock, flags);
+		spin_unlock(&srmmu_context_spinlock);
 		mm->context = NO_CONTEXT;
 	}
 }
@@ -1061,7 +1055,7 @@ static void __init init_vac_layout(void)
 	       (int)vac_cache_size, (int)vac_line_size);
 }
 
-static void poke_hypersparc(void)
+static void __cpuinit poke_hypersparc(void)
 {
 	volatile unsigned long clear;
 	unsigned long mreg = srmmu_get_mmureg();
@@ -1113,7 +1107,7 @@ static void __init init_hypersparc(void)
 	hypersparc_setup_blockops();
 }
 
-static void poke_swift(void)
+static void __cpuinit poke_swift(void)
 {
 	unsigned long mreg;
 
@@ -1293,7 +1287,7 @@ static void turbosparc_flush_tlb_page(struct vm_area_struct *vma, unsigned long 
 }
 
 
-static void poke_turbosparc(void)
+static void __cpuinit poke_turbosparc(void)
 {
 	unsigned long mreg = srmmu_get_mmureg();
 	unsigned long ccreg;
@@ -1356,7 +1350,7 @@ static void __init init_turbosparc(void)
 	poke_srmmu = poke_turbosparc;
 }
 
-static void poke_tsunami(void)
+static void __cpuinit poke_tsunami(void)
 {
 	unsigned long mreg = srmmu_get_mmureg();
 
@@ -1397,7 +1391,7 @@ static void __init init_tsunami(void)
 	tsunami_setup_blockops();
 }
 
-static void poke_viking(void)
+static void __cpuinit poke_viking(void)
 {
 	unsigned long mreg = srmmu_get_mmureg();
 	static int smp_catch;
@@ -1772,6 +1766,9 @@ static struct sparc32_cachetlb_ops smp_cachetlb_ops = {
 /* Load up routines and constants for sun4m and sun4d mmu */
 void __init load_mmu(void)
 {
+	extern void ld_mmu_iommu(void);
+	extern void ld_mmu_iounit(void);
+
 	/* Functions */
 	get_srmmu_type();
 

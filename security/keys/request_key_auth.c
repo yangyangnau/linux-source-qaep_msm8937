@@ -18,10 +18,7 @@
 #include <linux/slab.h>
 #include <asm/uaccess.h>
 #include "internal.h"
-#include <keys/user-type.h>
 
-static int request_key_auth_preparse(struct key_preparsed_payload *);
-static void request_key_auth_free_preparse(struct key_preparsed_payload *);
 static int request_key_auth_instantiate(struct key *,
 					struct key_preparsed_payload *);
 static void request_key_auth_describe(const struct key *, struct seq_file *);
@@ -35,23 +32,12 @@ static long request_key_auth_read(const struct key *, char __user *, size_t);
 struct key_type key_type_request_key_auth = {
 	.name		= ".request_key_auth",
 	.def_datalen	= sizeof(struct request_key_auth),
-	.preparse	= request_key_auth_preparse,
-	.free_preparse	= request_key_auth_free_preparse,
 	.instantiate	= request_key_auth_instantiate,
 	.describe	= request_key_auth_describe,
 	.revoke		= request_key_auth_revoke,
 	.destroy	= request_key_auth_destroy,
 	.read		= request_key_auth_read,
 };
-
-static int request_key_auth_preparse(struct key_preparsed_payload *prep)
-{
-	return 0;
-}
-
-static void request_key_auth_free_preparse(struct key_preparsed_payload *prep)
-{
-}
 
 /*
  * Instantiate a request-key authorisation key.
@@ -236,27 +222,32 @@ error_alloc:
 }
 
 /*
+ * See if an authorisation key is associated with a particular key.
+ */
+static int key_get_instantiation_authkey_match(const struct key *key,
+					       const void *_id)
+{
+	struct request_key_auth *rka = key->payload.data;
+	key_serial_t id = (key_serial_t)(unsigned long) _id;
+
+	return rka->target_key->serial == id;
+}
+
+/*
  * Search the current process's keyrings for the authorisation key for
  * instantiation of a key.
  */
 struct key *key_get_instantiation_authkey(key_serial_t target_id)
 {
-	char description[16];
-	struct keyring_search_context ctx = {
-		.index_key.type		= &key_type_request_key_auth,
-		.index_key.description	= description,
-		.cred			= current_cred(),
-		.match_data.cmp		= key_default_cmp,
-		.match_data.raw_data	= description,
-		.match_data.lookup_type	= KEYRING_SEARCH_LOOKUP_DIRECT,
-		.flags			= KEYRING_SEARCH_DO_STATE_CHECK,
-	};
+	const struct cred *cred = current_cred();
 	struct key *authkey;
 	key_ref_t authkey_ref;
 
-	sprintf(description, "%x", target_id);
-
-	authkey_ref = search_process_keyrings(&ctx);
+	authkey_ref = search_process_keyrings(
+		&key_type_request_key_auth,
+		(void *) (unsigned long) target_id,
+		key_get_instantiation_authkey_match,
+		cred);
 
 	if (IS_ERR(authkey_ref)) {
 		authkey = ERR_CAST(authkey_ref);

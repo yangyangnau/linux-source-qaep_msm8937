@@ -406,6 +406,7 @@ txx9dmac_descriptor_complete(struct txx9dmac_chan *dc,
 	dma_async_tx_callback callback;
 	void *param;
 	struct dma_async_tx_descriptor *txd = &desc->txd;
+	struct txx9dmac_slave *ds = dc->chan.private;
 
 	dev_vdbg(chan2dev(&dc->chan), "descriptor %u %p complete\n",
 		 txd->cookie, desc);
@@ -418,7 +419,30 @@ txx9dmac_descriptor_complete(struct txx9dmac_chan *dc,
 	list_splice_init(&desc->tx_list, &dc->free_list);
 	list_move(&desc->desc_node, &dc->free_list);
 
-	dma_descriptor_unmap(txd);
+	if (!ds) {
+		dma_addr_t dmaaddr;
+		if (!(txd->flags & DMA_COMPL_SKIP_DEST_UNMAP)) {
+			dmaaddr = is_dmac64(dc) ?
+				desc->hwdesc.DAR : desc->hwdesc32.DAR;
+			if (txd->flags & DMA_COMPL_DEST_UNMAP_SINGLE)
+				dma_unmap_single(chan2parent(&dc->chan),
+					dmaaddr, desc->len, DMA_FROM_DEVICE);
+			else
+				dma_unmap_page(chan2parent(&dc->chan),
+					dmaaddr, desc->len, DMA_FROM_DEVICE);
+		}
+		if (!(txd->flags & DMA_COMPL_SKIP_SRC_UNMAP)) {
+			dmaaddr = is_dmac64(dc) ?
+				desc->hwdesc.SAR : desc->hwdesc32.SAR;
+			if (txd->flags & DMA_COMPL_SRC_UNMAP_SINGLE)
+				dma_unmap_single(chan2parent(&dc->chan),
+					dmaaddr, desc->len, DMA_TO_DEVICE);
+			else
+				dma_unmap_page(chan2parent(&dc->chan),
+					dmaaddr, desc->len, DMA_TO_DEVICE);
+		}
+	}
+
 	/*
 	 * The API requires that no submissions are done from a
 	 * callback, so we don't need to drop the lock here
@@ -938,14 +962,15 @@ txx9dmac_tx_status(struct dma_chan *chan, dma_cookie_t cookie,
 	enum dma_status ret;
 
 	ret = dma_cookie_status(chan, cookie, txstate);
-	if (ret == DMA_COMPLETE)
-		return DMA_COMPLETE;
+	if (ret != DMA_SUCCESS) {
+		spin_lock_bh(&dc->lock);
+		txx9dmac_scan_descriptors(dc);
+		spin_unlock_bh(&dc->lock);
 
-	spin_lock_bh(&dc->lock);
-	txx9dmac_scan_descriptors(dc);
-	spin_unlock_bh(&dc->lock);
+		ret = dma_cookie_status(chan, cookie, txstate);
+	}
 
-	return dma_cookie_status(chan, cookie, txstate);
+	return ret;
 }
 
 static void txx9dmac_chain_dynamic(struct txx9dmac_chan *dc,
@@ -1093,10 +1118,9 @@ static void txx9dmac_off(struct txx9dmac_dev *ddev)
 
 static int __init txx9dmac_chan_probe(struct platform_device *pdev)
 {
-	struct txx9dmac_chan_platform_data *cpdata =
-			dev_get_platdata(&pdev->dev);
+	struct txx9dmac_chan_platform_data *cpdata = pdev->dev.platform_data;
 	struct platform_device *dmac_dev = cpdata->dmac_dev;
-	struct txx9dmac_platform_data *pdata = dev_get_platdata(&dmac_dev->dev);
+	struct txx9dmac_platform_data *pdata = dmac_dev->dev.platform_data;
 	struct txx9dmac_chan *dc;
 	int err;
 	int ch = pdev->id % TXX9_DMA_MAX_NR_CHANNELS;
@@ -1179,7 +1203,7 @@ static int txx9dmac_chan_remove(struct platform_device *pdev)
 
 static int __init txx9dmac_probe(struct platform_device *pdev)
 {
-	struct txx9dmac_platform_data *pdata = dev_get_platdata(&pdev->dev);
+	struct txx9dmac_platform_data *pdata = pdev->dev.platform_data;
 	struct resource *io;
 	struct txx9dmac_dev *ddev;
 	u32 mcr;
@@ -1258,7 +1282,7 @@ static int txx9dmac_resume_noirq(struct device *dev)
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	struct txx9dmac_dev *ddev = platform_get_drvdata(pdev);
-	struct txx9dmac_platform_data *pdata = dev_get_platdata(&pdev->dev);
+	struct txx9dmac_platform_data *pdata = pdev->dev.platform_data;
 	u32 mcr;
 
 	mcr = TXX9_DMA_MCR_MSTEN | MCR_LE;

@@ -12,6 +12,16 @@
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301 USA
  */
 
 #include <linux/device.h>
@@ -112,7 +122,7 @@ static struct omap3isp_prev_csc flr_prev_csc = {
 #define PREV_MAX_OUT_WIDTH_REV_15	4096
 
 /*
- * Coefficient Tables for the submodules in Preview.
+ * Coeficient Tables for the submodules in Preview.
  * Array is initialised with the values from.the tables text file.
  */
 
@@ -961,8 +971,7 @@ static void preview_setup_hw(struct isp_prev_device *prev, u32 update,
 
 /*
  * preview_config_ycpos - Configure byte layout of YUV image.
- * @prev: pointer to previewer private structure
- * @pixelcode: pixel code
+ * @mode: Indicates the required byte layout.
  */
 static void
 preview_config_ycpos(struct isp_prev_device *prev,
@@ -1363,8 +1372,8 @@ static void preview_init_params(struct isp_prev_device *prev)
 }
 
 /*
- * preview_max_out_width - Handle previewer hardware output limitations
- * @prev: pointer to previewer private structure
+ * preview_max_out_width - Handle previewer hardware ouput limitations
+ * @isp_revision : ISP revision
  * returns maximum width output for current isp revision
  */
 static unsigned int preview_max_out_width(struct isp_prev_device *prev)
@@ -1489,14 +1498,14 @@ static void preview_isr_buffer(struct isp_prev_device *prev)
 	if (prev->input == PREVIEW_INPUT_MEMORY) {
 		buffer = omap3isp_video_buffer_next(&prev->video_in);
 		if (buffer != NULL)
-			preview_set_inaddr(prev, buffer->dma);
+			preview_set_inaddr(prev, buffer->isp_addr);
 		pipe->state |= ISP_PIPELINE_IDLE_INPUT;
 	}
 
 	if (prev->output & PREVIEW_OUTPUT_MEMORY) {
 		buffer = omap3isp_video_buffer_next(&prev->video_out);
 		if (buffer != NULL) {
-			preview_set_outaddr(prev, buffer->dma);
+			preview_set_outaddr(prev, buffer->isp_addr);
 			restart = 1;
 		}
 		pipe->state |= ISP_PIPELINE_IDLE_OUTPUT;
@@ -1567,10 +1576,10 @@ static int preview_video_queue(struct isp_video *video,
 	struct isp_prev_device *prev = &video->isp->isp_prev;
 
 	if (video->type == V4L2_BUF_TYPE_VIDEO_OUTPUT)
-		preview_set_inaddr(prev, buffer->dma);
+		preview_set_inaddr(prev, buffer->isp_addr);
 
 	if (video->type == V4L2_BUF_TYPE_VIDEO_CAPTURE)
-		preview_set_outaddr(prev, buffer->dma);
+		preview_set_outaddr(prev, buffer->isp_addr);
 
 	return 0;
 }
@@ -1610,7 +1619,7 @@ static const struct v4l2_ctrl_ops preview_ctrl_ops = {
 
 /*
  * preview_ioctl - Handle preview module private ioctl's
- * @sd: pointer to v4l2 subdev structure
+ * @prev: pointer to preview context structure
  * @cmd: configuration command
  * @arg: configuration argument
  * return -EINVAL or zero on success
@@ -2283,8 +2292,7 @@ static int preview_init_entities(struct isp_prev_device *prev)
 	v4l2_ctrl_handler_setup(&prev->ctrls);
 	sd->ctrl_handler = &prev->ctrls;
 
-	pads[PREV_PAD_SINK].flags = MEDIA_PAD_FL_SINK
-				    | MEDIA_PAD_FL_MUST_CONNECT;
+	pads[PREV_PAD_SINK].flags = MEDIA_PAD_FL_SINK;
 	pads[PREV_PAD_SOURCE].flags = MEDIA_PAD_FL_SOURCE;
 
 	me->ops = &preview_media_ops;
@@ -2341,7 +2349,7 @@ error_video_in:
 
 /*
  * omap3isp_preview_init - Previewer initialization.
- * @isp : Pointer to ISP device
+ * @dev : Pointer to ISP device
  * return -ENOMEM or zero on success
  */
 int omap3isp_preview_init(struct isp_device *isp)

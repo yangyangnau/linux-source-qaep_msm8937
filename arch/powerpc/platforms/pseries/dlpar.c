@@ -11,13 +11,13 @@
  */
 
 #include <linux/kernel.h>
+#include <linux/kref.h>
 #include <linux/notifier.h>
 #include <linux/spinlock.h>
 #include <linux/cpu.h>
 #include <linux/slab.h>
 #include <linux/of.h>
 #include "offline_states.h"
-#include "pseries.h"
 
 #include <asm/prom.h>
 #include <asm/machdep.h>
@@ -25,11 +25,11 @@
 #include <asm/rtas.h>
 
 struct cc_workarea {
-	__be32	drc_index;
-	__be32	zero;
-	__be32	name_offset;
-	__be32	prop_length;
-	__be32	prop_offset;
+	u32	drc_index;
+	u32	zero;
+	u32	name_offset;
+	u32	prop_length;
+	u32	prop_offset;
 };
 
 void dlpar_free_cc_property(struct property *prop)
@@ -49,11 +49,11 @@ static struct property *dlpar_parse_cc_property(struct cc_workarea *ccwa)
 	if (!prop)
 		return NULL;
 
-	name = (char *)ccwa + be32_to_cpu(ccwa->name_offset);
+	name = (char *)ccwa + ccwa->name_offset;
 	prop->name = kstrdup(name, GFP_KERNEL);
 
-	prop->length = be32_to_cpu(ccwa->prop_length);
-	value = (char *)ccwa + be32_to_cpu(ccwa->prop_offset);
+	prop->length = ccwa->prop_length;
+	value = (char *)ccwa + ccwa->prop_offset;
 	prop->value = kmemdup(value, prop->length, GFP_KERNEL);
 	if (!prop->value) {
 		dlpar_free_cc_property(prop);
@@ -63,31 +63,25 @@ static struct property *dlpar_parse_cc_property(struct cc_workarea *ccwa)
 	return prop;
 }
 
-static struct device_node *dlpar_parse_cc_node(struct cc_workarea *ccwa,
-					       const char *path)
+static struct device_node *dlpar_parse_cc_node(struct cc_workarea *ccwa)
 {
 	struct device_node *dn;
 	char *name;
-
-	/* If parent node path is "/" advance path to NULL terminator to
-	 * prevent double leading slashs in full_name.
-	 */
-	if (!path[1])
-		path++;
 
 	dn = kzalloc(sizeof(*dn), GFP_KERNEL);
 	if (!dn)
 		return NULL;
 
-	name = (char *)ccwa + be32_to_cpu(ccwa->name_offset);
-	dn->full_name = kasprintf(GFP_KERNEL, "%s/%s", path, name);
+	/* The configure connector reported name does not contain a
+	 * preceding '/', so we allocate a buffer large enough to
+	 * prepend this to the full_name.
+	 */
+	name = (char *)ccwa + ccwa->name_offset;
+	dn->full_name = kasprintf(GFP_KERNEL, "/%s", name);
 	if (!dn->full_name) {
 		kfree(dn);
 		return NULL;
 	}
-
-	of_node_set_flag(dn, OF_DYNAMIC);
-	of_node_init(dn);
 
 	return dn;
 }
@@ -126,8 +120,7 @@ void dlpar_free_cc_nodes(struct device_node *dn)
 #define CALL_AGAIN	-2
 #define ERR_CFG_USE     -9003
 
-struct device_node *dlpar_configure_connector(__be32 drc_index,
-					      struct device_node *parent)
+struct device_node *dlpar_configure_connector(u32 drc_index)
 {
 	struct device_node *dn;
 	struct device_node *first_dn = NULL;
@@ -136,7 +129,6 @@ struct device_node *dlpar_configure_connector(__be32 drc_index,
 	struct property *last_property = NULL;
 	struct cc_workarea *ccwa;
 	char *data_buf;
-	const char *parent_path = parent->full_name;
 	int cc_token;
 	int rc = -1;
 
@@ -170,7 +162,7 @@ struct device_node *dlpar_configure_connector(__be32 drc_index,
 			break;
 
 		case NEXT_SIBLING:
-			dn = dlpar_parse_cc_node(ccwa, parent_path);
+			dn = dlpar_parse_cc_node(ccwa);
 			if (!dn)
 				goto cc_error;
 
@@ -180,17 +172,13 @@ struct device_node *dlpar_configure_connector(__be32 drc_index,
 			break;
 
 		case NEXT_CHILD:
-			if (first_dn)
-				parent_path = last_dn->full_name;
-
-			dn = dlpar_parse_cc_node(ccwa, parent_path);
+			dn = dlpar_parse_cc_node(ccwa);
 			if (!dn)
 				goto cc_error;
 
-			if (!first_dn) {
-				dn->parent = parent;
+			if (!first_dn)
 				first_dn = dn;
-			} else {
+			else {
 				dn->parent = last_dn;
 				if (last_dn)
 					last_dn->child = dn;
@@ -214,7 +202,6 @@ struct device_node *dlpar_configure_connector(__be32 drc_index,
 
 		case PREV_PARENT:
 			last_dn = last_dn->parent;
-			parent_path = last_dn->parent->full_name;
 			break;
 
 		case CALL_AGAIN:
@@ -269,6 +256,8 @@ int dlpar_attach_node(struct device_node *dn)
 {
 	int rc;
 
+	of_node_set_flag(dn, OF_DYNAMIC);
+	kref_init(&dn->kref);
 	dn->parent = derive_parent(dn->full_name);
 	if (!dn->parent)
 		return -ENOMEM;
@@ -286,14 +275,7 @@ int dlpar_attach_node(struct device_node *dn)
 
 int dlpar_detach_node(struct device_node *dn)
 {
-	struct device_node *child;
 	int rc;
-
-	child = of_get_next_child(dn, NULL);
-	while (child) {
-		dlpar_detach_node(child);
-		child = of_get_next_child(dn, child);
-	}
 
 	rc = of_detach_node(dn);
 	if (rc)
@@ -364,8 +346,7 @@ static int dlpar_online_cpu(struct device_node *dn)
 	int rc = 0;
 	unsigned int cpu;
 	int len, nthreads, i;
-	const __be32 *intserv;
-	u32 thread;
+	const u32 *intserv;
 
 	intserv = of_get_property(dn, "ibm,ppc-interrupt-server#s", &len);
 	if (!intserv)
@@ -375,14 +356,13 @@ static int dlpar_online_cpu(struct device_node *dn)
 
 	cpu_maps_update_begin();
 	for (i = 0; i < nthreads; i++) {
-		thread = be32_to_cpu(intserv[i]);
 		for_each_present_cpu(cpu) {
-			if (get_hard_smp_processor_id(cpu) != thread)
+			if (get_hard_smp_processor_id(cpu) != intserv[i])
 				continue;
 			BUG_ON(get_cpu_current_state(cpu)
 					!= CPU_STATE_OFFLINE);
 			cpu_maps_update_done();
-			rc = device_online(get_cpu_device(cpu));
+			rc = cpu_up(cpu);
 			if (rc)
 				goto out;
 			cpu_maps_update_begin();
@@ -391,7 +371,7 @@ static int dlpar_online_cpu(struct device_node *dn)
 		}
 		if (cpu == num_possible_cpus())
 			printk(KERN_WARNING "Could not find cpu to online "
-			       "with physical id 0x%x\n", thread);
+			       "with physical id 0x%x\n", intserv[i]);
 	}
 	cpu_maps_update_done();
 
@@ -402,42 +382,57 @@ out:
 
 static ssize_t dlpar_cpu_probe(const char *buf, size_t count)
 {
-	struct device_node *dn, *parent;
-	u32 drc_index;
+	struct device_node *dn;
+	unsigned long drc_index;
+	char *cpu_name;
 	int rc;
 
-	rc = kstrtou32(buf, 0, &drc_index);
-	if (rc)
-		return -EINVAL;
+	cpu_hotplug_driver_lock();
+	rc = strict_strtoul(buf, 0, &drc_index);
+	if (rc) {
+		rc = -EINVAL;
+		goto out;
+	}
 
-	parent = of_find_node_by_path("/cpus");
-	if (!parent)
-		return -ENODEV;
+	dn = dlpar_configure_connector(drc_index);
+	if (!dn) {
+		rc = -EINVAL;
+		goto out;
+	}
 
-	dn = dlpar_configure_connector(cpu_to_be32(drc_index), parent);
-	if (!dn)
-		return -EINVAL;
+	/* configure-connector reports cpus as living in the base
+	 * directory of the device tree.  CPUs actually live in the
+	 * cpus directory so we need to fixup the full_name.
+	 */
+	cpu_name = kasprintf(GFP_KERNEL, "/cpus%s", dn->full_name);
+	if (!cpu_name) {
+		dlpar_free_cc_nodes(dn);
+		rc = -ENOMEM;
+		goto out;
+	}
 
-	of_node_put(parent);
+	kfree(dn->full_name);
+	dn->full_name = cpu_name;
 
 	rc = dlpar_acquire_drc(drc_index);
 	if (rc) {
 		dlpar_free_cc_nodes(dn);
-		return -EINVAL;
+		rc = -EINVAL;
+		goto out;
 	}
 
 	rc = dlpar_attach_node(dn);
 	if (rc) {
 		dlpar_release_drc(drc_index);
 		dlpar_free_cc_nodes(dn);
-		return rc;
+		goto out;
 	}
 
 	rc = dlpar_online_cpu(dn);
-	if (rc)
-		return rc;
+out:
+	cpu_hotplug_driver_unlock();
 
-	return count;
+	return rc ? rc : count;
 }
 
 static int dlpar_offline_cpu(struct device_node *dn)
@@ -445,8 +440,7 @@ static int dlpar_offline_cpu(struct device_node *dn)
 	int rc = 0;
 	unsigned int cpu;
 	int len, nthreads, i;
-	const __be32 *intserv;
-	u32 thread;
+	const u32 *intserv;
 
 	intserv = of_get_property(dn, "ibm,ppc-interrupt-server#s", &len);
 	if (!intserv)
@@ -456,9 +450,8 @@ static int dlpar_offline_cpu(struct device_node *dn)
 
 	cpu_maps_update_begin();
 	for (i = 0; i < nthreads; i++) {
-		thread = be32_to_cpu(intserv[i]);
 		for_each_present_cpu(cpu) {
-			if (get_hard_smp_processor_id(cpu) != thread)
+			if (get_hard_smp_processor_id(cpu) != intserv[i])
 				continue;
 
 			if (get_cpu_current_state(cpu) == CPU_STATE_OFFLINE)
@@ -467,7 +460,7 @@ static int dlpar_offline_cpu(struct device_node *dn)
 			if (get_cpu_current_state(cpu) == CPU_STATE_ONLINE) {
 				set_preferred_offline_state(cpu, CPU_STATE_OFFLINE);
 				cpu_maps_update_done();
-				rc = device_offline(get_cpu_device(cpu));
+				rc = cpu_down(cpu);
 				if (rc)
 					goto out;
 				cpu_maps_update_begin();
@@ -480,14 +473,14 @@ static int dlpar_offline_cpu(struct device_node *dn)
 			 * Upgrade it's state to CPU_STATE_OFFLINE.
 			 */
 			set_preferred_offline_state(cpu, CPU_STATE_OFFLINE);
-			BUG_ON(plpar_hcall_norets(H_PROD, thread)
+			BUG_ON(plpar_hcall_norets(H_PROD, intserv[i])
 								!= H_SUCCESS);
 			__cpu_die(cpu);
 			break;
 		}
 		if (cpu == num_possible_cpus())
 			printk(KERN_WARNING "Could not find cpu to offline "
-			       "with physical id 0x%x\n", thread);
+			       "with physical id 0x%x\n", intserv[i]);
 	}
 	cpu_maps_update_done();
 
@@ -499,40 +492,43 @@ out:
 static ssize_t dlpar_cpu_release(const char *buf, size_t count)
 {
 	struct device_node *dn;
-	u32 drc_index;
+	const u32 *drc_index;
 	int rc;
 
 	dn = of_find_node_by_path(buf);
 	if (!dn)
 		return -EINVAL;
 
-	rc = of_property_read_u32(dn, "ibm,my-drc-index", &drc_index);
-	if (rc) {
+	drc_index = of_get_property(dn, "ibm,my-drc-index", NULL);
+	if (!drc_index) {
 		of_node_put(dn);
 		return -EINVAL;
 	}
 
+	cpu_hotplug_driver_lock();
 	rc = dlpar_offline_cpu(dn);
 	if (rc) {
 		of_node_put(dn);
-		return -EINVAL;
+		rc = -EINVAL;
+		goto out;
 	}
 
-	rc = dlpar_release_drc(drc_index);
+	rc = dlpar_release_drc(*drc_index);
 	if (rc) {
 		of_node_put(dn);
-		return rc;
+		goto out;
 	}
 
 	rc = dlpar_detach_node(dn);
 	if (rc) {
-		dlpar_acquire_drc(drc_index);
-		return rc;
+		dlpar_acquire_drc(*drc_index);
+		goto out;
 	}
 
 	of_node_put(dn);
-
-	return count;
+out:
+	cpu_hotplug_driver_unlock();
+	return rc ? rc : count;
 }
 
 static int __init pseries_dlpar_init(void)

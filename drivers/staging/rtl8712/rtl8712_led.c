@@ -98,7 +98,7 @@ static void InitLed871x(struct _adapter *padapter, struct LED_871x *pLed,
 	pLed->BlinkTimes = 0;
 	pLed->BlinkingLedState = LED_UNKNOWN;
 	_init_timer(&(pLed->BlinkTimer), nic, BlinkTimerCallback, pLed);
-	INIT_WORK(&pLed->BlinkWorkItem, BlinkWorkItemCallback);
+	_init_workitem(&(pLed->BlinkWorkItem), BlinkWorkItemCallback, pLed);
 }
 
 /*
@@ -827,7 +827,7 @@ static void BlinkTimerCallback(unsigned long data)
 	if ((pLed->padapter->bSurpriseRemoved == true) ||
 	    (pLed->padapter->bDriverStopped == true))
 		return;
-	schedule_work(&pLed->BlinkWorkItem);
+	_set_workitem(&(pLed->BlinkWorkItem));
 }
 
 /*	Description:

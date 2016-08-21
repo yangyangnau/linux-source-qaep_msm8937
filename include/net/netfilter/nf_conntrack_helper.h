@@ -52,24 +52,21 @@ struct nf_conntrack_helper {
 	unsigned int queue_num;		/* For user-space helpers. */
 };
 
-struct nf_conntrack_helper *__nf_conntrack_helper_find(const char *name,
-						       u16 l3num, u8 protonum);
+extern struct nf_conntrack_helper *
+__nf_conntrack_helper_find(const char *name, u16 l3num, u8 protonum);
 
-struct nf_conntrack_helper *nf_conntrack_helper_try_module_get(const char *name,
-							       u16 l3num,
-							       u8 protonum);
+extern struct nf_conntrack_helper *
+nf_conntrack_helper_try_module_get(const char *name, u16 l3num, u8 protonum);
 
-int nf_conntrack_helper_register(struct nf_conntrack_helper *);
-void nf_conntrack_helper_unregister(struct nf_conntrack_helper *);
+extern int nf_conntrack_helper_register(struct nf_conntrack_helper *);
+extern void nf_conntrack_helper_unregister(struct nf_conntrack_helper *);
 
-struct nf_conn_help *nf_ct_helper_ext_add(struct nf_conn *ct,
-					  struct nf_conntrack_helper *helper,
-					  gfp_t gfp);
+extern struct nf_conn_help *nf_ct_helper_ext_add(struct nf_conn *ct, struct nf_conntrack_helper *helper, gfp_t gfp);
 
-int __nf_ct_try_assign_helper(struct nf_conn *ct, struct nf_conn *tmpl,
-			      gfp_t flags);
+extern int __nf_ct_try_assign_helper(struct nf_conn *ct, struct nf_conn *tmpl,
+				     gfp_t flags);
 
-void nf_ct_helper_destroy(struct nf_conn *ct);
+extern void nf_ct_helper_destroy(struct nf_conn *ct);
 
 static inline struct nf_conn_help *nfct_help(const struct nf_conn *ct)
 {
@@ -85,16 +82,17 @@ static inline void *nfct_help_data(const struct nf_conn *ct)
 	return (void *)help->data;
 }
 
-int nf_conntrack_helper_pernet_init(struct net *net);
-void nf_conntrack_helper_pernet_fini(struct net *net);
+extern int nf_conntrack_helper_pernet_init(struct net *net);
+extern void nf_conntrack_helper_pernet_fini(struct net *net);
 
-int nf_conntrack_helper_init(void);
-void nf_conntrack_helper_fini(void);
+extern int nf_conntrack_helper_init(void);
+extern void nf_conntrack_helper_fini(void);
 
-int nf_conntrack_broadcast_help(struct sk_buff *skb, unsigned int protoff,
-				struct nf_conn *ct,
-				enum ip_conntrack_info ctinfo,
-				unsigned int timeout);
+extern int nf_conntrack_broadcast_help(struct sk_buff *skb,
+				       unsigned int protoff,
+				       struct nf_conn *ct,
+				       enum ip_conntrack_info ctinfo,
+				       unsigned int timeout);
 
 struct nf_ct_helper_expectfn {
 	struct list_head head;

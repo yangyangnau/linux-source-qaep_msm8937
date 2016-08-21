@@ -80,7 +80,7 @@ struct irq_remap_ops {
 	int (*msi_setup_irq)(struct pci_dev *, unsigned int, int, int);
 
 	/* Setup interrupt remapping for an HPET MSI */
-	int (*alloc_hpet_msi)(unsigned int, unsigned int);
+	int (*setup_hpet_msi)(unsigned int, unsigned int);
 };
 
 extern struct irq_remap_ops intel_irq_remap_ops;

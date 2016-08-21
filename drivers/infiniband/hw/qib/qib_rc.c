@@ -752,7 +752,7 @@ void qib_send_rc_ack(struct qib_qp *qp)
 	qib_flush_wc();
 	qib_sendbuf_done(dd, pbufn);
 
-	this_cpu_inc(ibp->pmastats->n_unicast_xmit);
+	ibp->n_unicast_xmit++;
 	goto done;
 
 queue_ack:

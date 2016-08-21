@@ -42,6 +42,7 @@
 
 static const char hcd_name[] = "ehci-msm";
 static struct hc_driver __read_mostly msm_hc_driver;
+static struct usb_phy *phy;
 
 static int ehci_msm_reset(struct usb_hcd *hcd)
 {
@@ -69,7 +70,6 @@ static int ehci_msm_probe(struct platform_device *pdev)
 {
 	struct usb_hcd *hcd;
 	struct resource *res;
-	struct usb_phy *phy;
 	int ret;
 
 	dev_dbg(&pdev->dev, "ehci_msm proble\n");
@@ -96,9 +96,10 @@ static int ehci_msm_probe(struct platform_device *pdev)
 
 	hcd->rsrc_start = res->start;
 	hcd->rsrc_len = resource_size(res);
-	hcd->regs = devm_ioremap_resource(&pdev->dev, res);
-	if (IS_ERR(hcd->regs)) {
-		ret = PTR_ERR(hcd->regs);
+	hcd->regs = devm_ioremap(&pdev->dev, hcd->rsrc_start, hcd->rsrc_len);
+	if (!hcd->regs) {
+		dev_err(&pdev->dev, "ioremap failed\n");
+		ret = -ENOMEM;
 		goto put_hcd;
 	}
 
@@ -107,14 +108,10 @@ static int ehci_msm_probe(struct platform_device *pdev)
 	 * powering up VBUS, mapping of registers address space and power
 	 * management.
 	 */
-	if (pdev->dev.of_node)
-		phy = devm_usb_get_phy_by_phandle(&pdev->dev, "usb-phy", 0);
-	else
-		phy = devm_usb_get_phy(&pdev->dev, USB_PHY_TYPE_USB2);
-
+	phy = devm_usb_get_phy(&pdev->dev, USB_PHY_TYPE_USB2);
 	if (IS_ERR(phy)) {
 		dev_err(&pdev->dev, "unable to find transceiver\n");
-		ret = -EPROBE_DEFER;
+		ret = -ENODEV;
 		goto put_hcd;
 	}
 
@@ -124,7 +121,6 @@ static int ehci_msm_probe(struct platform_device *pdev)
 		goto put_hcd;
 	}
 
-	hcd->usb_phy = phy;
 	device_init_wakeup(&pdev->dev, 1);
 	/*
 	 * OTG device parent of HCD takes care of putting
@@ -151,7 +147,7 @@ static int ehci_msm_remove(struct platform_device *pdev)
 	pm_runtime_disable(&pdev->dev);
 	pm_runtime_set_suspended(&pdev->dev);
 
-	otg_set_host(hcd->usb_phy->otg, NULL);
+	otg_set_host(phy->otg, NULL);
 
 	/* FIXME: need to call usb_remove_hcd() here? */
 
@@ -190,19 +186,12 @@ static const struct dev_pm_ops ehci_msm_dev_pm_ops = {
 	.resume          = ehci_msm_pm_resume,
 };
 
-static const struct of_device_id msm_ehci_dt_match[] = {
-	{ .compatible = "qcom,ehci-host", },
-	{}
-};
-MODULE_DEVICE_TABLE(of, msm_ehci_dt_match);
-
 static struct platform_driver ehci_msm_driver = {
 	.probe	= ehci_msm_probe,
 	.remove	= ehci_msm_remove,
 	.driver = {
 		   .name = "msm_hsusb_host",
 		   .pm = &ehci_msm_dev_pm_ops,
-		   .of_match_table = msm_ehci_dt_match,
 	},
 };
 

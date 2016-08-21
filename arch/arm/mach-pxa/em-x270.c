@@ -30,7 +30,7 @@
 #include <linux/power_supply.h>
 #include <linux/apm-emulation.h>
 #include <linux/i2c.h>
-#include <linux/platform_data/pca953x.h>
+#include <linux/i2c/pca953x.h>
 #include <linux/i2c/pxa-i2c.h>
 #include <linux/regulator/userspace-consumer.h>
 
@@ -477,24 +477,16 @@ static int em_x270_usb_hub_init(void)
 	/* USB Hub power-on and reset */
 	gpio_direction_output(usb_hub_reset, 1);
 	gpio_direction_output(GPIO9_USB_VBUS_EN, 0);
-	err = regulator_enable(em_x270_usb_ldo);
-	if (err)
-		goto err_free_rst_gpio;
-
+	regulator_enable(em_x270_usb_ldo);
 	gpio_set_value(usb_hub_reset, 0);
 	gpio_set_value(usb_hub_reset, 1);
 	regulator_disable(em_x270_usb_ldo);
-	err = regulator_enable(em_x270_usb_ldo);
-	if (err)
-		goto err_free_rst_gpio;
-
+	regulator_enable(em_x270_usb_ldo);
 	gpio_set_value(usb_hub_reset, 0);
 	gpio_set_value(GPIO9_USB_VBUS_EN, 1);
 
 	return 0;
 
-err_free_rst_gpio:
-	gpio_free(usb_hub_reset);
 err_free_vbus_gpio:
 	gpio_free(GPIO9_USB_VBUS_EN);
 err_free_usb_ldo:
@@ -564,7 +556,8 @@ static int em_x270_mci_init(struct device *dev,
 	}
 
 	err = request_irq(gpio_to_irq(mmc_cd), em_x270_detect_int,
-			      IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
+			      IRQF_DISABLED | IRQF_TRIGGER_RISING |
+			      IRQF_TRIGGER_FALLING,
 			      "MMC card detect", data);
 	if (err) {
 		dev_err(dev, "can't request MMC card detect IRQ: %d\n", err);
@@ -599,7 +592,7 @@ err_irq:
 	return err;
 }
 
-static int em_x270_mci_setpower(struct device *dev, unsigned int vdd)
+static void em_x270_mci_setpower(struct device *dev, unsigned int vdd)
 {
 	struct pxamci_platform_data* p_d = dev->platform_data;
 
@@ -607,11 +600,10 @@ static int em_x270_mci_setpower(struct device *dev, unsigned int vdd)
 		int vdd_uV = (2000 + (vdd - __ffs(MMC_VDD_20_21)) * 100) * 1000;
 
 		regulator_set_voltage(em_x270_sdio_ldo, vdd_uV, vdd_uV);
-		return regulator_enable(em_x270_sdio_ldo);
+		regulator_enable(em_x270_sdio_ldo);
 	} else {
 		regulator_disable(em_x270_sdio_ldo);
 	}
-	return 0;
 }
 
 static void em_x270_mci_exit(struct device *dev, void *data)
@@ -841,25 +833,21 @@ static inline void em_x270_init_ac97(void) {}
 #endif
 
 #if defined(CONFIG_KEYBOARD_PXA27x) || defined(CONFIG_KEYBOARD_PXA27x_MODULE)
-static const unsigned int em_x270_module_matrix_keys[] = {
+static unsigned int em_x270_module_matrix_keys[] = {
 	KEY(0, 0, KEY_A), KEY(1, 0, KEY_UP), KEY(2, 1, KEY_B),
 	KEY(0, 2, KEY_LEFT), KEY(1, 1, KEY_ENTER), KEY(2, 0, KEY_RIGHT),
 	KEY(0, 1, KEY_C), KEY(1, 2, KEY_DOWN), KEY(2, 2, KEY_D),
-};
-
-static struct matrix_keymap_data em_x270_matrix_keymap_data = {
-	.keymap			= em_x270_module_matrix_keys,
-	.keymap_size		= ARRAY_SIZE(em_x270_module_matrix_keys),
 };
 
 struct pxa27x_keypad_platform_data em_x270_module_keypad_info = {
 	/* code map for the matrix keys */
 	.matrix_key_rows	= 3,
 	.matrix_key_cols	= 3,
-	.matrix_keymap_data	= &em_x270_matrix_keymap_data,
+	.matrix_key_map		= em_x270_module_matrix_keys,
+	.matrix_key_map_size	= ARRAY_SIZE(em_x270_module_matrix_keys),
 };
 
-static const unsigned int em_x270_exeda_matrix_keys[] = {
+static unsigned int em_x270_exeda_matrix_keys[] = {
 	KEY(0, 0, KEY_RIGHTSHIFT), KEY(0, 1, KEY_RIGHTCTRL),
 	KEY(0, 2, KEY_RIGHTALT), KEY(0, 3, KEY_SPACE),
 	KEY(0, 4, KEY_LEFTALT), KEY(0, 5, KEY_LEFTCTRL),
@@ -901,16 +889,12 @@ static const unsigned int em_x270_exeda_matrix_keys[] = {
 	KEY(7, 6, 0), KEY(7, 7, 0),
 };
 
-static struct matrix_keymap_data em_x270_exeda_matrix_keymap_data = {
-	.keymap			= em_x270_exeda_matrix_keys,
-	.keymap_size		= ARRAY_SIZE(em_x270_exeda_matrix_keys),
-};
-
 struct pxa27x_keypad_platform_data em_x270_exeda_keypad_info = {
 	/* code map for the matrix keys */
 	.matrix_key_rows	= 8,
 	.matrix_key_cols	= 8,
-	.matrix_keymap_data	= &em_x270_exeda_matrix_keymap_data,
+	.matrix_key_map		= em_x270_exeda_matrix_keys,
+	.matrix_key_map_size	= ARRAY_SIZE(em_x270_exeda_matrix_keys),
 };
 
 static void __init em_x270_init_keypad(void)

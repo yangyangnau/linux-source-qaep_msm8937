@@ -70,8 +70,7 @@ void mac802154_monitors_rx(struct mac802154_priv *priv, struct sk_buff *skb)
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(sdata, &priv->slaves, list) {
-		if (sdata->type != IEEE802154_DEV_MONITOR ||
-		    !netif_running(sdata->dev))
+		if (sdata->type != IEEE802154_DEV_MONITOR)
 			continue;
 
 		skb2 = skb_clone(skb, GFP_ATOMIC);

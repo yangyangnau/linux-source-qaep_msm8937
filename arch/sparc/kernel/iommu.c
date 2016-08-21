@@ -21,7 +21,6 @@
 #include <asm/iommu.h>
 
 #include "iommu_common.h"
-#include "kernel.h"
 
 #define STC_CTXMATCH_ADDR(STC, CTX)	\
 	((STC)->strbuf_ctxmatch_base + ((CTX) << 3))
@@ -841,6 +840,8 @@ static struct dma_map_ops sun4u_dma_ops = {
 struct dma_map_ops *dma_ops = &sun4u_dma_ops;
 EXPORT_SYMBOL(dma_ops);
 
+extern int pci64_dma_supported(struct pci_dev *pdev, u64 device_mask);
+
 int dma_supported(struct device *dev, u64 device_mask)
 {
 	struct iommu *iommu = dev->archdata.iommu;
@@ -853,7 +854,7 @@ int dma_supported(struct device *dev, u64 device_mask)
 		return 1;
 
 #ifdef CONFIG_PCI
-	if (dev_is_pci(dev))
+	if (dev->bus == &pci_bus_type)
 		return pci64_dma_supported(to_pci_dev(dev), device_mask);
 #endif
 

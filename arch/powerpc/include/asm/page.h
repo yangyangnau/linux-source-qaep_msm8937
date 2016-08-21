@@ -48,6 +48,9 @@ extern unsigned int HPAGE_SHIFT;
 #define HUGE_MAX_HSTATE		(MMU_PAGE_COUNT-1)
 #endif
 
+/* We do define AT_SYSINFO_EHDR but don't use the gate mechanism */
+#define __HAVE_ARCH_GATE_AREA		1
+
 /*
  * Subtle: (1 << PAGE_SHIFT) is an int, not an unsigned long. So if we
  * assign PAGE_MASK to a larger type it gets extended the way we want
@@ -75,7 +78,7 @@ extern unsigned int HPAGE_SHIFT;
  *
  * Also, KERNELBASE >= PAGE_OFFSET and PHYSICAL_START >= MEMORY_START
  *
- * There are two ways to determine a physical address from a virtual one:
+ * There are two was to determine a physical address from a virtual one:
  * va = pa + PAGE_OFFSET - MEMORY_START
  * va = pa + KERNELBASE - PHYSICAL_START
  *
@@ -400,7 +403,7 @@ void arch_free_page(struct page *page, int order);
 
 struct vm_area_struct;
 
-#if defined(CONFIG_PPC_64K_PAGES) && defined(CONFIG_PPC64)
+#ifdef CONFIG_PPC_64K_PAGES
 typedef pte_t *pgtable_t;
 #else
 typedef struct page *pgtable_t;

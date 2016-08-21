@@ -206,7 +206,6 @@ static struct platform_pwm_backlight_data z2_backlight_data[] = {
 		.max_brightness	= 1023,
 		.dft_brightness	= 0,
 		.pwm_period_ns	= 1260320,
-		.enable_gpio	= -1,
 	},
 	[1] = {
 		/* LCD Backlight */
@@ -214,7 +213,6 @@ static struct platform_pwm_backlight_data z2_backlight_data[] = {
 		.max_brightness	= 1023,
 		.dft_brightness	= 512,
 		.pwm_period_ns	= 1260320,
-		.enable_gpio	= -1,
 	},
 };
 
@@ -347,7 +345,7 @@ static inline void z2_leds_init(void) {}
  * GPIO keyboard
  ******************************************************************************/
 #if defined(CONFIG_KEYBOARD_PXA27x) || defined(CONFIG_KEYBOARD_PXA27x_MODULE)
-static const unsigned int z2_matrix_keys[] = {
+static unsigned int z2_matrix_keys[] = {
 	KEY(0, 0, KEY_OPTION),
 	KEY(1, 0, KEY_UP),
 	KEY(2, 0, KEY_DOWN),
@@ -407,15 +405,11 @@ static const unsigned int z2_matrix_keys[] = {
 	KEY(5, 7, KEY_DOT),
 };
 
-static struct matrix_keymap_data z2_matrix_keymap_data = {
-	.keymap			= z2_matrix_keys,
-	.keymap_size		= ARRAY_SIZE(z2_matrix_keys),
-};
-
 static struct pxa27x_keypad_platform_data z2_keypad_platform_data = {
 	.matrix_key_rows	= 7,
 	.matrix_key_cols	= 8,
-	.matrix_keymap_data	= &z2_matrix_keymap_data,
+	.matrix_key_map		= z2_matrix_keys,
+	.matrix_key_map_size	= ARRAY_SIZE(z2_matrix_keys),
 
 	.debounce_interval	= 30,
 };

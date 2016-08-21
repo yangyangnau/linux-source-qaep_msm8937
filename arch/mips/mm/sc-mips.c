@@ -6,7 +6,6 @@
 #include <linux/sched.h>
 #include <linux/mm.h>
 
-#include <asm/cpu-type.h>
 #include <asm/mipsregs.h>
 #include <asm/bcache.h>
 #include <asm/cacheops.h>
@@ -72,14 +71,10 @@ static inline int mips_sc_is_activated(struct cpuinfo_mips *c)
 	unsigned int tmp;
 
 	/* Check the bypass bit (L2B) */
-	switch (current_cpu_type()) {
+	switch (c->cputype) {
 	case CPU_34K:
 	case CPU_74K:
 	case CPU_1004K:
-	case CPU_1074K:
-	case CPU_INTERAPTIV:
-	case CPU_PROAPTIV:
-	case CPU_P5600:
 	case CPU_BMIPS5000:
 		if (config2 & (1 << 12))
 			return 0;
@@ -137,7 +132,7 @@ static inline int __init mips_sc_probe(void)
 	return 1;
 }
 
-int mips_sc_init(void)
+int __cpuinit mips_sc_init(void)
 {
 	int found = mips_sc_probe();
 	if (found) {

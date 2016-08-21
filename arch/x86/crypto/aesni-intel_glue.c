@@ -34,7 +34,7 @@
 #include <asm/cpu_device_id.h>
 #include <asm/i387.h>
 #include <asm/crypto/aes.h>
-#include <crypto/ablk_helper.h>
+#include <asm/crypto/ablk_helper.h>
 #include <crypto/scatterwalk.h>
 #include <crypto/internal/aead.h>
 #include <linux/workqueue.h>
@@ -101,13 +101,7 @@ asmlinkage void aesni_cbc_dec(struct crypto_aes_ctx *ctx, u8 *out,
 int crypto_fpu_init(void);
 void crypto_fpu_exit(void);
 
-#define AVX_GEN2_OPTSIZE 640
-#define AVX_GEN4_OPTSIZE 4096
-
 #ifdef CONFIG_X86_64
-
-static void (*aesni_ctr_enc_tfm)(struct crypto_aes_ctx *ctx, u8 *out,
-			      const u8 *in, unsigned int len, u8 *iv);
 asmlinkage void aesni_ctr_enc(struct crypto_aes_ctx *ctx, u8 *out,
 			      const u8 *in, unsigned int len, u8 *iv);
 
@@ -152,129 +146,6 @@ asmlinkage void aesni_gcm_enc(void *ctx, u8 *out,
  * Valid values are 16 (most likely), 12 or 8.
  */
 asmlinkage void aesni_gcm_dec(void *ctx, u8 *out,
-			const u8 *in, unsigned long ciphertext_len, u8 *iv,
-			u8 *hash_subkey, const u8 *aad, unsigned long aad_len,
-			u8 *auth_tag, unsigned long auth_tag_len);
-
-
-#ifdef CONFIG_AS_AVX
-asmlinkage void aes_ctr_enc_128_avx_by8(const u8 *in, u8 *iv,
-		void *keys, u8 *out, unsigned int num_bytes);
-asmlinkage void aes_ctr_enc_192_avx_by8(const u8 *in, u8 *iv,
-		void *keys, u8 *out, unsigned int num_bytes);
-asmlinkage void aes_ctr_enc_256_avx_by8(const u8 *in, u8 *iv,
-		void *keys, u8 *out, unsigned int num_bytes);
-/*
- * asmlinkage void aesni_gcm_precomp_avx_gen2()
- * gcm_data *my_ctx_data, context data
- * u8 *hash_subkey,  the Hash sub key input. Data starts on a 16-byte boundary.
- */
-asmlinkage void aesni_gcm_precomp_avx_gen2(void *my_ctx_data, u8 *hash_subkey);
-
-asmlinkage void aesni_gcm_enc_avx_gen2(void *ctx, u8 *out,
-			const u8 *in, unsigned long plaintext_len, u8 *iv,
-			const u8 *aad, unsigned long aad_len,
-			u8 *auth_tag, unsigned long auth_tag_len);
-
-asmlinkage void aesni_gcm_dec_avx_gen2(void *ctx, u8 *out,
-			const u8 *in, unsigned long ciphertext_len, u8 *iv,
-			const u8 *aad, unsigned long aad_len,
-			u8 *auth_tag, unsigned long auth_tag_len);
-
-static void aesni_gcm_enc_avx(void *ctx, u8 *out,
-			const u8 *in, unsigned long plaintext_len, u8 *iv,
-			u8 *hash_subkey, const u8 *aad, unsigned long aad_len,
-			u8 *auth_tag, unsigned long auth_tag_len)
-{
-	if (plaintext_len < AVX_GEN2_OPTSIZE) {
-		aesni_gcm_enc(ctx, out, in, plaintext_len, iv, hash_subkey, aad,
-				aad_len, auth_tag, auth_tag_len);
-	} else {
-		aesni_gcm_precomp_avx_gen2(ctx, hash_subkey);
-		aesni_gcm_enc_avx_gen2(ctx, out, in, plaintext_len, iv, aad,
-					aad_len, auth_tag, auth_tag_len);
-	}
-}
-
-static void aesni_gcm_dec_avx(void *ctx, u8 *out,
-			const u8 *in, unsigned long ciphertext_len, u8 *iv,
-			u8 *hash_subkey, const u8 *aad, unsigned long aad_len,
-			u8 *auth_tag, unsigned long auth_tag_len)
-{
-	if (ciphertext_len < AVX_GEN2_OPTSIZE) {
-		aesni_gcm_dec(ctx, out, in, ciphertext_len, iv, hash_subkey, aad,
-				aad_len, auth_tag, auth_tag_len);
-	} else {
-		aesni_gcm_precomp_avx_gen2(ctx, hash_subkey);
-		aesni_gcm_dec_avx_gen2(ctx, out, in, ciphertext_len, iv, aad,
-					aad_len, auth_tag, auth_tag_len);
-	}
-}
-#endif
-
-#ifdef CONFIG_AS_AVX2
-/*
- * asmlinkage void aesni_gcm_precomp_avx_gen4()
- * gcm_data *my_ctx_data, context data
- * u8 *hash_subkey,  the Hash sub key input. Data starts on a 16-byte boundary.
- */
-asmlinkage void aesni_gcm_precomp_avx_gen4(void *my_ctx_data, u8 *hash_subkey);
-
-asmlinkage void aesni_gcm_enc_avx_gen4(void *ctx, u8 *out,
-			const u8 *in, unsigned long plaintext_len, u8 *iv,
-			const u8 *aad, unsigned long aad_len,
-			u8 *auth_tag, unsigned long auth_tag_len);
-
-asmlinkage void aesni_gcm_dec_avx_gen4(void *ctx, u8 *out,
-			const u8 *in, unsigned long ciphertext_len, u8 *iv,
-			const u8 *aad, unsigned long aad_len,
-			u8 *auth_tag, unsigned long auth_tag_len);
-
-static void aesni_gcm_enc_avx2(void *ctx, u8 *out,
-			const u8 *in, unsigned long plaintext_len, u8 *iv,
-			u8 *hash_subkey, const u8 *aad, unsigned long aad_len,
-			u8 *auth_tag, unsigned long auth_tag_len)
-{
-	if (plaintext_len < AVX_GEN2_OPTSIZE) {
-		aesni_gcm_enc(ctx, out, in, plaintext_len, iv, hash_subkey, aad,
-				aad_len, auth_tag, auth_tag_len);
-	} else if (plaintext_len < AVX_GEN4_OPTSIZE) {
-		aesni_gcm_precomp_avx_gen2(ctx, hash_subkey);
-		aesni_gcm_enc_avx_gen2(ctx, out, in, plaintext_len, iv, aad,
-					aad_len, auth_tag, auth_tag_len);
-	} else {
-		aesni_gcm_precomp_avx_gen4(ctx, hash_subkey);
-		aesni_gcm_enc_avx_gen4(ctx, out, in, plaintext_len, iv, aad,
-					aad_len, auth_tag, auth_tag_len);
-	}
-}
-
-static void aesni_gcm_dec_avx2(void *ctx, u8 *out,
-			const u8 *in, unsigned long ciphertext_len, u8 *iv,
-			u8 *hash_subkey, const u8 *aad, unsigned long aad_len,
-			u8 *auth_tag, unsigned long auth_tag_len)
-{
-	if (ciphertext_len < AVX_GEN2_OPTSIZE) {
-		aesni_gcm_dec(ctx, out, in, ciphertext_len, iv, hash_subkey,
-				aad, aad_len, auth_tag, auth_tag_len);
-	} else if (ciphertext_len < AVX_GEN4_OPTSIZE) {
-		aesni_gcm_precomp_avx_gen2(ctx, hash_subkey);
-		aesni_gcm_dec_avx_gen2(ctx, out, in, ciphertext_len, iv, aad,
-					aad_len, auth_tag, auth_tag_len);
-	} else {
-		aesni_gcm_precomp_avx_gen4(ctx, hash_subkey);
-		aesni_gcm_dec_avx_gen4(ctx, out, in, ciphertext_len, iv, aad,
-					aad_len, auth_tag, auth_tag_len);
-	}
-}
-#endif
-
-static void (*aesni_gcm_enc_tfm)(void *ctx, u8 *out,
-			const u8 *in, unsigned long plaintext_len, u8 *iv,
-			u8 *hash_subkey, const u8 *aad, unsigned long aad_len,
-			u8 *auth_tag, unsigned long auth_tag_len);
-
-static void (*aesni_gcm_dec_tfm)(void *ctx, u8 *out,
 			const u8 *in, unsigned long ciphertext_len, u8 *iv,
 			u8 *hash_subkey, const u8 *aad, unsigned long aad_len,
 			u8 *auth_tag, unsigned long auth_tag_len);
@@ -481,25 +352,6 @@ static void ctr_crypt_final(struct crypto_aes_ctx *ctx,
 	crypto_inc(ctrblk, AES_BLOCK_SIZE);
 }
 
-#ifdef CONFIG_AS_AVX
-static void aesni_ctr_enc_avx_tfm(struct crypto_aes_ctx *ctx, u8 *out,
-			      const u8 *in, unsigned int len, u8 *iv)
-{
-	/*
-	 * based on key length, override with the by8 version
-	 * of ctr mode encryption/decryption for improved performance
-	 * aes_set_key_common() ensures that key length is one of
-	 * {128,192,256}
-	 */
-	if (ctx->key_length == AES_KEYSIZE_128)
-		aes_ctr_enc_128_avx_by8(in, iv, (void *)ctx, out, len);
-	else if (ctx->key_length == AES_KEYSIZE_192)
-		aes_ctr_enc_192_avx_by8(in, iv, (void *)ctx, out, len);
-	else
-		aes_ctr_enc_256_avx_by8(in, iv, (void *)ctx, out, len);
-}
-#endif
-
 static int ctr_crypt(struct blkcipher_desc *desc,
 		     struct scatterlist *dst, struct scatterlist *src,
 		     unsigned int nbytes)
@@ -514,8 +366,8 @@ static int ctr_crypt(struct blkcipher_desc *desc,
 
 	kernel_fpu_begin();
 	while ((nbytes = walk.nbytes) >= AES_BLOCK_SIZE) {
-		aesni_ctr_enc_tfm(ctx, walk.dst.virt.addr, walk.src.virt.addr,
-				  nbytes & AES_BLOCK_MASK, walk.iv);
+		aesni_ctr_enc(ctx, walk.dst.virt.addr, walk.src.virt.addr,
+			      nbytes & AES_BLOCK_MASK, walk.iv);
 		nbytes &= AES_BLOCK_SIZE - 1;
 		err = blkcipher_walk_done(desc, &walk, nbytes);
 	}
@@ -1063,7 +915,7 @@ static int __driver_rfc4106_encrypt(struct aead_request *req)
 		dst = src;
 	}
 
-	aesni_gcm_enc_tfm(aes_ctx, dst, src, (unsigned long)req->cryptlen, iv,
+	aesni_gcm_enc(aes_ctx, dst, src, (unsigned long)req->cryptlen, iv,
 		ctx->hash_subkey, assoc, (unsigned long)req->assoclen, dst
 		+ ((unsigned long)req->cryptlen), auth_tag_len);
 
@@ -1137,19 +989,19 @@ static int __driver_rfc4106_decrypt(struct aead_request *req)
 		src = kmalloc(req->cryptlen + req->assoclen, GFP_ATOMIC);
 		if (!src)
 			return -ENOMEM;
-		assoc = (src + req->cryptlen);
+		assoc = (src + req->cryptlen + auth_tag_len);
 		scatterwalk_map_and_copy(src, req->src, 0, req->cryptlen, 0);
 		scatterwalk_map_and_copy(assoc, req->assoc, 0,
 			req->assoclen, 0);
 		dst = src;
 	}
 
-	aesni_gcm_dec_tfm(aes_ctx, dst, src, tempCipherLen, iv,
+	aesni_gcm_dec(aes_ctx, dst, src, tempCipherLen, iv,
 		ctx->hash_subkey, assoc, (unsigned long)req->assoclen,
 		authTag, auth_tag_len);
 
 	/* Compare generated tag with passed in tag. */
-	retval = crypto_memneq(src + tempCipherLen, authTag, auth_tag_len) ?
+	retval = memcmp(src + tempCipherLen, authTag, auth_tag_len) ?
 		-EBADMSG : 0;
 
 	if (one_entry_in_sg) {
@@ -1162,7 +1014,7 @@ static int __driver_rfc4106_decrypt(struct aead_request *req)
 		scatterwalk_done(&src_sg_walk, 0, 0);
 		scatterwalk_done(&assoc_sg_walk, 0, 0);
 	} else {
-		scatterwalk_map_and_copy(dst, req->dst, 0, tempCipherLen, 1);
+		scatterwalk_map_and_copy(dst, req->dst, 0, req->cryptlen, 1);
 		kfree(src);
 	}
 	return retval;
@@ -1501,35 +1353,6 @@ static int __init aesni_init(void)
 
 	if (!x86_match_cpu(aesni_cpu_id))
 		return -ENODEV;
-#ifdef CONFIG_X86_64
-#ifdef CONFIG_AS_AVX2
-	if (boot_cpu_has(X86_FEATURE_AVX2)) {
-		pr_info("AVX2 version of gcm_enc/dec engaged.\n");
-		aesni_gcm_enc_tfm = aesni_gcm_enc_avx2;
-		aesni_gcm_dec_tfm = aesni_gcm_dec_avx2;
-	} else
-#endif
-#ifdef CONFIG_AS_AVX
-	if (boot_cpu_has(X86_FEATURE_AVX)) {
-		pr_info("AVX version of gcm_enc/dec engaged.\n");
-		aesni_gcm_enc_tfm = aesni_gcm_enc_avx;
-		aesni_gcm_dec_tfm = aesni_gcm_dec_avx;
-	} else
-#endif
-	{
-		pr_info("SSE version of gcm_enc/dec engaged.\n");
-		aesni_gcm_enc_tfm = aesni_gcm_enc;
-		aesni_gcm_dec_tfm = aesni_gcm_dec;
-	}
-	aesni_ctr_enc_tfm = aesni_ctr_enc;
-#ifdef CONFIG_AS_AVX
-	if (cpu_has_avx) {
-		/* optimize performance of ctr mode encryption transform */
-		aesni_ctr_enc_tfm = aesni_ctr_enc_avx_tfm;
-		pr_info("AES CTR mode by8 optimization enabled\n");
-	}
-#endif
-#endif
 
 	err = crypto_fpu_init();
 	if (err)
@@ -1550,4 +1373,4 @@ module_exit(aesni_exit);
 
 MODULE_DESCRIPTION("Rijndael (AES) Cipher Algorithm, Intel AES-NI instructions optimized");
 MODULE_LICENSE("GPL");
-MODULE_ALIAS_CRYPTO("aes");
+MODULE_ALIAS("aes");

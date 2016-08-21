@@ -7,7 +7,8 @@
  * kernel and insert a module (lg.ko) which allows us to run other Linux
  * kernels the same way we'd run processes.  We call the first kernel the Host,
  * and the others the Guests.  The program which sets up and configures Guests
- * (such as the example in tools/lguest/lguest.c) is called the Launcher.
+ * (such as the example in Documentation/virtual/lguest/lguest.c) is called the
+ * Launcher.
  *
  * Secondly, we only run specially modified Guests, not normal kernels: setting
  * CONFIG_LGUEST_GUEST to "y" compiles this file into the kernel so it knows
@@ -233,13 +234,13 @@ static void lguest_end_context_switch(struct task_struct *next)
  * flags word contains all kind of stuff, but in practice Linux only cares
  * about the interrupt flag.  Our "save_flags()" just returns that.
  */
-asmlinkage __visible unsigned long lguest_save_fl(void)
+static unsigned long save_fl(void)
 {
 	return lguest_data.irq_enabled;
 }
 
 /* Interrupts go off... */
-asmlinkage __visible void lguest_irq_disable(void)
+static void irq_disable(void)
 {
 	lguest_data.irq_enabled = 0;
 }
@@ -253,8 +254,8 @@ asmlinkage __visible void lguest_irq_disable(void)
  * PV_CALLEE_SAVE_REGS_THUNK(), which pushes %eax onto the stack, calls the
  * C function, then restores it.
  */
-PV_CALLEE_SAVE_REGS_THUNK(lguest_save_fl);
-PV_CALLEE_SAVE_REGS_THUNK(lguest_irq_disable);
+PV_CALLEE_SAVE_REGS_THUNK(save_fl);
+PV_CALLEE_SAVE_REGS_THUNK(irq_disable);
 /*:*/
 
 /* These are in i386_head.S */
@@ -881,9 +882,9 @@ int lguest_setup_irq(unsigned int irq)
  * It would be far better for everyone if the Guest had its own clock, but
  * until then the Host gives us the time on every interrupt.
  */
-static void lguest_get_wallclock(struct timespec *now)
+static unsigned long lguest_get_wallclock(void)
 {
-	*now = lguest_data.time;
+	return lguest_data.time.tv_sec;
 }
 
 /*
@@ -1056,12 +1057,6 @@ static void lguest_load_sp0(struct tss_struct *tss,
 }
 
 /* Let's just say, I wouldn't do debugging under a Guest. */
-static unsigned long lguest_get_debugreg(int regno)
-{
-	/* FIXME: Implement */
-	return 0;
-}
-
 static void lguest_set_debugreg(int regno, unsigned long value)
 {
 	/* FIXME: Implement */
@@ -1291,9 +1286,9 @@ __init void lguest_init(void)
 	 */
 
 	/* Interrupt-related operations */
-	pv_irq_ops.save_fl = PV_CALLEE_SAVE(lguest_save_fl);
+	pv_irq_ops.save_fl = PV_CALLEE_SAVE(save_fl);
 	pv_irq_ops.restore_fl = __PV_IS_CALLEE_SAVE(lg_restore_fl);
-	pv_irq_ops.irq_disable = PV_CALLEE_SAVE(lguest_irq_disable);
+	pv_irq_ops.irq_disable = PV_CALLEE_SAVE(irq_disable);
 	pv_irq_ops.irq_enable = __PV_IS_CALLEE_SAVE(lg_irq_enable);
 	pv_irq_ops.safe_halt = lguest_safe_halt;
 
@@ -1309,7 +1304,6 @@ __init void lguest_init(void)
 	pv_cpu_ops.load_tr_desc = lguest_load_tr_desc;
 	pv_cpu_ops.set_ldt = lguest_set_ldt;
 	pv_cpu_ops.load_tls = lguest_load_tls;
-	pv_cpu_ops.get_debugreg = lguest_get_debugreg;
 	pv_cpu_ops.set_debugreg = lguest_set_debugreg;
 	pv_cpu_ops.clts = lguest_clts;
 	pv_cpu_ops.read_cr0 = lguest_read_cr0;
@@ -1416,7 +1410,7 @@ __init void lguest_init(void)
 	new_cpu_data.x86_capability[0] = cpuid_edx(1);
 
 	/* Math is always hard! */
-	set_cpu_cap(&new_cpu_data, X86_FEATURE_FPU);
+	new_cpu_data.hard_math = 1;
 
 	/* We don't have features.  We have puppies!  Puppies! */
 #ifdef CONFIG_X86_MCE

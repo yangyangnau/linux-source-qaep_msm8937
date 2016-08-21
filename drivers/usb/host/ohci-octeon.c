@@ -127,9 +127,8 @@ static int ohci_octeon_drv_probe(struct platform_device *pdev)
 	}
 
 	/* Ohci is a 32-bit device. */
-	ret = dma_coerce_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
-	if (ret)
-		return ret;
+	pdev->dev.coherent_dma_mask = DMA_BIT_MASK(32);
+	pdev->dev.dma_mask = &pdev->dev.coherent_dma_mask;
 
 	hcd = usb_create_hcd(&ohci_octeon_hc_driver, &pdev->dev, "octeon");
 	if (!hcd)
@@ -138,10 +137,18 @@ static int ohci_octeon_drv_probe(struct platform_device *pdev)
 	hcd->rsrc_start = res_mem->start;
 	hcd->rsrc_len = resource_size(res_mem);
 
-	reg_base = devm_ioremap_resource(&pdev->dev, res_mem);
-	if (IS_ERR(reg_base)) {
-		ret = PTR_ERR(reg_base);
+	if (!request_mem_region(hcd->rsrc_start, hcd->rsrc_len,
+				OCTEON_OHCI_HCD_NAME)) {
+		dev_err(&pdev->dev, "request_mem_region failed\n");
+		ret = -EBUSY;
 		goto err1;
+	}
+
+	reg_base = ioremap(hcd->rsrc_start, hcd->rsrc_len);
+	if (!reg_base) {
+		dev_err(&pdev->dev, "ioremap failed\n");
+		ret = -ENOMEM;
+		goto err2;
 	}
 
 	ohci_octeon_hw_start();
@@ -160,18 +167,19 @@ static int ohci_octeon_drv_probe(struct platform_device *pdev)
 	ret = usb_add_hcd(hcd, irq, IRQF_SHARED);
 	if (ret) {
 		dev_dbg(&pdev->dev, "failed to add hcd with err %d\n", ret);
-		goto err2;
+		goto err3;
 	}
-
-	device_wakeup_enable(hcd->self.controller);
 
 	platform_set_drvdata(pdev, hcd);
 
 	return 0;
 
-err2:
+err3:
 	ohci_octeon_hw_stop();
 
+	iounmap(hcd->regs);
+err2:
+	release_mem_region(hcd->rsrc_start, hcd->rsrc_len);
 err1:
 	usb_put_hcd(hcd);
 	return ret;
@@ -184,7 +192,11 @@ static int ohci_octeon_drv_remove(struct platform_device *pdev)
 	usb_remove_hcd(hcd);
 
 	ohci_octeon_hw_stop();
+	iounmap(hcd->regs);
+	release_mem_region(hcd->rsrc_start, hcd->rsrc_len);
 	usb_put_hcd(hcd);
+
+	platform_set_drvdata(pdev, NULL);
 
 	return 0;
 }

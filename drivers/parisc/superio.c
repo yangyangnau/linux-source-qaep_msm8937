@@ -395,8 +395,7 @@ static void __init superio_serial_init(void)
 	serial_port.iotype	= UPIO_PORT;
 	serial_port.type	= PORT_16550A;
 	serial_port.uartclk	= 115200*16;
-	serial_port.flags	= UPF_FIXED_PORT | UPF_FIXED_TYPE |
-				  UPF_BOOT_AUTOCONF;
+	serial_port.fifosize	= 16;
 
 	/* serial port #1 */
 	serial_port.iobase	= sio_dev.sp1_base;

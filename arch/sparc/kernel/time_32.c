@@ -36,7 +36,6 @@
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
 
-#include <asm/mc146818rtc.h>
 #include <asm/oplib.h>
 #include <asm/timex.h>
 #include <asm/timer.h>
@@ -48,7 +47,6 @@
 #include <asm/irq_regs.h>
 #include <asm/setup.h>
 
-#include "kernel.h"
 #include "irq.h"
 
 static __cacheline_aligned_in_smp DEFINE_SEQLOCK(timer_cs_lock);
@@ -85,7 +83,7 @@ unsigned long profile_pc(struct pt_regs *regs)
 
 EXPORT_SYMBOL(profile_pc);
 
-volatile u32 __iomem *master_l10_counter;
+__volatile__ unsigned int *master_l10_counter;
 
 int update_persistent_clock(struct timespec now)
 {
@@ -145,9 +143,9 @@ static __init void setup_timer_ce(void)
 
 static unsigned int sbus_cycles_offset(void)
 {
-	u32 val, offset;
+	unsigned int val, offset;
 
-	val = sbus_readl(master_l10_counter);
+	val = *master_l10_counter;
 	offset = (val >> TIMER_VALUE_SHIFT) & TIMER_VALUE_MASK;
 
 	/* Limit hit? */

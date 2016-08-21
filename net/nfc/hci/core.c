@@ -12,7 +12,9 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, see <http://www.gnu.org/licenses/>.
+ * along with this program; if not, write to the
+ * Free Software Foundation, Inc.,
+ * 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
 
 #define pr_fmt(fmt) "hci: %s: " fmt, __func__
@@ -225,7 +227,7 @@ int nfc_hci_target_discovered(struct nfc_hci_dev *hdev, u8 gate)
 			goto exit;
 		}
 
-		targets->sens_res = be16_to_cpu(*(__be16 *)atqa_skb->data);
+		targets->sens_res = be16_to_cpu(*(u16 *)atqa_skb->data);
 		targets->sel_res = sak_skb->data[0];
 
 		r = nfc_hci_get_param(hdev, NFC_HCI_RF_READER_A_GATE,
@@ -335,8 +337,11 @@ exit:
 	kfree_skb(skb);
 
 exit_noskb:
-	if (r)
-		nfc_hci_driver_failure(hdev, r);
+	if (r) {
+		/* TODO: There was an error dispatching the event,
+		 * how to propagate up to nfc core?
+		 */
+	}
 }
 
 static void nfc_hci_cmd_timeout(unsigned long data)
@@ -380,31 +385,34 @@ static int hci_dev_session_init(struct nfc_hci_dev *hdev)
 	if (r < 0)
 		goto disconnect_all;
 
-	if (skb->len && skb->len == strlen(hdev->init_data.session_id) &&
-		(memcmp(hdev->init_data.session_id, skb->data,
-			   skb->len) == 0) && hdev->ops->load_session) {
-		/* Restore gate<->pipe table from some proprietary location. */
+	if (skb->len && skb->len == strlen(hdev->init_data.session_id))
+		if (memcmp(hdev->init_data.session_id, skb->data,
+			   skb->len) == 0) {
+			/* TODO ELa: restore gate<->pipe table from
+			 * some TBD location.
+			 * note: it doesn't seem possible to get the chip
+			 * currently open gate/pipe table.
+			 * It is only possible to obtain the supported
+			 * gate list.
+			 */
 
-		r = hdev->ops->load_session(hdev);
+			/* goto exit
+			 * For now, always do a full initialization */
+		}
 
-		if (r < 0)
-			goto disconnect_all;
-	} else {
+	r = nfc_hci_disconnect_all_gates(hdev);
+	if (r < 0)
+		goto exit;
 
-		r = nfc_hci_disconnect_all_gates(hdev);
-		if (r < 0)
-			goto exit;
+	r = hci_dev_connect_gates(hdev, hdev->init_data.gate_count,
+				  hdev->init_data.gates);
+	if (r < 0)
+		goto disconnect_all;
 
-		r = hci_dev_connect_gates(hdev, hdev->init_data.gate_count,
-					  hdev->init_data.gates);
-		if (r < 0)
-			goto disconnect_all;
-
-		r = nfc_hci_set_param(hdev, NFC_HCI_ADMIN_GATE,
-				NFC_HCI_ADMIN_SESSION_IDENTITY,
-				hdev->init_data.session_id,
-				strlen(hdev->init_data.session_id));
-	}
+	r = nfc_hci_set_param(hdev, NFC_HCI_ADMIN_GATE,
+			      NFC_HCI_ADMIN_SESSION_IDENTITY,
+			      hdev->init_data.session_id,
+			      strlen(hdev->init_data.session_id));
 	if (r == 0)
 		goto exit;
 
@@ -553,11 +561,8 @@ static void hci_stop_poll(struct nfc_dev *nfc_dev)
 {
 	struct nfc_hci_dev *hdev = nfc_get_drvdata(nfc_dev);
 
-	if (hdev->ops->stop_poll)
-		hdev->ops->stop_poll(hdev);
-	else
-		nfc_hci_send_event(hdev, NFC_HCI_RF_READER_A_GATE,
-				   NFC_HCI_EVT_END_OPERATION, NULL, 0);
+	nfc_hci_send_event(hdev, NFC_HCI_RF_READER_A_GATE,
+			   NFC_HCI_EVT_END_OPERATION, NULL, 0);
 }
 
 static int hci_dep_link_up(struct nfc_dev *nfc_dev, struct nfc_target *target,
@@ -565,21 +570,21 @@ static int hci_dep_link_up(struct nfc_dev *nfc_dev, struct nfc_target *target,
 {
 	struct nfc_hci_dev *hdev = nfc_get_drvdata(nfc_dev);
 
-	if (!hdev->ops->dep_link_up)
-		return 0;
+	if (hdev->ops->dep_link_up)
+		return hdev->ops->dep_link_up(hdev, target, comm_mode,
+						gb, gb_len);
 
-	return hdev->ops->dep_link_up(hdev, target, comm_mode,
-				      gb, gb_len);
+	return 0;
 }
 
 static int hci_dep_link_down(struct nfc_dev *nfc_dev)
 {
 	struct nfc_hci_dev *hdev = nfc_get_drvdata(nfc_dev);
 
-	if (!hdev->ops->dep_link_down)
-		return 0;
+	if (hdev->ops->dep_link_down)
+		return hdev->ops->dep_link_down(hdev);
 
-	return hdev->ops->dep_link_down(hdev);
+	return 0;
 }
 
 static int hci_activate_target(struct nfc_dev *nfc_dev,
@@ -668,12 +673,12 @@ static int hci_tm_send(struct nfc_dev *nfc_dev, struct sk_buff *skb)
 {
 	struct nfc_hci_dev *hdev = nfc_get_drvdata(nfc_dev);
 
-	if (!hdev->ops->tm_send) {
-		kfree_skb(skb);
-		return -ENOTSUPP;
-	}
+	if (hdev->ops->tm_send)
+		return hdev->ops->tm_send(hdev, skb);
 
-	return hdev->ops->tm_send(hdev, skb);
+	kfree_skb(skb);
+
+	return -ENOTSUPP;
 }
 
 static int hci_check_presence(struct nfc_dev *nfc_dev,
@@ -681,38 +686,8 @@ static int hci_check_presence(struct nfc_dev *nfc_dev,
 {
 	struct nfc_hci_dev *hdev = nfc_get_drvdata(nfc_dev);
 
-	if (!hdev->ops->check_presence)
-		return 0;
-
-	return hdev->ops->check_presence(hdev, target);
-}
-
-static int hci_discover_se(struct nfc_dev *nfc_dev)
-{
-	struct nfc_hci_dev *hdev = nfc_get_drvdata(nfc_dev);
-
-	if (hdev->ops->discover_se)
-		return hdev->ops->discover_se(hdev);
-
-	return 0;
-}
-
-static int hci_enable_se(struct nfc_dev *nfc_dev, u32 se_idx)
-{
-	struct nfc_hci_dev *hdev = nfc_get_drvdata(nfc_dev);
-
-	if (hdev->ops->enable_se)
-		return hdev->ops->enable_se(hdev, se_idx);
-
-	return 0;
-}
-
-static int hci_disable_se(struct nfc_dev *nfc_dev, u32 se_idx)
-{
-	struct nfc_hci_dev *hdev = nfc_get_drvdata(nfc_dev);
-
-	if (hdev->ops->disable_se)
-		return hdev->ops->disable_se(hdev, se_idx);
+	if (hdev->ops->check_presence)
+		return hdev->ops->check_presence(hdev, target);
 
 	return 0;
 }
@@ -804,16 +779,6 @@ static void nfc_hci_recv_from_llc(struct nfc_hci_dev *hdev, struct sk_buff *skb)
 	}
 }
 
-static int hci_fw_download(struct nfc_dev *nfc_dev, const char *firmware_name)
-{
-	struct nfc_hci_dev *hdev = nfc_get_drvdata(nfc_dev);
-
-	if (!hdev->ops->fw_download)
-		return -ENOTSUPP;
-
-	return hdev->ops->fw_download(hdev, firmware_name);
-}
-
 static struct nfc_ops hci_nfc_ops = {
 	.dev_up = hci_dev_up,
 	.dev_down = hci_dev_down,
@@ -826,16 +791,13 @@ static struct nfc_ops hci_nfc_ops = {
 	.im_transceive = hci_transceive,
 	.tm_send = hci_tm_send,
 	.check_presence = hci_check_presence,
-	.fw_download = hci_fw_download,
-	.discover_se = hci_discover_se,
-	.enable_se = hci_enable_se,
-	.disable_se = hci_disable_se,
 };
 
 struct nfc_hci_dev *nfc_hci_allocate_device(struct nfc_hci_ops *ops,
 					    struct nfc_hci_init_data *init_data,
 					    unsigned long quirks,
 					    u32 protocols,
+					    u32 supported_se,
 					    const char *llc_name,
 					    int tx_headroom,
 					    int tx_tailroom,
@@ -861,7 +823,7 @@ struct nfc_hci_dev *nfc_hci_allocate_device(struct nfc_hci_ops *ops,
 		return NULL;
 	}
 
-	hdev->ndev = nfc_allocate_device(&hci_nfc_ops, protocols,
+	hdev->ndev = nfc_allocate_device(&hci_nfc_ops, protocols, supported_se,
 					 tx_headroom + HCI_CMDS_HEADROOM,
 					 tx_tailroom);
 	if (!hdev->ndev) {

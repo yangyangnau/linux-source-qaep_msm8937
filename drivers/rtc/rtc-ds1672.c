@@ -153,6 +153,11 @@ static const struct rtc_class_ops ds1672_rtc_ops = {
 	.set_mmss = ds1672_rtc_set_mmss,
 };
 
+static int ds1672_remove(struct i2c_client *client)
+{
+	return 0;
+}
+
 static int ds1672_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
 {
@@ -177,9 +182,8 @@ static int ds1672_probe(struct i2c_client *client,
 
 	/* read control register */
 	err = ds1672_get_control(client, &control);
-	if (err) {
-		dev_warn(&client->dev, "Unable to read the control register\n");
-	}
+	if (err)
+		goto exit_devreg;
 
 	if (control & DS1672_REG_CONTROL_EOSC)
 		dev_warn(&client->dev, "Oscillator not enabled. "
@@ -188,10 +192,12 @@ static int ds1672_probe(struct i2c_client *client,
 	/* Register sysfs hooks */
 	err = device_create_file(&client->dev, &dev_attr_control);
 	if (err)
-		dev_err(&client->dev, "Unable to create sysfs entry: %s\n",
-			dev_attr_control.attr.name);
+		goto exit_devreg;
 
 	return 0;
+
+ exit_devreg:
+	return err;
 }
 
 static struct i2c_device_id ds1672_id[] = {
@@ -204,6 +210,7 @@ static struct i2c_driver ds1672_driver = {
 		   .name = "rtc-ds1672",
 		   },
 	.probe = &ds1672_probe,
+	.remove = &ds1672_remove,
 	.id_table = ds1672_id,
 };
 

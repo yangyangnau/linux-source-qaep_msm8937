@@ -280,10 +280,13 @@ __setup("slram=", mtd_slram_setup);
 static int __init init_slram(void)
 {
 	char *devname;
+	int i;
 
 #ifndef MODULE
 	char *devstart;
 	char *devlength;
+
+	i = 0;
 
 	if (!map) {
 		E("slram: not enough parameters.\n");
@@ -311,7 +314,6 @@ static int __init init_slram(void)
 	}
 #else
 	int count;
-	int i;
 
 	for (count = 0; count < SLRAM_MAX_DEVICES_PARAMS && map[count];
 			count++) {

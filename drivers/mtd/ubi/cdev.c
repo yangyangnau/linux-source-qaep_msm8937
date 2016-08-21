@@ -155,6 +155,7 @@ static loff_t vol_cdev_llseek(struct file *file, loff_t offset, int origin)
 {
 	struct ubi_volume_desc *desc = file->private_data;
 	struct ubi_volume *vol = desc->vol;
+	loff_t new_offset;
 
 	if (vol->updating) {
 		/* Update is in progress, seeking is prohibited */
@@ -162,7 +163,30 @@ static loff_t vol_cdev_llseek(struct file *file, loff_t offset, int origin)
 		return -EBUSY;
 	}
 
-	return fixed_size_llseek(file, offset, origin, vol->used_bytes);
+	switch (origin) {
+	case 0: /* SEEK_SET */
+		new_offset = offset;
+		break;
+	case 1: /* SEEK_CUR */
+		new_offset = file->f_pos + offset;
+		break;
+	case 2: /* SEEK_END */
+		new_offset = vol->used_bytes + offset;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	if (new_offset < 0 || new_offset > vol->used_bytes) {
+		ubi_err("bad seek %lld", new_offset);
+		return -EINVAL;
+	}
+
+	dbg_gen("seek volume %d, offset %lld, origin %d, new offset %lld",
+		vol->vol_id, offset, origin, new_offset);
+
+	file->f_pos = new_offset;
+	return new_offset;
 }
 
 static int vol_cdev_fsync(struct file *file, loff_t start, loff_t end,
@@ -425,10 +449,8 @@ static long vol_cdev_ioctl(struct file *file, unsigned int cmd,
 			break;
 
 		err = ubi_start_update(ubi, vol, bytes);
-		if (bytes == 0) {
-			ubi_volume_notify(ubi, vol, UBI_VOLUME_UPDATED);
+		if (bytes == 0)
 			revoke_exclusive(desc, UBI_READWRITE);
-		}
 		break;
 	}
 
@@ -453,7 +475,7 @@ static long vol_cdev_ioctl(struct file *file, unsigned int cmd,
 		/* Validate the request */
 		err = -EINVAL;
 		if (req.lnum < 0 || req.lnum >= vol->reserved_pebs ||
-		    req.bytes < 0 || req.bytes > vol->usable_leb_size)
+		    req.bytes < 0 || req.lnum >= vol->usable_leb_size)
 			break;
 
 		err = get_exclusive(desc);
@@ -560,26 +582,6 @@ static long vol_cdev_ioctl(struct file *file, unsigned int cmd,
 			err = -EINVAL;
 			break;
 		}
-		break;
-	}
-
-	/* Create a R/O block device on top of the UBI volume */
-	case UBI_IOCVOLCRBLK:
-	{
-		struct ubi_volume_info vi;
-
-		ubi_get_volume_info(desc, &vi);
-		err = ubiblock_create(&vi);
-		break;
-	}
-
-	/* Remove the R/O block device */
-	case UBI_IOCVOLRMBLK:
-	{
-		struct ubi_volume_info vi;
-
-		ubi_get_volume_info(desc, &vi);
-		err = ubiblock_remove(&vi);
 		break;
 	}
 
@@ -701,7 +703,7 @@ static int rename_volumes(struct ubi_device *ubi,
 		req->ents[i].name[req->ents[i].name_len] = '\0';
 		n = strlen(req->ents[i].name);
 		if (n != req->ents[i].name_len)
-			return -EINVAL;
+			err = -EINVAL;
 	}
 
 	/* Make sure volume IDs and names are unique */
@@ -733,7 +735,7 @@ static int rename_volumes(struct ubi_device *ubi,
 			goto out_free;
 		}
 
-		re->desc = ubi_open_volume(ubi->ubi_num, vol_id, UBI_READWRITE);
+		re->desc = ubi_open_volume(ubi->ubi_num, vol_id, UBI_EXCLUSIVE);
 		if (IS_ERR(re->desc)) {
 			err = PTR_ERR(re->desc);
 			ubi_err("cannot open volume %d, error %d", vol_id, err);

@@ -25,8 +25,6 @@
 #include <linux/pci.h>
 #include <linux/dma-mapping.h>
 #include <linux/kernel_stat.h>
-#include <linux/of_address.h>
-#include <linux/of_irq.h>
 
 #include <asm/io.h>
 #include <asm/prom.h>

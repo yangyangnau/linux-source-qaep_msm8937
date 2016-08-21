@@ -645,11 +645,9 @@ void qib_ib_rcv(struct qib_ctxtdata *rcd, void *rhdr, void *data, u32 tlen)
 	} else
 		goto drop;
 
-	opcode = (be32_to_cpu(ohdr->bth[0]) >> 24) & 0x7f;
-#ifdef CONFIG_DEBUG_FS
-	rcd->opstats->stats[opcode].n_bytes += tlen;
-	rcd->opstats->stats[opcode].n_packets++;
-#endif
+	opcode = be32_to_cpu(ohdr->bth[0]) >> 24;
+	ibp->opstats[opcode & 0x7f].n_bytes += tlen;
+	ibp->opstats[opcode & 0x7f].n_packets++;
 
 	/* Get the destination QP number. */
 	qp_num = be32_to_cpu(ohdr->bth[1]) & QIB_QPN_MASK;
@@ -662,7 +660,7 @@ void qib_ib_rcv(struct qib_ctxtdata *rcd, void *rhdr, void *data, u32 tlen)
 		mcast = qib_mcast_find(ibp, &hdr->u.l.grh.dgid);
 		if (mcast == NULL)
 			goto drop;
-		this_cpu_inc(ibp->pmastats->n_multicast_rcv);
+		ibp->n_multicast_rcv++;
 		list_for_each_entry_rcu(p, &mcast->qp_list, list)
 			qib_qp_rcv(rcd, hdr, 1, data, tlen, p->qp);
 		/*
@@ -678,8 +676,8 @@ void qib_ib_rcv(struct qib_ctxtdata *rcd, void *rhdr, void *data, u32 tlen)
 					&rcd->lookaside_qp->refcount))
 					wake_up(
 					 &rcd->lookaside_qp->wait);
-				rcd->lookaside_qp = NULL;
-			}
+					rcd->lookaside_qp = NULL;
+				}
 		}
 		if (!rcd->lookaside_qp) {
 			qp = qib_lookup_qpn(ibp, qp_num);
@@ -689,7 +687,7 @@ void qib_ib_rcv(struct qib_ctxtdata *rcd, void *rhdr, void *data, u32 tlen)
 			rcd->lookaside_qpn = qp_num;
 		} else
 			qp = rcd->lookaside_qp;
-		this_cpu_inc(ibp->pmastats->n_unicast_rcv);
+		ibp->n_unicast_rcv++;
 		qib_qp_rcv(rcd, hdr, lnh == QIB_LRH_GRH, data, tlen, qp);
 	}
 	return;

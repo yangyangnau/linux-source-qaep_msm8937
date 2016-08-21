@@ -54,7 +54,7 @@ static struct acpi_processor_performance *eps_acpi_cpu_perf;
 /* Minimum necessary to get acpi_processor_get_bios_limit() working */
 static int eps_acpi_init(void)
 {
-	eps_acpi_cpu_perf = kzalloc(sizeof(*eps_acpi_cpu_perf),
+	eps_acpi_cpu_perf = kzalloc(sizeof(struct acpi_processor_performance),
 				      GFP_KERNEL);
 	if (!eps_acpi_cpu_perf)
 		return -ENOMEM;
@@ -107,8 +107,14 @@ static int eps_set_state(struct eps_cpu_data *centaur,
 			 struct cpufreq_policy *policy,
 			 u32 dest_state)
 {
+	struct cpufreq_freqs freqs;
 	u32 lo, hi;
+	int err = 0;
 	int i;
+
+	freqs.old = eps_get(policy->cpu);
+	freqs.new = centaur->fsb * ((dest_state >> 8) & 0xff);
+	cpufreq_notify_transition(policy, &freqs, CPUFREQ_PRECHANGE);
 
 	/* Wait while CPU is busy */
 	rdmsr(MSR_IA32_PERF_STATUS, lo, hi);
@@ -118,7 +124,8 @@ static int eps_set_state(struct eps_cpu_data *centaur,
 		rdmsr(MSR_IA32_PERF_STATUS, lo, hi);
 		i++;
 		if (unlikely(i > 64)) {
-			return -ENODEV;
+			err = -ENODEV;
+			goto postchange;
 		}
 	}
 	/* Set new multiplier and voltage */
@@ -130,9 +137,15 @@ static int eps_set_state(struct eps_cpu_data *centaur,
 		rdmsr(MSR_IA32_PERF_STATUS, lo, hi);
 		i++;
 		if (unlikely(i > 64)) {
-			return -ENODEV;
+			err = -ENODEV;
+			goto postchange;
 		}
 	} while (lo & ((1 << 16) | (1 << 17)));
+
+	/* Return current frequency */
+postchange:
+	rdmsr(MSR_IA32_PERF_STATUS, lo, hi);
+	freqs.new = centaur->fsb * ((lo >> 8) & 0xff);
 
 #ifdef DEBUG
 	{
@@ -148,12 +161,16 @@ static int eps_set_state(struct eps_cpu_data *centaur,
 		current_multiplier);
 	}
 #endif
-	return 0;
+	cpufreq_notify_transition(policy, &freqs, CPUFREQ_POSTCHANGE);
+	return err;
 }
 
-static int eps_target(struct cpufreq_policy *policy, unsigned int index)
+static int eps_target(struct cpufreq_policy *policy,
+			       unsigned int target_freq,
+			       unsigned int relation)
 {
 	struct eps_cpu_data *centaur;
+	unsigned int newstate = 0;
 	unsigned int cpu = policy->cpu;
 	unsigned int dest_state;
 	int ret;
@@ -162,12 +179,26 @@ static int eps_target(struct cpufreq_policy *policy, unsigned int index)
 		return -ENODEV;
 	centaur = eps_cpu[cpu];
 
+	if (unlikely(cpufreq_frequency_table_target(policy,
+			&eps_cpu[cpu]->freq_table[0],
+			target_freq,
+			relation,
+			&newstate))) {
+		return -EINVAL;
+	}
+
 	/* Make frequency transition */
-	dest_state = centaur->freq_table[index].driver_data & 0xffff;
+	dest_state = centaur->freq_table[newstate].index & 0xffff;
 	ret = eps_set_state(centaur, policy, dest_state);
 	if (ret)
 		printk(KERN_ERR "eps: Timeout!\n");
 	return ret;
+}
+
+static int eps_verify(struct cpufreq_policy *policy)
+{
+	return cpufreq_frequency_table_verify(policy,
+			&eps_cpu[policy->cpu]->freq_table[0]);
 }
 
 static int eps_cpu_init(struct cpufreq_policy *policy)
@@ -332,7 +363,7 @@ static int eps_cpu_init(struct cpufreq_policy *policy)
 		states = 2;
 
 	/* Allocate private data and frequency table for current cpu */
-	centaur = kzalloc(sizeof(*centaur)
+	centaur = kzalloc(sizeof(struct eps_cpu_data)
 		    + (states + 1) * sizeof(struct cpufreq_frequency_table),
 		    GFP_KERNEL);
 	if (!centaur)
@@ -349,9 +380,9 @@ static int eps_cpu_init(struct cpufreq_policy *policy)
 	f_table = &centaur->freq_table[0];
 	if (brand != EPS_BRAND_C7M) {
 		f_table[0].frequency = fsb * min_multiplier;
-		f_table[0].driver_data = (min_multiplier << 8) | min_voltage;
+		f_table[0].index = (min_multiplier << 8) | min_voltage;
 		f_table[1].frequency = fsb * max_multiplier;
-		f_table[1].driver_data = (max_multiplier << 8) | max_voltage;
+		f_table[1].index = (max_multiplier << 8) | max_voltage;
 		f_table[2].frequency = CPUFREQ_TABLE_END;
 	} else {
 		k = 0;
@@ -360,20 +391,22 @@ static int eps_cpu_init(struct cpufreq_policy *policy)
 		for (i = min_multiplier; i <= max_multiplier; i++) {
 			voltage = (k * step) / 256 + min_voltage;
 			f_table[k].frequency = fsb * i;
-			f_table[k].driver_data = (i << 8) | voltage;
+			f_table[k].index = (i << 8) | voltage;
 			k++;
 		}
 		f_table[k].frequency = CPUFREQ_TABLE_END;
 	}
 
 	policy->cpuinfo.transition_latency = 140000; /* 844mV -> 700mV in ns */
+	policy->cur = fsb * current_multiplier;
 
-	ret = cpufreq_table_validate_and_show(policy, &centaur->freq_table[0]);
+	ret = cpufreq_frequency_table_cpuinfo(policy, &centaur->freq_table[0]);
 	if (ret) {
 		kfree(centaur);
 		return ret;
 	}
 
+	cpufreq_frequency_table_get_attr(&centaur->freq_table[0], policy->cpu);
 	return 0;
 }
 
@@ -382,19 +415,26 @@ static int eps_cpu_exit(struct cpufreq_policy *policy)
 	unsigned int cpu = policy->cpu;
 
 	/* Bye */
+	cpufreq_frequency_table_put_attr(policy->cpu);
 	kfree(eps_cpu[cpu]);
 	eps_cpu[cpu] = NULL;
 	return 0;
 }
 
+static struct freq_attr *eps_attr[] = {
+	&cpufreq_freq_attr_scaling_available_freqs,
+	NULL,
+};
+
 static struct cpufreq_driver eps_driver = {
-	.verify		= cpufreq_generic_frequency_table_verify,
-	.target_index	= eps_target,
+	.verify		= eps_verify,
+	.target		= eps_target,
 	.init		= eps_cpu_init,
 	.exit		= eps_cpu_exit,
 	.get		= eps_get,
 	.name		= "e_powersaver",
-	.attr		= cpufreq_generic_attr,
+	.owner		= THIS_MODULE,
+	.attr		= eps_attr,
 };
 
 

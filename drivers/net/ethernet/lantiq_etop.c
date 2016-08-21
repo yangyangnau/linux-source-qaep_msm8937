@@ -9,7 +9,8 @@
  *   GNU General Public License for more details.
  *
  *   You should have received a copy of the GNU General Public License
- *   along with this program; if not, see <http://www.gnu.org/licenses/>.
+ *   along with this program; if not, write to the Free Software
+ *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307, USA.
  *
  *   Copyright (C) 2011 John Crispin <blogic@openwrt.org>
  */
@@ -281,7 +282,8 @@ ltq_etop_hw_init(struct net_device *dev)
 
 		if (IS_TX(i)) {
 			ltq_dma_alloc_tx(&ch->dma);
-			request_irq(irq, ltq_etop_dma_irq, 0, "etop_tx", priv);
+			request_irq(irq, ltq_etop_dma_irq, IRQF_DISABLED,
+				"etop_tx", priv);
 		} else if (IS_RX(i)) {
 			ltq_dma_alloc_rx(&ch->dma);
 			for (ch->dma.desc = 0; ch->dma.desc < LTQ_DESC_NUM;
@@ -289,7 +291,8 @@ ltq_etop_hw_init(struct net_device *dev)
 				if (ltq_etop_alloc_skb(ch))
 					return -ENOMEM;
 			ch->dma.desc = 0;
-			request_irq(irq, ltq_etop_dma_irq, 0, "etop_rx", priv);
+			request_irq(irq, ltq_etop_dma_irq, IRQF_DISABLED,
+				"etop_rx", priv);
 		}
 		ch->dma.irq = irq;
 	}
@@ -618,8 +621,7 @@ ltq_etop_set_multicast_list(struct net_device *dev)
 }
 
 static u16
-ltq_etop_select_queue(struct net_device *dev, struct sk_buff *skb,
-		      void *accel_priv, select_queue_fallback_t fallback)
+ltq_etop_select_queue(struct net_device *dev, struct sk_buff *skb)
 {
 	/* we are currently only using the first queue */
 	return 0;
@@ -633,6 +635,7 @@ ltq_etop_init(struct net_device *dev)
 	int err;
 	bool random_mac = false;
 
+	ether_setup(dev);
 	dev->watchdog_timeo = 10 * HZ;
 	err = ltq_etop_hw_init(dev);
 	if (err)

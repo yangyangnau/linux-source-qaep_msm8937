@@ -15,8 +15,6 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/fsl_devices.h>
-#include <linux/of_address.h>
-#include <linux/of_fdt.h>
 #include <linux/of_platform.h>
 
 #include <asm/io.h>
@@ -168,7 +166,7 @@ static int __init pq2fads_probe(void)
 	return of_flat_dt_is_compatible(root, "fsl,pq2fads");
 }
 
-static const struct of_device_id of_bus_ids[] __initconst = {
+static struct of_device_id __initdata of_bus_ids[] = {
 	{ .name = "soc", },
 	{ .name = "cpm", },
 	{ .name = "localbus", },

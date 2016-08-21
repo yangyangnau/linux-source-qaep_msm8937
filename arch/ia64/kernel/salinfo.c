@@ -568,7 +568,7 @@ static const struct file_operations salinfo_data_fops = {
 	.llseek  = default_llseek,
 };
 
-static int
+static int __cpuinit
 salinfo_cpu_callback(struct notifier_block *nb, unsigned long action, void *hcpu)
 {
 	unsigned int i, cpu = (unsigned long)hcpu;
@@ -609,7 +609,7 @@ salinfo_cpu_callback(struct notifier_block *nb, unsigned long action, void *hcpu
 	return NOTIFY_OK;
 }
 
-static struct notifier_block salinfo_cpu_notifier =
+static struct notifier_block salinfo_cpu_notifier __cpuinitdata =
 {
 	.notifier_call = salinfo_cpu_callback,
 	.priority = 0,
@@ -634,8 +634,6 @@ salinfo_init(void)
 					   &proc_salinfo_fops,
 					   (void *)salinfo_entries[i].feature);
 	}
-
-	cpu_notifier_register_begin();
 
 	for (i = 0; i < ARRAY_SIZE(salinfo_log_name); i++) {
 		data = salinfo_data + i;
@@ -671,9 +669,7 @@ salinfo_init(void)
 	salinfo_timer.function = &salinfo_timeout;
 	add_timer(&salinfo_timer);
 
-	__register_hotcpu_notifier(&salinfo_cpu_notifier);
-
-	cpu_notifier_register_done();
+	register_hotcpu_notifier(&salinfo_cpu_notifier);
 
 	return 0;
 }

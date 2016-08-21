@@ -22,6 +22,7 @@
 #ifndef _ATL1C_H_
 #define _ATL1C_H_
 
+#include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/types.h>
 #include <linux/errno.h>
@@ -599,7 +600,7 @@ struct atl1c_adapter {
 extern char atl1c_driver_name[];
 extern char atl1c_driver_version[];
 
-void atl1c_reinit_locked(struct atl1c_adapter *adapter);
-s32 atl1c_reset_hw(struct atl1c_hw *hw);
-void atl1c_set_ethtool_ops(struct net_device *netdev);
+extern void atl1c_reinit_locked(struct atl1c_adapter *adapter);
+extern s32 atl1c_reset_hw(struct atl1c_hw *hw);
+extern void atl1c_set_ethtool_ops(struct net_device *netdev);
 #endif /* _ATL1C_H_ */

@@ -60,6 +60,9 @@ static int kirkwood_cpuidle_probe(struct platform_device *pdev)
 	struct resource *res;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (res == NULL)
+		return -EINVAL;
+
 	ddr_operation_base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(ddr_operation_base))
 		return PTR_ERR(ddr_operation_base);
@@ -67,7 +70,7 @@ static int kirkwood_cpuidle_probe(struct platform_device *pdev)
 	return cpuidle_register(&kirkwood_idle_driver, NULL);
 }
 
-static int kirkwood_cpuidle_remove(struct platform_device *pdev)
+int kirkwood_cpuidle_remove(struct platform_device *pdev)
 {
 	cpuidle_unregister(&kirkwood_idle_driver);
 	return 0;

@@ -596,8 +596,7 @@ static int sixpack_open(struct tty_struct *tty)
 	if (tty->ops->write == NULL)
 		return -EOPNOTSUPP;
 
-	dev = alloc_netdev(sizeof(struct sixpack), "sp%d", NET_NAME_UNKNOWN,
-			   sp_setup);
+	dev = alloc_netdev(sizeof(struct sixpack), "sp%d", sp_setup);
 	if (!dev) {
 		err = -ENOMEM;
 		goto out;
@@ -663,8 +662,7 @@ static int sixpack_open(struct tty_struct *tty)
 	tty->receive_room = 65536;
 
 	/* Now we're ready to register. */
-	err = register_netdev(dev);
-	if (err)
+	if (register_netdev(dev))
 		goto out_free;
 
 	tnc_init(sp);

@@ -45,11 +45,12 @@ static void omap_irq_update(struct drm_device *dev)
 	dispc_read_irqenable();        /* flush posted write */
 }
 
-void __omap_irq_register(struct drm_device *dev, struct omap_drm_irq *irq)
+void omap_irq_register(struct drm_device *dev, struct omap_drm_irq *irq)
 {
 	struct omap_drm_private *priv = dev->dev_private;
 	unsigned long flags;
 
+	dispc_runtime_get();
 	spin_lock_irqsave(&list_lock, flags);
 
 	if (!WARN_ON(irq->registered)) {
@@ -59,21 +60,14 @@ void __omap_irq_register(struct drm_device *dev, struct omap_drm_irq *irq)
 	}
 
 	spin_unlock_irqrestore(&list_lock, flags);
-}
-
-void omap_irq_register(struct drm_device *dev, struct omap_drm_irq *irq)
-{
-	dispc_runtime_get();
-
-	__omap_irq_register(dev, irq);
-
 	dispc_runtime_put();
 }
 
-void __omap_irq_unregister(struct drm_device *dev, struct omap_drm_irq *irq)
+void omap_irq_unregister(struct drm_device *dev, struct omap_drm_irq *irq)
 {
 	unsigned long flags;
 
+	dispc_runtime_get();
 	spin_lock_irqsave(&list_lock, flags);
 
 	if (!WARN_ON(!irq->registered)) {
@@ -83,14 +77,6 @@ void __omap_irq_unregister(struct drm_device *dev, struct omap_drm_irq *irq)
 	}
 
 	spin_unlock_irqrestore(&list_lock, flags);
-}
-
-void omap_irq_unregister(struct drm_device *dev, struct omap_drm_irq *irq)
-{
-	dispc_runtime_get();
-
-	__omap_irq_unregister(dev, irq);
-
 	dispc_runtime_put();
 }
 
@@ -187,7 +173,7 @@ void omap_irq_disable_vblank(struct drm_device *dev, int crtc_id)
 	dispc_runtime_put();
 }
 
-irqreturn_t omap_irq_handler(int irq, void *arg)
+irqreturn_t omap_irq_handler(DRM_IRQ_ARGS)
 {
 	struct drm_device *dev = (struct drm_device *) arg;
 	struct omap_drm_private *priv = dev->dev_private;
@@ -275,7 +261,7 @@ int omap_drm_irq_install(struct drm_device *dev)
 		mutex_unlock(&dev->struct_mutex);
 		return -EBUSY;
 	}
-	dev->irq_enabled = true;
+	dev->irq_enabled = 1;
 	mutex_unlock(&dev->struct_mutex);
 
 	/* Before installing handler */
@@ -286,7 +272,7 @@ int omap_drm_irq_install(struct drm_device *dev)
 
 	if (ret < 0) {
 		mutex_lock(&dev->struct_mutex);
-		dev->irq_enabled = false;
+		dev->irq_enabled = 0;
 		mutex_unlock(&dev->struct_mutex);
 		return ret;
 	}
@@ -297,7 +283,7 @@ int omap_drm_irq_install(struct drm_device *dev)
 
 	if (ret < 0) {
 		mutex_lock(&dev->struct_mutex);
-		dev->irq_enabled = false;
+		dev->irq_enabled = 0;
 		mutex_unlock(&dev->struct_mutex);
 		dispc_free_irq(dev);
 	}
@@ -308,12 +294,11 @@ int omap_drm_irq_install(struct drm_device *dev)
 int omap_drm_irq_uninstall(struct drm_device *dev)
 {
 	unsigned long irqflags;
-	bool irq_enabled;
-	int i;
+	int irq_enabled, i;
 
 	mutex_lock(&dev->struct_mutex);
 	irq_enabled = dev->irq_enabled;
-	dev->irq_enabled = false;
+	dev->irq_enabled = 0;
 	mutex_unlock(&dev->struct_mutex);
 
 	/*
@@ -322,9 +307,9 @@ int omap_drm_irq_uninstall(struct drm_device *dev)
 	if (dev->num_crtcs) {
 		spin_lock_irqsave(&dev->vbl_lock, irqflags);
 		for (i = 0; i < dev->num_crtcs; i++) {
-			wake_up(&dev->vblank[i].queue);
-			dev->vblank[i].enabled = false;
-			dev->vblank[i].last =
+			DRM_WAKEUP(&dev->vbl_queue[i]);
+			dev->vblank_enabled[i] = 0;
+			dev->last_vblank[i] =
 				dev->driver->get_vblank_counter(dev, i);
 		}
 		spin_unlock_irqrestore(&dev->vbl_lock, irqflags);

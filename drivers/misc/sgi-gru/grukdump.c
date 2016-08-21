@@ -139,11 +139,8 @@ static int gru_dump_context(struct gru_state *gru, int ctxnum,
 
 	ubuf += sizeof(hdr);
 	ubufcch = ubuf;
-	if (gru_user_copy_handle(&ubuf, cch)) {
-		if (cch_locked)
-			unlock_cch_handle(cch);
-		return -EFAULT;
-	}
+	if (gru_user_copy_handle(&ubuf, cch))
+		goto fail;
 	if (cch_locked)
 		ubufcch->delresp = 0;
 	bytes = sizeof(hdr) + GRU_CACHE_LINE_BYTES;
@@ -178,10 +175,14 @@ static int gru_dump_context(struct gru_state *gru, int ctxnum,
 	hdr.cbrcnt = cbrcnt;
 	hdr.dsrcnt = dsrcnt;
 	hdr.cch_locked = cch_locked;
-	if (copy_to_user(uhdr, &hdr, sizeof(hdr)))
-		return -EFAULT;
+	if (!ret && copy_to_user((void __user *)uhdr, &hdr, sizeof(hdr)))
+		ret = -EFAULT;
 
-	return bytes;
+	return ret ? ret : bytes;
+
+fail:
+	unlock_cch_handle(cch);
+	return -EFAULT;
 }
 
 int gru_dump_chiplet_request(unsigned long arg)

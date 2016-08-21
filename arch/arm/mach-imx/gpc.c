@@ -27,14 +27,13 @@ static void __iomem *gpc_base;
 static u32 gpc_wake_irqs[IMR_NUM];
 static u32 gpc_saved_imrs[IMR_NUM];
 
-void imx_gpc_pre_suspend(bool arm_power_off)
+void imx_gpc_pre_suspend(void)
 {
 	void __iomem *reg_imr1 = gpc_base + GPC_IMR1;
 	int i;
 
 	/* Tell GPC to power off ARM core when suspend */
-	if (arm_power_off)
-		writel_relaxed(0x1, gpc_base + GPC_PGC_CPU_PDN);
+	writel_relaxed(0x1, gpc_base + GPC_PGC_CPU_PDN);
 
 	for (i = 0; i < IMR_NUM; i++) {
 		gpc_saved_imrs[i] = readl_relaxed(reg_imr1 + i * 4);
@@ -91,7 +90,7 @@ void imx_gpc_restore_all(void)
 		writel_relaxed(gpc_saved_imrs[i], reg_imr1 + i * 4);
 }
 
-void imx_gpc_irq_unmask(struct irq_data *d)
+static void imx_gpc_irq_unmask(struct irq_data *d)
 {
 	void __iomem *reg;
 	u32 val;
@@ -106,7 +105,7 @@ void imx_gpc_irq_unmask(struct irq_data *d)
 	writel_relaxed(val, reg);
 }
 
-void imx_gpc_irq_mask(struct irq_data *d)
+static void imx_gpc_irq_mask(struct irq_data *d)
 {
 	void __iomem *reg;
 	u32 val;

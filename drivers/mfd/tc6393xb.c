@@ -263,17 +263,6 @@ static int tc6393xb_ohci_disable(struct platform_device *dev)
 	return 0;
 }
 
-static int tc6393xb_ohci_suspend(struct platform_device *dev)
-{
-	struct tc6393xb_platform_data *tcpd = dev_get_platdata(dev->dev.parent);
-
-	/* We can't properly store/restore OHCI state, so fail here */
-	if (tcpd->resume_restore)
-		return -EBUSY;
-
-	return tc6393xb_ohci_disable(dev);
-}
-
 static int tc6393xb_fb_enable(struct platform_device *dev)
 {
 	struct tc6393xb *tc6393xb = dev_get_drvdata(dev->dev.parent);
@@ -414,7 +403,7 @@ static struct mfd_cell tc6393xb_cells[] = {
 		.num_resources = ARRAY_SIZE(tc6393xb_ohci_resources),
 		.resources = tc6393xb_ohci_resources,
 		.enable = tc6393xb_ohci_enable,
-		.suspend = tc6393xb_ohci_suspend,
+		.suspend = tc6393xb_ohci_disable,
 		.resume = tc6393xb_ohci_enable,
 		.disable = tc6393xb_ohci_disable,
 	},
@@ -615,10 +604,10 @@ static void tc6393xb_detach_irq(struct platform_device *dev)
 
 static int tc6393xb_probe(struct platform_device *dev)
 {
-	struct tc6393xb_platform_data *tcpd = dev_get_platdata(&dev->dev);
+	struct tc6393xb_platform_data *tcpd = dev->dev.platform_data;
 	struct tc6393xb *tc6393xb;
 	struct resource *iomem, *rscr;
-	int ret;
+	int ret, temp;
 
 	iomem = platform_get_resource(dev, IORESOURCE_MEM, 0);
 	if (!iomem)
@@ -725,7 +714,7 @@ err_setup:
 
 err_gpio_add:
 	if (tc6393xb->gpio.base != -1)
-		gpiochip_remove(&tc6393xb->gpio);
+		temp = gpiochip_remove(&tc6393xb->gpio);
 	tcpd->disable(dev);
 err_enable:
 	clk_disable(tc6393xb->clk);
@@ -744,7 +733,7 @@ err_kzalloc:
 
 static int tc6393xb_remove(struct platform_device *dev)
 {
-	struct tc6393xb_platform_data *tcpd = dev_get_platdata(&dev->dev);
+	struct tc6393xb_platform_data *tcpd = dev->dev.platform_data;
 	struct tc6393xb *tc6393xb = platform_get_drvdata(dev);
 	int ret;
 
@@ -755,13 +744,19 @@ static int tc6393xb_remove(struct platform_device *dev)
 
 	tc6393xb_detach_irq(dev);
 
-	if (tc6393xb->gpio.base != -1)
-		gpiochip_remove(&tc6393xb->gpio);
+	if (tc6393xb->gpio.base != -1) {
+		ret = gpiochip_remove(&tc6393xb->gpio);
+		if (ret) {
+			dev_err(&dev->dev, "Can't remove gpio chip: %d\n", ret);
+			return ret;
+		}
+	}
 
 	ret = tcpd->disable(dev);
 	clk_disable(tc6393xb->clk);
 	iounmap(tc6393xb->scr);
 	release_resource(&tc6393xb->rscr);
+	platform_set_drvdata(dev, NULL);
 	clk_put(tc6393xb->clk);
 	kfree(tc6393xb);
 
@@ -771,7 +766,7 @@ static int tc6393xb_remove(struct platform_device *dev)
 #ifdef CONFIG_PM
 static int tc6393xb_suspend(struct platform_device *dev, pm_message_t state)
 {
-	struct tc6393xb_platform_data *tcpd = dev_get_platdata(&dev->dev);
+	struct tc6393xb_platform_data *tcpd = dev->dev.platform_data;
 	struct tc6393xb *tc6393xb = platform_get_drvdata(dev);
 	int i, ret;
 
@@ -794,7 +789,7 @@ static int tc6393xb_suspend(struct platform_device *dev, pm_message_t state)
 
 static int tc6393xb_resume(struct platform_device *dev)
 {
-	struct tc6393xb_platform_data *tcpd = dev_get_platdata(&dev->dev);
+	struct tc6393xb_platform_data *tcpd = dev->dev.platform_data;
 	struct tc6393xb *tc6393xb = platform_get_drvdata(dev);
 	int ret;
 	int i;

@@ -17,7 +17,7 @@
  * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "drm_flip_work.h"
+#include <linux/kfifo.h>
 
 #include "omap_drv.h"
 #include "omap_dmm_tiler.h"
@@ -58,23 +58,26 @@ struct omap_plane {
 
 	struct omap_drm_irq error_irq;
 
-	/* for deferring bo unpin's until next post_apply(): */
-	struct drm_flip_work unpin_work;
+	/* set of bo's pending unpin until next post_apply() */
+	DECLARE_KFIFO_PTR(unpin_fifo, struct drm_gem_object *);
 
 	// XXX maybe get rid of this and handle vblank in crtc too?
 	struct callback apply_done_cb;
 };
 
-static void unpin_worker(struct drm_flip_work *work, void *val)
+static void unpin(void *arg, struct drm_gem_object *bo)
 {
-	struct omap_plane *omap_plane =
-			container_of(work, struct omap_plane, unpin_work);
-	struct drm_device *dev = omap_plane->base.dev;
+	struct drm_plane *plane = arg;
+	struct omap_plane *omap_plane = to_omap_plane(plane);
 
-	omap_framebuffer_unpin(val);
-	mutex_lock(&dev->mode_config.mutex);
-	drm_framebuffer_unreference(val);
-	mutex_unlock(&dev->mode_config.mutex);
+	if (kfifo_put(&omap_plane->unpin_fifo,
+			(const struct drm_gem_object **)&bo)) {
+		/* also hold a ref so it isn't free'd while pinned */
+		drm_gem_object_reference(bo);
+	} else {
+		dev_err(plane->dev->dev, "unpin fifo full!\n");
+		omap_gem_put_paddr(bo);
+	}
 }
 
 /* update which fb (if any) is pinned for scanout */
@@ -84,22 +87,23 @@ static int update_pin(struct drm_plane *plane, struct drm_framebuffer *fb)
 	struct drm_framebuffer *pinned_fb = omap_plane->pinned_fb;
 
 	if (pinned_fb != fb) {
-		int ret = 0;
+		int ret;
 
 		DBG("%p -> %p", pinned_fb, fb);
 
-		if (fb) {
+		if (fb)
 			drm_framebuffer_reference(fb);
-			ret = omap_framebuffer_pin(fb);
-		}
+
+		ret = omap_framebuffer_replace(pinned_fb, fb, plane, unpin);
 
 		if (pinned_fb)
-			drm_flip_work_queue(&omap_plane->unpin_work, pinned_fb);
+			drm_framebuffer_unreference(pinned_fb);
 
 		if (ret) {
 			dev_err(plane->dev->dev, "could not swap %p -> %p\n",
 					omap_plane->pinned_fb, fb);
-			drm_framebuffer_unreference(fb);
+			if (fb)
+				drm_framebuffer_unreference(fb);
 			omap_plane->pinned_fb = NULL;
 			return ret;
 		}
@@ -142,8 +146,8 @@ static void omap_plane_pre_apply(struct omap_drm_apply *apply)
 	DBG("%dx%d -> %dx%d (%d)", info->width, info->height,
 			info->out_width, info->out_height,
 			info->screen_width);
-	DBG("%d,%d %pad %pad", info->pos_x, info->pos_y,
-			&info->paddr, &info->p_uv_addr);
+	DBG("%d,%d %08x %08x", info->pos_x, info->pos_y,
+			info->paddr, info->p_uv_addr);
 
 	/* TODO: */
 	ilace = false;
@@ -166,14 +170,17 @@ static void omap_plane_post_apply(struct omap_drm_apply *apply)
 	struct omap_plane *omap_plane =
 			container_of(apply, struct omap_plane, apply);
 	struct drm_plane *plane = &omap_plane->base;
-	struct omap_drm_private *priv = plane->dev->dev_private;
 	struct omap_overlay_info *info = &omap_plane->info;
+	struct drm_gem_object *bo = NULL;
 	struct callback cb;
 
 	cb = omap_plane->apply_done_cb;
 	omap_plane->apply_done_cb.fxn = NULL;
 
-	drm_flip_work_commit(&omap_plane->unpin_work, priv->wq);
+	while (kfifo_get(&omap_plane->unpin_fifo, &bo)) {
+		omap_gem_put_paddr(bo);
+		drm_gem_object_unreference_unlocked(bo);
+	}
 
 	if (cb.fxn)
 		cb.fxn(cb.arg);
@@ -225,11 +232,6 @@ int omap_plane_mode_set(struct drm_plane *plane,
 		omap_plane->apply_done_cb.arg = arg;
 	}
 
-	if (plane->fb)
-		drm_framebuffer_unreference(plane->fb);
-
-	drm_framebuffer_reference(fb);
-
 	plane->fb = fb;
 	plane->crtc = crtc;
 
@@ -246,13 +248,10 @@ static int omap_plane_update(struct drm_plane *plane,
 	struct omap_plane *omap_plane = to_omap_plane(plane);
 	omap_plane->enabled = true;
 
-	/* omap_plane_mode_set() takes adjusted src */
-	switch (omap_plane->win.rotation & 0xf) {
-	case BIT(DRM_ROTATE_90):
-	case BIT(DRM_ROTATE_270):
-		swap(src_w, src_h);
-		break;
-	}
+	if (plane->fb)
+		drm_framebuffer_unreference(plane->fb);
+
+	drm_framebuffer_reference(fb);
 
 	return omap_plane_mode_set(plane, crtc, fb,
 			crtc_x, crtc_y, crtc_w, crtc_h,
@@ -278,7 +277,8 @@ static void omap_plane_destroy(struct drm_plane *plane)
 	omap_plane_disable(plane);
 	drm_plane_cleanup(plane);
 
-	drm_flip_work_cleanup(&omap_plane->unpin_work);
+	WARN_ON(!kfifo_is_empty(&omap_plane->unpin_fifo));
+	kfifo_free(&omap_plane->unpin_fifo);
 
 	kfree(omap_plane);
 }
@@ -308,13 +308,16 @@ void omap_plane_install_properties(struct drm_plane *plane,
 	if (priv->has_dmm) {
 		prop = priv->rotation_prop;
 		if (!prop) {
-			prop = drm_mode_create_rotation_property(dev,
-								 BIT(DRM_ROTATE_0) |
-								 BIT(DRM_ROTATE_90) |
-								 BIT(DRM_ROTATE_180) |
-								 BIT(DRM_ROTATE_270) |
-								 BIT(DRM_REFLECT_X) |
-								 BIT(DRM_REFLECT_Y));
+			const struct drm_prop_enum_list props[] = {
+					{ DRM_ROTATE_0,   "rotate-0" },
+					{ DRM_ROTATE_90,  "rotate-90" },
+					{ DRM_ROTATE_180, "rotate-180" },
+					{ DRM_ROTATE_270, "rotate-270" },
+					{ DRM_REFLECT_X,  "reflect-x" },
+					{ DRM_REFLECT_Y,  "reflect-y" },
+			};
+			prop = drm_property_create_bitmask(dev, 0, "rotation",
+					props, ARRAY_SIZE(props));
 			if (prop == NULL)
 				return;
 			priv->rotation_prop = prop;
@@ -396,8 +399,7 @@ struct drm_plane *omap_plane_init(struct drm_device *dev,
 	if (!omap_plane)
 		goto fail;
 
-	ret = drm_flip_work_init(&omap_plane->unpin_work, 16,
-			"unpin", unpin_worker);
+	ret = kfifo_alloc(&omap_plane->unpin_fifo, 16, GFP_KERNEL);
 	if (ret) {
 		dev_err(dev->dev, "could not allocate unpin FIFO\n");
 		goto fail;

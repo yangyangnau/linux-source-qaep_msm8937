@@ -403,13 +403,12 @@ nfsd_proc_symlink(struct svc_rqst *rqstp, struct nfsd_symlinkargs *argp,
 
 	fh_init(&newfh, NFS_FHSIZE);
 	/*
-	 * Crazy hack: the request fits in a page, and already-decoded
-	 * attributes follow argp->tname, so it's safe to just write a
-	 * null to ensure it's null-terminated:
+	 * Create the link, look up new file and set attrs.
 	 */
-	argp->tname[argp->tlen] = '\0';
 	nfserr = nfsd_symlink(rqstp, &argp->ffh, argp->fname, argp->flen,
-						 argp->tname, &newfh);
+						 argp->tname, argp->tlen,
+				 		 &newfh, &argp->attrs);
+
 
 	fh_put(&argp->ffh);
 	fh_put(&newfh);
@@ -717,7 +716,6 @@ nfserrno (int errno)
 		{ nfserr_noent, -ENOENT },
 		{ nfserr_io, -EIO },
 		{ nfserr_nxio, -ENXIO },
-		{ nfserr_fbig, -E2BIG },
 		{ nfserr_acces, -EACCES },
 		{ nfserr_exist, -EEXIST },
 		{ nfserr_xdev, -EXDEV },
@@ -745,7 +743,6 @@ nfserrno (int errno)
 		{ nfserr_notsupp, -EOPNOTSUPP },
 		{ nfserr_toosmall, -ETOOSMALL },
 		{ nfserr_serverfault, -ESERVERFAULT },
-		{ nfserr_serverfault, -ENFILE },
 	};
 	int	i;
 
@@ -753,7 +750,7 @@ nfserrno (int errno)
 		if (nfs_errtbl[i].syserr == errno)
 			return nfs_errtbl[i].nfserr;
 	}
-	WARN(1, "nfsd: non-standard errno: %d\n", errno);
+	printk (KERN_INFO "nfsd: non-standard errno: %d\n", errno);
 	return nfserr_io;
 }
 

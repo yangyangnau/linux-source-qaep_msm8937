@@ -19,19 +19,19 @@
 #include <loongson.h>
 #include <machine.h>
 
-#define PORT(int, clk)			\
+#define PORT(int)			\
 {								\
 	.irq		= int,					\
-	.uartclk	= clk,					\
+	.uartclk	= 1843200,				\
 	.iotype		= UPIO_PORT,				\
 	.flags		= UPF_BOOT_AUTOCONF | UPF_SKIP_TEST,	\
 	.regshift	= 0,					\
 }
 
-#define PORT_M(int, clk)				\
+#define PORT_M(int)				\
 {								\
 	.irq		= MIPS_CPU_IRQ_BASE + (int),		\
-	.uartclk	= clk,					\
+	.uartclk	= 3686400,				\
 	.iotype		= UPIO_MEM,				\
 	.membase	= (void __iomem *)NULL,			\
 	.flags		= UPF_BOOT_AUTOCONF | UPF_SKIP_TEST,	\
@@ -40,17 +40,13 @@
 
 static struct plat_serial8250_port uart8250_data[][2] = {
 	[MACH_LOONGSON_UNKNOWN]		{},
-	[MACH_LEMOTE_FL2E]              {PORT(4, 1843200), {} },
-	[MACH_LEMOTE_FL2F]              {PORT(3, 1843200), {} },
-	[MACH_LEMOTE_ML2F7]             {PORT_M(3, 3686400), {} },
-	[MACH_LEMOTE_YL2F89]            {PORT_M(3, 3686400), {} },
-	[MACH_DEXXON_GDIUM2F10]         {PORT_M(3, 3686400), {} },
-	[MACH_LEMOTE_NAS]               {PORT_M(3, 3686400), {} },
-	[MACH_LEMOTE_LL2F]              {PORT(3, 1843200), {} },
-	[MACH_LEMOTE_A1004]             {PORT_M(2, 33177600), {} },
-	[MACH_LEMOTE_A1101]             {PORT_M(2, 25000000), {} },
-	[MACH_LEMOTE_A1201]             {PORT_M(2, 25000000), {} },
-	[MACH_LEMOTE_A1205]             {PORT_M(2, 25000000), {} },
+	[MACH_LEMOTE_FL2E]		{PORT(4), {} },
+	[MACH_LEMOTE_FL2F]		{PORT(3), {} },
+	[MACH_LEMOTE_ML2F7]		{PORT_M(3), {} },
+	[MACH_LEMOTE_YL2F89]		{PORT_M(3), {} },
+	[MACH_DEXXON_GDIUM2F10]		{PORT_M(3), {} },
+	[MACH_LEMOTE_NAS]		{PORT_M(3), {} },
+	[MACH_LEMOTE_LL2F]		{PORT(3), {} },
 	[MACH_LOONGSON_END]		{},
 };
 

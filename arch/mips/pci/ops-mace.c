@@ -6,6 +6,7 @@
  * Copyright (C) 2000, 2001 Keith M Wesolowski
  */
 #include <linux/kernel.h>
+#include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/types.h>
 #include <asm/pci.h>

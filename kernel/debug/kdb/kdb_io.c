@@ -710,7 +710,7 @@ kdb_printit:
 	}
 	if (logging) {
 		saved_loglevel = console_loglevel;
-		console_loglevel = CONSOLE_LOGLEVEL_SILENT;
+		console_loglevel = 0;
 		printk(KERN_INFO "%s", kdb_buffer);
 	}
 

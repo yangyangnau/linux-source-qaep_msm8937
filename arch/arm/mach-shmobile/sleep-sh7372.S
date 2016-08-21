@@ -40,11 +40,7 @@
 	.global sh7372_resume_core_standby_sysc
 sh7372_resume_core_standby_sysc:
 	ldr     pc, 1f
-
-	.align	2
-	.globl	sh7372_cpu_resume
-sh7372_cpu_resume:
-1:	.space	4
+1:	.long   cpu_resume - PAGE_OFFSET + PLAT_PHYS_OFFSET
 
 #define SPDCR 0xe6180008
 
@@ -97,7 +93,6 @@ sh7372_do_idle_sysc:
 1:
 	b      1b
 
-	.align	2
 kernel_flush:
 	.word v7_flush_dcache_all
 #endif

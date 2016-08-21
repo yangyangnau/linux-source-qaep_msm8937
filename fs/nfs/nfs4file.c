@@ -8,10 +8,6 @@
 #include "fscache.h"
 #include "pnfs.h"
 
-#ifdef CONFIG_NFS_V4_2
-#include "nfs42.h"
-#endif
-
 #define NFSDBG_FACILITY		NFSDBG_FILE
 
 static int
@@ -23,7 +19,6 @@ nfs4_file_open(struct inode *inode, struct file *filp)
 	struct inode *dir;
 	unsigned openflags = filp->f_flags;
 	struct iattr attr;
-	int opened = 0;
 	int err;
 
 	/*
@@ -35,7 +30,9 @@ nfs4_file_open(struct inode *inode, struct file *filp)
 	 * -EOPENSTALE.  The VFS will retry the lookup/create/open.
 	 */
 
-	dprintk("NFS: open file(%pd2)\n", dentry);
+	dprintk("NFS: open file(%s/%s)\n",
+		dentry->d_parent->d_name.name,
+		dentry->d_name.name);
 
 	if ((openflags & O_ACCMODE) == 3)
 		openflags--;
@@ -58,7 +55,7 @@ nfs4_file_open(struct inode *inode, struct file *filp)
 		nfs_wb_all(inode);
 	}
 
-	inode = NFS_PROTO(dir)->open_context(dir, ctx, openflags, &attr, &opened);
+	inode = NFS_PROTO(dir)->open_context(dir, ctx, openflags, &attr);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
 		switch (err) {
@@ -72,12 +69,13 @@ nfs4_file_open(struct inode *inode, struct file *filp)
 			goto out_drop;
 		}
 	}
+	iput(inode);
 	if (inode != dentry->d_inode)
 		goto out_drop;
 
 	nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
 	nfs_file_set_open_context(filp, ctx);
-	nfs_fscache_open_file(inode, filp);
+	nfs_fscache_set_inode_cookie(inode, filp);
 	err = 0;
 
 out_put_ctx:
@@ -104,7 +102,8 @@ nfs4_file_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 			break;
 		mutex_lock(&inode->i_mutex);
 		ret = nfs_file_fsync_commit(file, start, end, datasync);
-		if (!ret)
+		if (!ret && !datasync)
+			/* application has asked for meta-data sync */
 			ret = pnfs_layoutcommit_inode(inode, true);
 		mutex_unlock(&inode->i_mutex);
 		/*
@@ -119,33 +118,12 @@ nfs4_file_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	return ret;
 }
 
-#ifdef CONFIG_NFS_V4_2
-static loff_t nfs4_file_llseek(struct file *filep, loff_t offset, int whence)
-{
-	loff_t ret;
-
-	switch (whence) {
-	case SEEK_HOLE:
-	case SEEK_DATA:
-		ret = nfs42_proc_llseek(filep, offset, whence);
-		if (ret != -ENOTSUPP)
-			return ret;
-	default:
-		return nfs_file_llseek(filep, offset, whence);
-	}
-}
-#endif /* CONFIG_NFS_V4_2 */
-
 const struct file_operations nfs4_file_operations = {
-#ifdef CONFIG_NFS_V4_2
-	.llseek		= nfs4_file_llseek,
-#else
 	.llseek		= nfs_file_llseek,
-#endif
-	.read		= new_sync_read,
-	.write		= new_sync_write,
-	.read_iter	= nfs_file_read,
-	.write_iter	= nfs_file_write,
+	.read		= do_sync_read,
+	.write		= do_sync_write,
+	.aio_read	= nfs_file_read,
+	.aio_write	= nfs_file_write,
 	.mmap		= nfs_file_mmap,
 	.open		= nfs4_file_open,
 	.flush		= nfs_file_flush,
@@ -154,7 +132,7 @@ const struct file_operations nfs4_file_operations = {
 	.lock		= nfs_lock,
 	.flock		= nfs_flock,
 	.splice_read	= nfs_file_splice_read,
-	.splice_write	= iter_file_splice_write,
+	.splice_write	= nfs_file_splice_write,
 	.check_flags	= nfs_check_flags,
-	.setlease	= simple_nosetlease,
+	.setlease	= nfs_setlease,
 };

@@ -7,20 +7,14 @@
 #include <linux/timex.h>
 #include <linux/alarmtimer.h>
 
-
-static inline unsigned long long cputime_to_expires(cputime_t expires)
-{
-	return (__force unsigned long long)expires;
-}
-
-static inline cputime_t expires_to_cputime(unsigned long long expires)
-{
-	return (__force cputime_t)expires;
-}
+union cpu_time_count {
+	cputime_t cpu;
+	unsigned long long sched;
+};
 
 struct cpu_timer_list {
 	struct list_head entry;
-	unsigned long long expires, incr;
+	union cpu_time_count expires, incr;
 	struct task_struct *task;
 	int firing;
 };

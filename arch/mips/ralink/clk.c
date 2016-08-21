@@ -26,7 +26,7 @@ void ralink_clk_add(const char *dev, unsigned long rate)
 	struct clk *clk = kzalloc(sizeof(struct clk), GFP_KERNEL);
 
 	if (!clk)
-		panic("failed to add clock");
+		panic("failed to add clock\n");
 
 	clk->cl.dev_id = dev;
 	clk->cl.clk = clk;
@@ -69,5 +69,4 @@ void __init plat_time_init(void)
 	pr_info("CPU Clock: %ldMHz\n", clk_get_rate(clk) / 1000000);
 	mips_hpt_frequency = clk_get_rate(clk) / 2;
 	clk_put(clk);
-	clocksource_of_init();
 }

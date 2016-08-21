@@ -410,7 +410,9 @@ out:
 		pr_warning("multiple CPUs still online, may miss events.\n");
 }
 
-static void leave_uniprocessor(void)
+/* __ref because leave_uniprocessor calls cpu_up which is __cpuinit,
+   but this whole function is ifdefed CONFIG_HOTPLUG_CPU */
+static void __ref leave_uniprocessor(void)
 {
 	int cpu;
 	int err;

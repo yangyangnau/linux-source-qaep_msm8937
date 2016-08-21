@@ -10,13 +10,10 @@
  */
 
 #include <linux/dma-mapping.h>
-#include <linux/of_address.h>
-#include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/completion.h>
 #include <linux/miscdevice.h>
 #include <linux/dmaengine.h>
-#include <linux/fsldma.h>
 #include <linux/interrupt.h>
 #include <linux/highmem.h>
 #include <linux/kernel.h>
@@ -519,22 +516,23 @@ static noinline int fpga_program_dma(struct fpga_dev *priv)
 	config.direction = DMA_MEM_TO_DEV;
 	config.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 	config.dst_maxburst = fpga_fifo_size(priv->regs) / 2 / 4;
-	ret = dmaengine_slave_config(chan, &config);
+	ret = chan->device->device_control(chan, DMA_SLAVE_CONFIG,
+					   (unsigned long)&config);
 	if (ret) {
 		dev_err(priv->dev, "DMA slave configuration failed\n");
 		goto out_dma_unmap;
 	}
 
-	ret = fsl_dma_external_start(chan, 1)
+	ret = chan->device->device_control(chan, FSLDMA_EXTERNAL_START, 1);
 	if (ret) {
 		dev_err(priv->dev, "DMA external control setup failed\n");
 		goto out_dma_unmap;
 	}
 
 	/* setup and submit the DMA transaction */
-
-	tx = dmaengine_prep_dma_sg(chan, table.sgl, num_pages,
-			vb->sglist, vb->sglen, 0);
+	tx = chan->device->device_prep_dma_sg(chan,
+					      table.sgl, num_pages,
+					      vb->sglist, vb->sglen, 0);
 	if (!tx) {
 		dev_err(priv->dev, "Unable to prep DMA transaction\n");
 		ret = -ENOMEM;
@@ -749,8 +747,13 @@ static ssize_t fpga_read(struct file *filp, char __user *buf, size_t count,
 			 loff_t *f_pos)
 {
 	struct fpga_dev *priv = filp->private_data;
-	return simple_read_from_buffer(buf, count, ppos,
-				       priv->vb.vaddr, priv->bytes);
+
+	count = min_t(size_t, priv->bytes - *f_pos, count);
+	if (copy_to_user(buf, priv->vb.vaddr + *f_pos, count))
+		return -EFAULT;
+
+	*f_pos += count;
+	return count;
 }
 
 static loff_t fpga_llseek(struct file *filp, loff_t offset, int origin)
@@ -762,7 +765,26 @@ static loff_t fpga_llseek(struct file *filp, loff_t offset, int origin)
 	if ((filp->f_flags & O_ACCMODE) != O_RDONLY)
 		return -EINVAL;
 
-	return fixed_size_llseek(file, offset, origin, priv->fw_size);
+	switch (origin) {
+	case SEEK_SET: /* seek relative to the beginning of the file */
+		newpos = offset;
+		break;
+	case SEEK_CUR: /* seek relative to current position in the file */
+		newpos = filp->f_pos + offset;
+		break;
+	case SEEK_END: /* seek relative to the end of the file */
+		newpos = priv->fw_size - offset;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	/* check for sanity */
+	if (newpos > priv->fw_size)
+		return -EINVAL;
+
+	filp->f_pos = newpos;
+	return newpos;
 }
 
 static const struct file_operations fpga_fops = {
@@ -808,9 +830,8 @@ static ssize_t penable_store(struct device *dev, struct device_attribute *attr,
 	unsigned long val;
 	int ret;
 
-	ret = kstrtoul(buf, 0, &val);
-	if (ret)
-		return ret;
+	if (strict_strtoul(buf, 0, &val))
+		return -EINVAL;
 
 	if (val) {
 		ret = fpga_enable_power_supplies(priv);
@@ -838,9 +859,8 @@ static ssize_t program_store(struct device *dev, struct device_attribute *attr,
 	unsigned long val;
 	int ret;
 
-	ret = kstrtoul(buf, 0, &val);
-	if (ret)
-		return ret;
+	if (strict_strtoul(buf, 0, &val))
+		return -EINVAL;
 
 	/* We can't have an image writer and be programming simultaneously */
 	if (mutex_lock_interruptible(&priv->lock))
@@ -899,7 +919,7 @@ static bool dma_filter(struct dma_chan *chan, void *data)
 
 static int fpga_of_remove(struct platform_device *op)
 {
-	struct fpga_dev *priv = platform_get_drvdata(op);
+	struct fpga_dev *priv = dev_get_drvdata(&op->dev);
 	struct device *this_device = priv->miscdev.this_device;
 
 	sysfs_remove_group(&this_device->kobj, &fpga_attr_group);
@@ -949,7 +969,7 @@ static int fpga_of_probe(struct platform_device *op)
 
 	kref_init(&priv->ref);
 
-	platform_set_drvdata(op, priv);
+	dev_set_drvdata(&op->dev, priv);
 	priv->dev = &op->dev;
 	mutex_init(&priv->lock);
 	init_completion(&priv->completion);

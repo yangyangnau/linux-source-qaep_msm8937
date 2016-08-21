@@ -55,7 +55,8 @@ int split_cmdline(char *cmdline, const char ***argv)
 				src++;
 				c = cmdline[src];
 				if (!c) {
-					zfree(argv);
+					free(*argv);
+					*argv = NULL;
 					return error("cmdline ends with \\");
 				}
 			}
@@ -67,7 +68,8 @@ int split_cmdline(char *cmdline, const char ***argv)
 	cmdline[dst] = 0;
 
 	if (quoted) {
-		zfree(argv);
+		free(*argv);
+		*argv = NULL;
 		return error("unclosed quote");
 	}
 

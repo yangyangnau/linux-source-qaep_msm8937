@@ -1,5 +1,7 @@
 /*
- * Copyright 2013 - Hans de Goede <hdegoede@redhat.com>
+ * Copyright 2012 Maxime Ripard
+ *
+ * Maxime Ripard <maxime.ripard@free-electrons.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,8 +17,6 @@
 #ifndef __LINUX_CLK_SUNXI_H_
 #define __LINUX_CLK_SUNXI_H_
 
-#include <linux/clk.h>
-
-void clk_sunxi_mmc_phase_control(struct clk *clk, u8 sample, u8 output);
+void __init sunxi_init_clocks(void);
 
 #endif

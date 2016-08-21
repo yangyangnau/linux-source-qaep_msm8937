@@ -91,9 +91,10 @@ bs_die:
 
 	.section ".bsdata", "a"
 bugger_off_msg:
-	.ascii	"Use a boot loader.\r\n"
+	.ascii	"Direct floppy boot is not supported. "
+	.ascii	"Use a boot loader program instead.\r\n"
 	.ascii	"\n"
-	.ascii	"Remove disk and press any key to reboot...\r\n"
+	.ascii	"Remove disk and press any key to reboot ...\r\n"
 	.byte	0
 
 #ifdef CONFIG_EFI_STUB
@@ -107,7 +108,7 @@ coff_header:
 #else
 	.word	0x8664				# x86-64
 #endif
-	.word	4				# nr_sections
+	.word	3				# nr_sections
 	.long	0 				# TimeDateStamp
 	.long	0				# PointerToSymbolTable
 	.long	1				# NumberOfSymbols
@@ -154,7 +155,7 @@ extra_header_fields:
 #else
 	.quad	0				# ImageBase
 #endif
-	.long	CONFIG_PHYSICAL_ALIGN		# SectionAlignment
+	.long	0x20				# SectionAlignment
 	.long	0x20				# FileAlignment
 	.word	0				# MajorOperatingSystemVersion
 	.word	0				# MinorOperatingSystemVersion
@@ -249,25 +250,6 @@ section_table:
 	.word	0				# NumberOfLineNumbers
 	.long	0x60500020			# Characteristics (section flags)
 
-	#
-	# The offset & size fields are filled in by build.c.
-	#
-	.ascii	".bss"
-	.byte	0
-	.byte	0
-	.byte	0
-	.byte	0
-	.long	0
-	.long	0x0
-	.long	0				# Size of initialized data
-						# on disk
-	.long	0x0
-	.long	0				# PointerToRelocations
-	.long	0				# PointerToLineNumbers
-	.word	0				# NumberOfRelocations
-	.word	0				# NumberOfLineNumbers
-	.long	0xc8000080			# Characteristics (section flags)
-
 #endif /* CONFIG_EFI_STUB */
 
 	# Kernel attributes; used by setup.  This is part 1 of the
@@ -301,7 +283,7 @@ _start:
 	# Part 2 of the header, from the old setup.S
 
 		.ascii	"HdrS"		# header signature
-		.word	0x020d		# header version number (>= 0x0105)
+		.word	0x020c		# header version number (>= 0x0105)
 					# or else old loadlin-1.5 will fail)
 		.globl realmode_swtch
 realmode_swtch:	.word	0, 0		# default_switch, SETUPSEG
@@ -368,7 +350,7 @@ cmd_line_ptr:	.long	0		# (Header version 0x0202 or later)
 					# can be located anywhere in
 					# low memory 0x10000 or higher.
 
-initrd_addr_max: .long 0x7fffffff
+ramdisk_max:	.long 0x7fffffff
 					# (Header version 0x0203 or later)
 					# The highest safe address for
 					# the contents of an initrd
@@ -401,26 +383,15 @@ xloadflags:
 #endif
 
 #ifdef CONFIG_EFI_STUB
-# ifdef CONFIG_EFI_MIXED
-#  define XLF23 (XLF_EFI_HANDOVER_32|XLF_EFI_HANDOVER_64)
+# ifdef CONFIG_X86_64
+#  define XLF23 XLF_EFI_HANDOVER_64		/* 64-bit EFI handover ok */
 # else
-#  ifdef CONFIG_X86_64
-#   define XLF23 XLF_EFI_HANDOVER_64		/* 64-bit EFI handover ok */
-#  else
-#   define XLF23 XLF_EFI_HANDOVER_32		/* 32-bit EFI handover ok */
-#  endif
+#  define XLF23 XLF_EFI_HANDOVER_32		/* 32-bit EFI handover ok */
 # endif
 #else
 # define XLF23 0
 #endif
-
-#if defined(CONFIG_X86_64) && defined(CONFIG_EFI) && defined(CONFIG_KEXEC)
-# define XLF4 XLF_EFI_KEXEC
-#else
-# define XLF4 0
-#endif
-
-			.word XLF0 | XLF1 | XLF23 | XLF4
+			.word XLF0 | XLF1 | XLF23
 
 cmdline_size:   .long   COMMAND_LINE_SIZE-1     #length of the command line,
                                                 #added with boot protocol
@@ -448,7 +419,13 @@ pref_address:		.quad LOAD_PHYSICAL_ADDR	# preferred load addr
 #define INIT_SIZE VO_INIT_SIZE
 #endif
 init_size:		.long INIT_SIZE		# kernel initialization size
-handover_offset:	.long 0			# Filled in by build.c
+handover_offset:
+#ifdef CONFIG_EFI_STUB
+  			.long 0x30		# offset to the handover
+						# protocol entry point
+#else
+			.long 0
+#endif
 
 # End of setup header #####################################################
 

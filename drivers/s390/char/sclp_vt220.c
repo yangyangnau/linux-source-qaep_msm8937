@@ -97,16 +97,13 @@ static void sclp_vt220_pm_event_fn(struct sclp_register *reg,
 static int __sclp_vt220_emit(struct sclp_vt220_request *request);
 static void sclp_vt220_emit_current(void);
 
-/* Registration structure for SCLP output event buffers */
+/* Registration structure for our interest in SCLP event buffers */
 static struct sclp_register sclp_vt220_register = {
 	.send_mask		= EVTYP_VT220MSG_MASK,
-	.pm_event_fn		= sclp_vt220_pm_event_fn,
-};
-
-/* Registration structure for SCLP input event buffers */
-static struct sclp_register sclp_vt220_register_input = {
 	.receive_mask		= EVTYP_VT220MSG_MASK,
+	.state_change_fn	= NULL,
 	.receiver_fn		= sclp_vt220_receiver_fn,
+	.pm_event_fn		= sclp_vt220_pm_event_fn,
 };
 
 
@@ -206,6 +203,10 @@ sclp_vt220_callback(struct sclp_req *request, void *data)
 static int
 __sclp_vt220_emit(struct sclp_vt220_request *request)
 {
+	if (!(sclp_vt220_register.sclp_receive_mask & EVTYP_VT220MSG_MASK)) {
+		request->sclp_req.status = SCLP_REQ_FAILED;
+		return -EIO;
+	}
 	request->sclp_req.command = SCLP_CMDW_WRITE_EVENT_DATA;
 	request->sclp_req.status = SCLP_REQ_FILLED;
 	request->sclp_req.callback = sclp_vt220_callback;
@@ -361,31 +362,6 @@ sclp_vt220_timeout(unsigned long data)
 
 #define BUFFER_MAX_DELAY	HZ/20
 
-/*
- * Drop oldest console buffer if sclp_con_drop is set
- */
-static int
-sclp_vt220_drop_buffer(void)
-{
-	struct list_head *list;
-	struct sclp_vt220_request *request;
-	void *page;
-
-	if (!sclp_console_drop)
-		return 0;
-	list = sclp_vt220_outqueue.next;
-	if (sclp_vt220_queue_running)
-		/* The first element is in I/O */
-		list = list->next;
-	if (list == &sclp_vt220_outqueue)
-		return 0;
-	list_del(list);
-	request = list_entry(list, struct sclp_vt220_request, list);
-	page = request->sclp_req.sccb;
-	list_add_tail((struct list_head *) page, &sclp_vt220_empty);
-	return 1;
-}
-
 /* 
  * Internal implementation of the write function. Write COUNT bytes of data
  * from memory at BUF
@@ -414,16 +390,12 @@ __sclp_vt220_write(const unsigned char *buf, int count, int do_schedule,
 	do {
 		/* Create an sclp output buffer if none exists yet */
 		if (sclp_vt220_current_request == NULL) {
-			if (list_empty(&sclp_vt220_empty))
-				sclp_console_full++;
 			while (list_empty(&sclp_vt220_empty)) {
+				spin_unlock_irqrestore(&sclp_vt220_lock, flags);
 				if (may_fail || sclp_vt220_suspended)
 					goto out;
-				if (sclp_vt220_drop_buffer())
-					break;
-				spin_unlock_irqrestore(&sclp_vt220_lock, flags);
-
-				sclp_sync_wait();
+				else
+					sclp_sync_wait();
 				spin_lock_irqsave(&sclp_vt220_lock, flags);
 			}
 			page = (void *) sclp_vt220_empty.next;
@@ -456,8 +428,8 @@ __sclp_vt220_write(const unsigned char *buf, int count, int do_schedule,
 		sclp_vt220_timer.expires = jiffies + BUFFER_MAX_DELAY;
 		add_timer(&sclp_vt220_timer);
 	}
-out:
 	spin_unlock_irqrestore(&sclp_vt220_lock, flags);
+out:
 	return overall_written;
 }
 
@@ -714,14 +686,9 @@ static int __init sclp_vt220_tty_init(void)
 	rc = tty_register_driver(driver);
 	if (rc)
 		goto out_init;
-	rc = sclp_register(&sclp_vt220_register_input);
-	if (rc)
-		goto out_reg;
 	sclp_vt220_driver = driver;
 	return 0;
 
-out_reg:
-	tty_unregister_driver(driver);
 out_init:
 	__sclp_vt220_cleanup();
 out_driver:
@@ -834,7 +801,9 @@ sclp_vt220_con_init(void)
 {
 	int rc;
 
-	rc = __sclp_vt220_init(sclp_console_pages);
+	if (!CONSOLE_IS_SCLP)
+		return 0;
+	rc = __sclp_vt220_init(MAX_CONSOLE_PAGES);
 	if (rc)
 		return rc;
 	/* Attach linux console */

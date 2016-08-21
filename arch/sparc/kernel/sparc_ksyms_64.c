@@ -7,6 +7,7 @@
 
 #include <linux/export.h>
 #include <linux/pci.h>
+#include <linux/init.h>
 #include <linux/bitops.h>
 
 #include <asm/cpudata.h>

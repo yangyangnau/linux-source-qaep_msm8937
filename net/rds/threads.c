@@ -78,7 +78,8 @@ void rds_connect_complete(struct rds_connection *conn)
 				"current state is %d\n",
 				__func__,
 				atomic_read(&conn->c_state));
-		rds_conn_drop(conn);
+		atomic_set(&conn->c_state, RDS_CONN_ERROR);
+		queue_work(rds_wq, &conn->c_down_w);
 		return;
 	}
 

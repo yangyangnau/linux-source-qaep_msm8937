@@ -9,8 +9,6 @@
 #include <asm/errno.h>
 #include <asm-generic/uaccess-unaligned.h>
 
-#include <linux/bug.h>
-
 #define VERIFY_READ 0
 #define VERIFY_WRITE 1
 
@@ -30,6 +28,11 @@
  * that put_user is the same as __put_user, etc.
  */
 
+extern int __get_kernel_bad(void);
+extern int __get_user_bad(void);
+extern int __put_kernel_bad(void);
+extern int __put_user_bad(void);
+
 static inline long access_ok(int type, const void __user * addr,
 		unsigned long size)
 {
@@ -40,8 +43,8 @@ static inline long access_ok(int type, const void __user * addr,
 #define get_user __get_user
 
 #if !defined(CONFIG_64BIT)
-#define LDD_KERNEL(ptr)		BUILD_BUG()
-#define LDD_USER(ptr)		BUILD_BUG()
+#define LDD_KERNEL(ptr)		__get_kernel_bad();
+#define LDD_USER(ptr)		__get_user_bad();
 #define STD_KERNEL(x, ptr)	__put_kernel_asm64(x,ptr)
 #define STD_USER(x, ptr)	__put_user_asm64(x,ptr)
 #define ASM_WORD_INSN		".word\t"
@@ -56,13 +59,12 @@ static inline long access_ok(int type, const void __user * addr,
 /*
  * The exception table contains two values: the first is an address
  * for an instruction that is allowed to fault, and the second is
- * the address to the fixup routine. Even on a 64bit kernel we could
- * use a 32bit (unsigned int) address here.
+ * the address to the fixup routine. 
  */
 
 struct exception_table_entry {
-	unsigned long insn;	/* address of insn that is allowed to fault. */
-	unsigned long fixup;	/* fixup routine */
+	unsigned long insn;  /* address of insn that is allowed to fault.   */
+	long fixup;          /* fixup routine */
 };
 
 #define ASM_EXCEPTIONTABLE_ENTRY( fault_addr, except_addr )\
@@ -91,7 +93,7 @@ struct exception_data {
 	    case 2: __get_kernel_asm("ldh",ptr); break; \
 	    case 4: __get_kernel_asm("ldw",ptr); break; \
 	    case 8: LDD_KERNEL(ptr); break;		\
-	    default: BUILD_BUG(); break;		\
+	    default: __get_kernel_bad(); break;         \
 	    }                                           \
 	}                                               \
 	else {                                          \
@@ -100,7 +102,7 @@ struct exception_data {
 	    case 2: __get_user_asm("ldh",ptr); break;   \
 	    case 4: __get_user_asm("ldw",ptr); break;   \
 	    case 8: LDD_USER(ptr);  break;		\
-	    default: BUILD_BUG(); break;		\
+	    default: __get_user_bad(); break;           \
 	    }                                           \
 	}                                               \
 							\
@@ -133,7 +135,7 @@ struct exception_data {
 	    case 2: __put_kernel_asm("sth",__x,ptr); break;     \
 	    case 4: __put_kernel_asm("stw",__x,ptr); break;     \
 	    case 8: STD_KERNEL(__x,ptr); break;			\
-	    default: BUILD_BUG(); break;			\
+	    default: __put_kernel_bad(); break;			\
 	    }                                                   \
 	}                                                       \
 	else {                                                  \
@@ -142,7 +144,7 @@ struct exception_data {
 	    case 2: __put_user_asm("sth",__x,ptr); break;       \
 	    case 4: __put_user_asm("stw",__x,ptr); break;       \
 	    case 8: STD_USER(__x,ptr); break;			\
-	    default: BUILD_BUG(); break;			\
+	    default: __put_user_bad(); break;			\
 	    }                                                   \
 	}                                                       \
 								\

@@ -101,7 +101,7 @@ out:
 }
 
 
-static const struct of_device_id pmi_match[] = {
+static struct of_device_id pmi_match[] = {
 	{ .type = "ibm,pmi", .name = "ibm,pmi" },
 	{ .type = "ibm,pmi" },
 	{},

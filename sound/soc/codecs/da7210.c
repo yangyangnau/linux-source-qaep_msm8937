@@ -307,35 +307,35 @@ static const char * const da7210_hpf_cutoff_txt[] = {
 	"Fs/8192*pi", "Fs/4096*pi", "Fs/2048*pi", "Fs/1024*pi"
 };
 
-static SOC_ENUM_SINGLE_DECL(da7210_dac_hpf_cutoff,
-			    DA7210_DAC_HPF, 0, da7210_hpf_cutoff_txt);
+static const struct soc_enum da7210_dac_hpf_cutoff =
+	SOC_ENUM_SINGLE(DA7210_DAC_HPF, 0, 4, da7210_hpf_cutoff_txt);
 
-static SOC_ENUM_SINGLE_DECL(da7210_adc_hpf_cutoff,
-			    DA7210_ADC_HPF, 0, da7210_hpf_cutoff_txt);
+static const struct soc_enum da7210_adc_hpf_cutoff =
+	SOC_ENUM_SINGLE(DA7210_ADC_HPF, 0, 4, da7210_hpf_cutoff_txt);
 
 /* ADC and DAC voice (8kHz) high pass cutoff value */
 static const char * const da7210_vf_cutoff_txt[] = {
 	"2.5Hz", "25Hz", "50Hz", "100Hz", "150Hz", "200Hz", "300Hz", "400Hz"
 };
 
-static SOC_ENUM_SINGLE_DECL(da7210_dac_vf_cutoff,
-			    DA7210_DAC_HPF, 4, da7210_vf_cutoff_txt);
+static const struct soc_enum da7210_dac_vf_cutoff =
+	SOC_ENUM_SINGLE(DA7210_DAC_HPF, 4, 8, da7210_vf_cutoff_txt);
 
-static SOC_ENUM_SINGLE_DECL(da7210_adc_vf_cutoff,
-			    DA7210_ADC_HPF, 4, da7210_vf_cutoff_txt);
+static const struct soc_enum da7210_adc_vf_cutoff =
+	SOC_ENUM_SINGLE(DA7210_ADC_HPF, 4, 8, da7210_vf_cutoff_txt);
 
 static const char *da7210_hp_mode_txt[] = {
 	"Class H", "Class G"
 };
 
-static SOC_ENUM_SINGLE_DECL(da7210_hp_mode_sel,
-			    DA7210_HP_CFG, 0, da7210_hp_mode_txt);
+static const struct soc_enum da7210_hp_mode_sel =
+	SOC_ENUM_SINGLE(DA7210_HP_CFG, 0, 2, da7210_hp_mode_txt);
 
 /* ALC can be enabled only if noise suppression is disabled */
 static int da7210_put_alc_sw(struct snd_kcontrol *kcontrol,
 			     struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
 
 	if (ucontrol->value.integer.value[0]) {
 		/* Check if noise suppression is enabled */
@@ -358,7 +358,7 @@ static int da7210_put_alc_sw(struct snd_kcontrol *kcontrol,
 static int da7210_put_noise_sup_sw(struct snd_kcontrol *kcontrol,
 				   struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
 	u8 val;
 
 	if (ucontrol->value.integer.value[0]) {
@@ -778,17 +778,17 @@ static int da7210_hw_params(struct snd_pcm_substream *substream,
 
 	dai_cfg1 = 0xFC & snd_soc_read(codec, DA7210_DAI_CFG1);
 
-	switch (params_width(params)) {
-	case 16:
+	switch (params_format(params)) {
+	case SNDRV_PCM_FORMAT_S16_LE:
 		dai_cfg1 |= DA7210_DAI_WORD_S16_LE;
 		break;
-	case 20:
+	case SNDRV_PCM_FORMAT_S20_3LE:
 		dai_cfg1 |= DA7210_DAI_WORD_S20_3LE;
 		break;
-	case 24:
+	case SNDRV_PCM_FORMAT_S24_LE:
 		dai_cfg1 |= DA7210_DAI_WORD_S24_LE;
 		break;
-	case 32:
+	case SNDRV_PCM_FORMAT_S32_LE:
 		dai_cfg1 |= DA7210_DAI_WORD_S32_LE;
 		break;
 	default:
@@ -1071,8 +1071,16 @@ static struct snd_soc_dai_driver da7210_dai = {
 static int da7210_probe(struct snd_soc_codec *codec)
 {
 	struct da7210_priv *da7210 = snd_soc_codec_get_drvdata(codec);
+	int ret;
 
 	dev_info(codec->dev, "DA7210 Audio Codec %s\n", DA7210_VERSION);
+
+	codec->control_data = da7210->regmap;
+	ret = snd_soc_codec_set_cache_io(codec, 8, 8, SND_SOC_REGMAP);
+	if (ret < 0) {
+		dev_err(codec->dev, "Failed to set cache I/O: %d\n", ret);
+		return ret;
+	}
 
 	da7210->mclk_rate       = 0;    /* This will be set from set_sysclk() */
 	da7210->master          = 0;    /* This will be set from set_fmt() */
@@ -1180,7 +1188,7 @@ static struct snd_soc_codec_driver soc_codec_dev_da7210 = {
 	.num_dapm_routes	= ARRAY_SIZE(da7210_audio_map),
 };
 
-#if IS_ENABLED(CONFIG_I2C)
+#if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
 
 static struct reg_default da7210_regmap_i2c_patch[] = {
 
@@ -1354,7 +1362,7 @@ static struct spi_driver da7210_spi_driver = {
 static int __init da7210_modinit(void)
 {
 	int ret = 0;
-#if IS_ENABLED(CONFIG_I2C)
+#if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
 	ret = i2c_add_driver(&da7210_i2c_driver);
 #endif
 #if defined(CONFIG_SPI_MASTER)
@@ -1370,7 +1378,7 @@ module_init(da7210_modinit);
 
 static void __exit da7210_exit(void)
 {
-#if IS_ENABLED(CONFIG_I2C)
+#if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
 	i2c_del_driver(&da7210_i2c_driver);
 #endif
 #if defined(CONFIG_SPI_MASTER)

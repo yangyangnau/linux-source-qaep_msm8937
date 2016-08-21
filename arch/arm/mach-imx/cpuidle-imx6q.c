@@ -13,7 +13,6 @@
 
 #include "common.h"
 #include "cpuidle.h"
-#include "hardware.h"
 
 static atomic_t master = ATOMIC_INIT(0);
 static DEFINE_SPINLOCK(master_lock);
@@ -66,8 +65,11 @@ static struct cpuidle_driver imx6q_cpuidle_driver = {
 
 int __init imx6q_cpuidle_init(void)
 {
-	/* Set INT_MEM_CLK_LPM bit to get a reliable WAIT mode support */
-	imx6q_set_int_mem_clk_lpm(true);
+	/* Need to enable SCU standby for entering WAIT modes */
+	imx_scu_standby_enable();
+
+	/* Set chicken bit to get a reliable WAIT mode support */
+	imx6q_set_chicken_bit();
 
 	return cpuidle_register(&imx6q_cpuidle_driver, NULL);
 }

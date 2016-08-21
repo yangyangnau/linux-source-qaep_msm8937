@@ -52,7 +52,7 @@ void nf_queue_entry_release_refs(struct nf_queue_entry *entry)
 		dev_put(entry->indev);
 	if (entry->outdev)
 		dev_put(entry->outdev);
-#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
+#ifdef CONFIG_BRIDGE_NETFILTER
 	if (entry->skb->nf_bridge) {
 		struct nf_bridge_info *nf_bridge = entry->skb->nf_bridge;
 
@@ -77,7 +77,7 @@ bool nf_queue_entry_get_refs(struct nf_queue_entry *entry)
 		dev_hold(entry->indev);
 	if (entry->outdev)
 		dev_hold(entry->outdev);
-#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
+#ifdef CONFIG_BRIDGE_NETFILTER
 	if (entry->skb->nf_bridge) {
 		struct nf_bridge_info *nf_bridge = entry->skb->nf_bridge;
 		struct net_device *physdev;
@@ -94,23 +94,6 @@ bool nf_queue_entry_get_refs(struct nf_queue_entry *entry)
 	return true;
 }
 EXPORT_SYMBOL_GPL(nf_queue_entry_get_refs);
-
-void nf_queue_nf_hook_drop(struct nf_hook_ops *ops)
-{
-	const struct nf_queue_handler *qh;
-	struct net *net;
-
-	rtnl_lock();
-	rcu_read_lock();
-	qh = rcu_dereference(queue_handler);
-	if (qh) {
-		for_each_net(net) {
-			qh->nf_hook_drop(net, ops);
-		}
-	}
-	rcu_read_unlock();
-	rtnl_unlock();
-}
 
 /*
  * Any packet that leaves via this function must come back

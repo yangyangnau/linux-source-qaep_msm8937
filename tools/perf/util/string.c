@@ -9,48 +9,78 @@
  */
 s64 perf_atoll(const char *str)
 {
-	s64 length;
-	char *p;
-	char c;
+	unsigned int i;
+	s64 length = -1, unit = 1;
 
 	if (!isdigit(str[0]))
 		goto out_err;
 
-	length = strtoll(str, &p, 10);
-	switch (c = *p++) {
-		case 'b': case 'B':
-			if (*p)
+	for (i = 1; i < strlen(str); i++) {
+		switch (str[i]) {
+		case 'B':
+		case 'b':
+			break;
+		case 'K':
+			if (str[i + 1] != 'B')
 				goto out_err;
-		case '\0':
-			return length;
+			else
+				goto kilo;
+		case 'k':
+			if (str[i + 1] != 'b')
+				goto out_err;
+kilo:
+			unit = K;
+			break;
+		case 'M':
+			if (str[i + 1] != 'B')
+				goto out_err;
+			else
+				goto mega;
+		case 'm':
+			if (str[i + 1] != 'b')
+				goto out_err;
+mega:
+			unit = K * K;
+			break;
+		case 'G':
+			if (str[i + 1] != 'B')
+				goto out_err;
+			else
+				goto giga;
+		case 'g':
+			if (str[i + 1] != 'b')
+				goto out_err;
+giga:
+			unit = K * K * K;
+			break;
+		case 'T':
+			if (str[i + 1] != 'B')
+				goto out_err;
+			else
+				goto tera;
+		case 't':
+			if (str[i + 1] != 'b')
+				goto out_err;
+tera:
+			unit = K * K * K * K;
+			break;
+		case '\0':	/* only specified figures */
+			unit = 1;
+			break;
 		default:
-			goto out_err;
-		/* two-letter suffices */
-		case 'k': case 'K':
-			length <<= 10;
+			if (!isdigit(str[i]))
+				goto out_err;
 			break;
-		case 'm': case 'M':
-			length <<= 20;
-			break;
-		case 'g': case 'G':
-			length <<= 30;
-			break;
-		case 't': case 'T':
-			length <<= 40;
-			break;
+		}
 	}
-	/* we want the cases to match */
-	if (islower(c)) {
-		if (strcmp(p, "b") != 0)
-			goto out_err;
-	} else {
-		if (strcmp(p, "B") != 0)
-			goto out_err;
-	}
-	return length;
+
+	length = atoll(str) * unit;
+	goto out;
 
 out_err:
-	return -1;
+	length = -1;
+out:
+	return length;
 }
 
 /*
@@ -98,7 +128,7 @@ void argv_free(char **argv)
 {
 	char **p;
 	for (p = argv; *p; p++)
-		zfree(p);
+		free(*p);
 
 	free(argv);
 }

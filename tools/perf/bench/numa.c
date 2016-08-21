@@ -429,14 +429,14 @@ static int parse_cpu_list(const char *arg)
 	return 0;
 }
 
-static int parse_setup_cpu_list(void)
+static void parse_setup_cpu_list(void)
 {
 	struct thread_data *td;
 	char *str0, *str;
 	int t;
 
 	if (!g->p.cpu_list_str)
-		return 0;
+		return;
 
 	dprintf("g->p.nr_tasks: %d\n", g->p.nr_tasks);
 
@@ -500,12 +500,8 @@ static int parse_setup_cpu_list(void)
 
 		dprintf("CPUs: %d_%d-%d#%dx%d\n", bind_cpu_0, bind_len, bind_cpu_1, step, mul);
 
-		if (bind_cpu_0 >= g->p.nr_cpus || bind_cpu_1 >= g->p.nr_cpus) {
-			printf("\nTest not applicable, system has only %d CPUs.\n", g->p.nr_cpus);
-			return -1;
-		}
-
-		BUG_ON(bind_cpu_0 < 0 || bind_cpu_1 < 0);
+		BUG_ON(bind_cpu_0 < 0 || bind_cpu_0 >= g->p.nr_cpus);
+		BUG_ON(bind_cpu_1 < 0 || bind_cpu_1 >= g->p.nr_cpus);
 		BUG_ON(bind_cpu_0 > bind_cpu_1);
 
 		for (bind_cpu = bind_cpu_0; bind_cpu <= bind_cpu_1; bind_cpu += step) {
@@ -545,7 +541,6 @@ out:
 		printf("# NOTE: %d tasks bound, %d tasks unbound\n", t, g->p.nr_tasks - t);
 
 	free(str0);
-	return 0;
 }
 
 static int parse_cpus_opt(const struct option *opt __maybe_unused,
@@ -566,14 +561,14 @@ static int parse_node_list(const char *arg)
 	return 0;
 }
 
-static int parse_setup_node_list(void)
+static void parse_setup_node_list(void)
 {
 	struct thread_data *td;
 	char *str0, *str;
 	int t;
 
 	if (!g->p.node_list_str)
-		return 0;
+		return;
 
 	dprintf("g->p.nr_tasks: %d\n", g->p.nr_tasks);
 
@@ -624,12 +619,8 @@ static int parse_setup_node_list(void)
 
 		dprintf("NODEs: %d-%d #%d\n", bind_node_0, bind_node_1, step);
 
-		if (bind_node_0 >= g->p.nr_nodes || bind_node_1 >= g->p.nr_nodes) {
-			printf("\nTest not applicable, system has only %d nodes.\n", g->p.nr_nodes);
-			return -1;
-		}
-
-		BUG_ON(bind_node_0 < 0 || bind_node_1 < 0);
+		BUG_ON(bind_node_0 < 0 || bind_node_0 >= g->p.nr_nodes);
+		BUG_ON(bind_node_1 < 0 || bind_node_1 >= g->p.nr_nodes);
 		BUG_ON(bind_node_0 > bind_node_1);
 
 		for (bind_node = bind_node_0; bind_node <= bind_node_1; bind_node += step) {
@@ -660,7 +651,6 @@ out:
 		printf("# NOTE: %d tasks mem-bound, %d tasks unbound\n", t, g->p.nr_tasks - t);
 
 	free(str0);
-	return 0;
 }
 
 static int parse_nodes_opt(const struct option *opt __maybe_unused,
@@ -1120,7 +1110,7 @@ static void *worker_thread(void *__tdata)
 		/* Check whether our max runtime timed out: */
 		if (g->p.nr_secs) {
 			timersub(&stop, &start0, &diff);
-			if ((u32)diff.tv_sec >= g->p.nr_secs) {
+			if (diff.tv_sec >= g->p.nr_secs) {
 				g->stop_work = true;
 				break;
 			}
@@ -1167,7 +1157,7 @@ static void *worker_thread(void *__tdata)
 			runtime_ns_max += diff.tv_usec * 1000;
 
 			if (details >= 0) {
-				printf(" #%2d / %2d: %14.2lf nsecs/op [val: %016"PRIx64"]\n",
+				printf(" #%2d / %2d: %14.2lf nsecs/op [val: %016lx]\n",
 					process_nr, thread_nr, runtime_ns_max / bytes_done, val);
 			}
 			fflush(stdout);
@@ -1366,8 +1356,8 @@ static int init(void)
 	init_thread_data();
 
 	tprintf("#\n");
-	if (parse_setup_cpu_list() || parse_setup_node_list())
-		return -1;
+	parse_setup_cpu_list();
+	parse_setup_node_list();
 	tprintf("#\n");
 
 	print_summary();
@@ -1593,11 +1583,6 @@ static void init_params(struct params *p, const char *name, int argc, const char
 	p->data_rand_walk		= true;
 	p->nr_loops			= -1;
 	p->init_random			= true;
-	p->mb_global_str		= "1";
-	p->nr_proc			= 1;
-	p->nr_threads			= 1;
-	p->nr_secs			= 5;
-	p->run_all			= argc == 1;
 }
 
 static int run_bench_numa(const char *name, const char **argv)
@@ -1615,6 +1600,7 @@ static int run_bench_numa(const char *name, const char **argv)
 	return 0;
 
 err:
+	usage_with_options(numa_usage, options);
 	return -1;
 }
 
@@ -1715,7 +1701,8 @@ static int bench_all(void)
 	BUG_ON(ret < 0);
 
 	for (i = 0; i < nr; i++) {
-		run_bench_numa(tests[i][0], tests[i] + 1);
+		if (run_bench_numa(tests[i][0], tests[i] + 1))
+			return -1;
 	}
 
 	printf("\n");

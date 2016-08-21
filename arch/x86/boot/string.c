@@ -12,16 +12,7 @@
  * Very basic string functions
  */
 
-#include <linux/types.h>
-#include "ctype.h"
-
-int memcmp(const void *s1, const void *s2, size_t len)
-{
-	u8 diff;
-	asm("repe; cmpsb; setnz %0"
-	    : "=qm" (diff), "+D" (s1), "+S" (s2), "+c" (len));
-	return diff;
-}
+#include "boot.h"
 
 int strcmp(const char *str1, const char *str2)
 {

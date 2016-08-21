@@ -36,10 +36,10 @@ static void omap_mcbsp_write(struct omap_mcbsp *mcbsp, u16 reg, u32 val)
 
 	if (mcbsp->pdata->reg_size == 2) {
 		((u16 *)mcbsp->reg_cache)[reg] = (u16)val;
-		writew_relaxed((u16)val, addr);
+		__raw_writew((u16)val, addr);
 	} else {
 		((u32 *)mcbsp->reg_cache)[reg] = val;
-		writel_relaxed(val, addr);
+		__raw_writel(val, addr);
 	}
 }
 
@@ -48,22 +48,22 @@ static int omap_mcbsp_read(struct omap_mcbsp *mcbsp, u16 reg, bool from_cache)
 	void __iomem *addr = mcbsp->io_base + reg * mcbsp->pdata->reg_step;
 
 	if (mcbsp->pdata->reg_size == 2) {
-		return !from_cache ? readw_relaxed(addr) :
+		return !from_cache ? __raw_readw(addr) :
 				     ((u16 *)mcbsp->reg_cache)[reg];
 	} else {
-		return !from_cache ? readl_relaxed(addr) :
+		return !from_cache ? __raw_readl(addr) :
 				     ((u32 *)mcbsp->reg_cache)[reg];
 	}
 }
 
 static void omap_mcbsp_st_write(struct omap_mcbsp *mcbsp, u16 reg, u32 val)
 {
-	writel_relaxed(val, mcbsp->st_data->io_base_st + reg);
+	__raw_writel(val, mcbsp->st_data->io_base_st + reg);
 }
 
 static int omap_mcbsp_st_read(struct omap_mcbsp *mcbsp, u16 reg)
 {
-	return readl_relaxed(mcbsp->st_data->io_base_st + reg);
+	return __raw_readl(mcbsp->st_data->io_base_st + reg);
 }
 
 #define MCBSP_READ(mcbsp, reg) \
@@ -781,7 +781,7 @@ static ssize_t prop##_store(struct device *dev,				\
 	unsigned long val;						\
 	int status;							\
 									\
-	status = kstrtoul(buf, 0, &val);				\
+	status = strict_strtoul(buf, 0, &val);				\
 	if (status)							\
 		return status;						\
 									\
@@ -1012,32 +1012,27 @@ int omap_mcbsp_init(struct platform_device *pdev)
 		}
 	}
 
-	if (!pdev->dev.of_node) {
-		res = platform_get_resource_byname(pdev, IORESOURCE_DMA, "tx");
-		if (!res) {
-			dev_err(&pdev->dev, "invalid tx DMA channel\n");
-			return -ENODEV;
-		}
-		mcbsp->dma_req[0] = res->start;
-		mcbsp->dma_data[0].filter_data = &mcbsp->dma_req[0];
-
-		res = platform_get_resource_byname(pdev, IORESOURCE_DMA, "rx");
-		if (!res) {
-			dev_err(&pdev->dev, "invalid rx DMA channel\n");
-			return -ENODEV;
-		}
-		mcbsp->dma_req[1] = res->start;
-		mcbsp->dma_data[1].filter_data = &mcbsp->dma_req[1];
-	} else {
-		mcbsp->dma_data[0].filter_data = "tx";
-		mcbsp->dma_data[1].filter_data = "rx";
+	res = platform_get_resource_byname(pdev, IORESOURCE_DMA, "rx");
+	if (!res) {
+		dev_err(&pdev->dev, "invalid rx DMA channel\n");
+		return -ENODEV;
 	}
-
-	mcbsp->dma_data[0].addr = omap_mcbsp_dma_reg_params(mcbsp, 0);
-	mcbsp->dma_data[0].maxburst = 4;
-
+	/* RX DMA request number, and port address configuration */
+	mcbsp->dma_req[1] = res->start;
+	mcbsp->dma_data[1].filter_data = &mcbsp->dma_req[1];
 	mcbsp->dma_data[1].addr = omap_mcbsp_dma_reg_params(mcbsp, 1);
 	mcbsp->dma_data[1].maxburst = 4;
+
+	res = platform_get_resource_byname(pdev, IORESOURCE_DMA, "tx");
+	if (!res) {
+		dev_err(&pdev->dev, "invalid tx DMA channel\n");
+		return -ENODEV;
+	}
+	/* TX DMA request number, and port address configuration */
+	mcbsp->dma_req[0] = res->start;
+	mcbsp->dma_data[0].filter_data = &mcbsp->dma_req[0];
+	mcbsp->dma_data[0].addr = omap_mcbsp_dma_reg_params(mcbsp, 0);
+	mcbsp->dma_data[0].maxburst = 4;
 
 	mcbsp->fclk = clk_get(&pdev->dev, "fck");
 	if (IS_ERR(mcbsp->fclk)) {

@@ -11,6 +11,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
+#include <linux/init.h>
 #include <linux/list.h>
 #include <linux/gpio.h>
 #include <linux/io.h>
@@ -18,7 +19,7 @@
 #include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
 #include <linux/prefetch.h>
-#include <linux/usb/usb_phy_generic.h>
+#include <linux/usb/nop-usb-xceiv.h>
 
 #include <asm/cacheflush.h>
 
@@ -29,7 +30,6 @@
 struct bfin_glue {
 	struct device		*dev;
 	struct platform_device	*musb;
-	struct platform_device	*phy;
 };
 #define glue_to_musb(g)		platform_get_drvdata(g->musb)
 
@@ -77,7 +77,7 @@ void musb_write_fifo(struct musb_hw_ep *hw_ep, u16 len, const u8 *src)
 		bfin_write16(USB_DMA_REG(epnum, USB_DMAx_CTRL), dma_reg);
 		SSYNC();
 
-		/* Wait for complete */
+		/* Wait for compelete */
 		while (!(bfin_read_USB_DMA_INTERRUPT() & (1 << epnum)))
 			cpu_relax();
 
@@ -131,7 +131,7 @@ void musb_read_fifo(struct musb_hw_ep *hw_ep, u16 len, u8 *dst)
 		bfin_write16(USB_DMA_REG(epnum, USB_DMAx_CTRL), dma_reg);
 		SSYNC();
 
-		/* Wait for complete */
+		/* Wait for compelete */
 		while (!(bfin_read_USB_DMA_INTERRUPT() & (1 << epnum)))
 			cpu_relax();
 
@@ -402,6 +402,7 @@ static int bfin_musb_init(struct musb *musb)
 	}
 	gpio_direction_output(musb->config->gpio_vrsel, 0);
 
+	usb_nop_xceiv_register();
 	musb->xceiv = usb_get_phy(USB_PHY_TYPE_USB2);
 	if (IS_ERR_OR_NULL(musb->xceiv)) {
 		gpio_free(musb->config->gpio_vrsel);
@@ -424,8 +425,9 @@ static int bfin_musb_init(struct musb *musb)
 static int bfin_musb_exit(struct musb *musb)
 {
 	gpio_free(musb->config->gpio_vrsel);
-	usb_put_phy(musb->xceiv);
 
+	usb_put_phy(musb->xceiv);
+	usb_nop_xceiv_unregister();
 	return 0;
 }
 
@@ -448,14 +450,13 @@ static u64 bfin_dmamask = DMA_BIT_MASK(32);
 
 static int bfin_probe(struct platform_device *pdev)
 {
-	struct resource musb_resources[2];
-	struct musb_hdrc_platform_data	*pdata = dev_get_platdata(&pdev->dev);
+	struct musb_hdrc_platform_data	*pdata = pdev->dev.platform_data;
 	struct platform_device		*musb;
 	struct bfin_glue		*glue;
 
 	int				ret = -ENOMEM;
 
-	glue = devm_kzalloc(&pdev->dev, sizeof(*glue), GFP_KERNEL);
+	glue = kzalloc(sizeof(*glue), GFP_KERNEL);
 	if (!glue) {
 		dev_err(&pdev->dev, "failed to allocate glue context\n");
 		goto err0;
@@ -464,7 +465,7 @@ static int bfin_probe(struct platform_device *pdev)
 	musb = platform_device_alloc("musb-hdrc", PLATFORM_DEVID_AUTO);
 	if (!musb) {
 		dev_err(&pdev->dev, "failed to allocate musb device\n");
-		goto err0;
+		goto err1;
 	}
 
 	musb->dev.parent		= &pdev->dev;
@@ -476,50 +477,34 @@ static int bfin_probe(struct platform_device *pdev)
 
 	pdata->platform_ops		= &bfin_ops;
 
-	glue->phy = usb_phy_generic_register();
-	if (IS_ERR(glue->phy))
-		goto err1;
 	platform_set_drvdata(pdev, glue);
 
-	memset(musb_resources, 0x00, sizeof(*musb_resources) *
-			ARRAY_SIZE(musb_resources));
-
-	musb_resources[0].name = pdev->resource[0].name;
-	musb_resources[0].start = pdev->resource[0].start;
-	musb_resources[0].end = pdev->resource[0].end;
-	musb_resources[0].flags = pdev->resource[0].flags;
-
-	musb_resources[1].name = pdev->resource[1].name;
-	musb_resources[1].start = pdev->resource[1].start;
-	musb_resources[1].end = pdev->resource[1].end;
-	musb_resources[1].flags = pdev->resource[1].flags;
-
-	ret = platform_device_add_resources(musb, musb_resources,
-			ARRAY_SIZE(musb_resources));
+	ret = platform_device_add_resources(musb, pdev->resource,
+			pdev->num_resources);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to add resources\n");
-		goto err2;
+		goto err3;
 	}
 
 	ret = platform_device_add_data(musb, pdata, sizeof(*pdata));
 	if (ret) {
 		dev_err(&pdev->dev, "failed to add platform_data\n");
-		goto err2;
+		goto err3;
 	}
 
 	ret = platform_device_add(musb);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to register musb device\n");
-		goto err2;
+		goto err3;
 	}
 
 	return 0;
 
-err2:
-	usb_phy_generic_unregister(glue->phy);
+err3:
+	platform_device_put(musb);
 
 err1:
-	platform_device_put(musb);
+	kfree(glue);
 
 err0:
 	return ret;
@@ -530,7 +515,7 @@ static int bfin_remove(struct platform_device *pdev)
 	struct bfin_glue		*glue = platform_get_drvdata(pdev);
 
 	platform_device_unregister(glue->musb);
-	usb_phy_generic_unregister(glue->phy);
+	kfree(glue);
 
 	return 0;
 }
@@ -562,16 +547,23 @@ static int bfin_resume(struct device *dev)
 
 	return 0;
 }
-#endif
 
-static SIMPLE_DEV_PM_OPS(bfin_pm_ops, bfin_suspend, bfin_resume);
+static struct dev_pm_ops bfin_pm_ops = {
+	.suspend	= bfin_suspend,
+	.resume		= bfin_resume,
+};
+
+#define DEV_PM_OPS	&bfin_pm_ops
+#else
+#define DEV_PM_OPS	NULL
+#endif
 
 static struct platform_driver bfin_driver = {
 	.probe		= bfin_probe,
 	.remove		= __exit_p(bfin_remove),
 	.driver		= {
 		.name	= "musb-blackfin",
-		.pm	= &bfin_pm_ops,
+		.pm	= DEV_PM_OPS,
 	},
 };
 

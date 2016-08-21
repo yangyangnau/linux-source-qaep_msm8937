@@ -148,10 +148,7 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
 	and	r0,r0,r4		/* _PAGE_RW & _PAGE_DIRTY ->r0 bit 30*/
 	andc	r0,r30,r0		/* r0 = pte & ~r0 */
 	rlwimi	r3,r0,32-1,31,31	/* Insert result into PP lsb */
-	/*
-	 * Always add "C" bit for perf. Memory coherence is always enabled
-	 */
-	ori	r3,r3,HPTE_R_C | HPTE_R_M
+	ori	r3,r3,HPTE_R_C		/* Always add "C" bit for perf. */
 
 	/* We eventually do the icache sync here (maybe inline that
 	 * code rather than call a C function...) 
@@ -159,7 +156,7 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
 BEGIN_FTR_SECTION
 	mr	r4,r30
 	mr	r5,r7
-	bl	hash_page_do_lazy_icache
+	bl	.hash_page_do_lazy_icache
 END_FTR_SECTION(CPU_FTR_NOEXECUTE|CPU_FTR_COHERENT_ICACHE, CPU_FTR_NOEXECUTE)
 
 	/* At this point, r3 contains new PP bits, save them in
@@ -201,8 +198,7 @@ htab_insert_pte:
 	li	r8,MMU_PAGE_4K		/* page size */
 	li	r9,MMU_PAGE_4K		/* actual page size */
 	ld	r10,STK_PARAM(R9)(r1)	/* segment size */
-.globl htab_call_hpte_insert1
-htab_call_hpte_insert1:
+_GLOBAL(htab_call_hpte_insert1)
 	bl	.			/* Patched by htab_finish_init() */
 	cmpdi	0,r3,0
 	bge	htab_pte_insert_ok	/* Insertion successful */
@@ -226,8 +222,7 @@ htab_call_hpte_insert1:
 	li	r8,MMU_PAGE_4K		/* page size */
 	li	r9,MMU_PAGE_4K		/* actual page size */
 	ld	r10,STK_PARAM(R9)(r1)	/* segment size */
-.globl htab_call_hpte_insert2
-htab_call_hpte_insert2:
+_GLOBAL(htab_call_hpte_insert2)
 	bl	.			/* Patched by htab_finish_init() */
 	cmpdi	0,r3,0
 	bge+	htab_pte_insert_ok	/* Insertion successful */
@@ -244,8 +239,7 @@ htab_call_hpte_insert2:
 2:	and	r0,r5,r27
 	rldicr	r3,r0,3,63-3	/* r0 = (hash & mask) << 3 */	
 	/* Call ppc_md.hpte_remove */
-.globl htab_call_hpte_remove
-htab_call_hpte_remove:
+_GLOBAL(htab_call_hpte_remove)
 	bl	.			/* Patched by htab_finish_init() */
 
 	/* Try all again */
@@ -295,12 +289,10 @@ htab_modify_pte:
 
 	/* Call ppc_md.hpte_updatepp */
 	mr	r5,r29			/* vpn */
-	li	r6,MMU_PAGE_4K		/* base page size */
-	li	r7,MMU_PAGE_4K		/* actual page size */
-	ld	r8,STK_PARAM(R9)(r1)	/* segment size */
-	ld	r9,STK_PARAM(R8)(r1)	/* get "local" param */
-.globl htab_call_hpte_updatepp
-htab_call_hpte_updatepp:
+	li	r6,MMU_PAGE_4K		/* page size */
+	ld	r7,STK_PARAM(R9)(r1)	/* segment size */
+	ld	r8,STK_PARAM(R8)(r1)	/* get "local" param */
+_GLOBAL(htab_call_hpte_updatepp)
 	bl	.			/* Patched by htab_finish_init() */
 
 	/* if we failed because typically the HPTE wasn't really here
@@ -464,10 +456,7 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
 	and	r0,r0,r4		/* _PAGE_RW & _PAGE_DIRTY ->r0 bit 30*/
 	andc	r0,r3,r0		/* r0 = pte & ~r0 */
 	rlwimi	r3,r0,32-1,31,31	/* Insert result into PP lsb */
-	/*
-	 * Always add "C" bit for perf. Memory coherence is always enabled
-	 */
-	ori	r3,r3,HPTE_R_C | HPTE_R_M
+	ori	r3,r3,HPTE_R_C		/* Always add "C" bit for perf. */
 
 	/* We eventually do the icache sync here (maybe inline that
 	 * code rather than call a C function...)
@@ -475,7 +464,7 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
 BEGIN_FTR_SECTION
 	mr	r4,r30
 	mr	r5,r7
-	bl	hash_page_do_lazy_icache
+	bl	.hash_page_do_lazy_icache
 END_FTR_SECTION(CPU_FTR_NOEXECUTE|CPU_FTR_COHERENT_ICACHE, CPU_FTR_NOEXECUTE)
 
 	/* At this point, r3 contains new PP bits, save them in
@@ -530,8 +519,7 @@ htab_special_pfn:
 	li	r8,MMU_PAGE_4K		/* page size */
 	li	r9,MMU_PAGE_4K		/* actual page size */
 	ld	r10,STK_PARAM(R9)(r1)	/* segment size */
-.globl htab_call_hpte_insert1
-htab_call_hpte_insert1:
+_GLOBAL(htab_call_hpte_insert1)
 	bl	.			/* patched by htab_finish_init() */
 	cmpdi	0,r3,0
 	bge	htab_pte_insert_ok	/* Insertion successful */
@@ -559,8 +547,7 @@ htab_call_hpte_insert1:
 	li	r8,MMU_PAGE_4K		/* page size */
 	li	r9,MMU_PAGE_4K		/* actual page size */
 	ld	r10,STK_PARAM(R9)(r1)	/* segment size */
-.globl htab_call_hpte_insert2
-htab_call_hpte_insert2:
+_GLOBAL(htab_call_hpte_insert2)
 	bl	.			/* patched by htab_finish_init() */
 	cmpdi	0,r3,0
 	bge+	htab_pte_insert_ok	/* Insertion successful */
@@ -577,8 +564,7 @@ htab_call_hpte_insert2:
 2:	and	r0,r5,r27
 	rldicr	r3,r0,3,63-3		/* r0 = (hash & mask) << 3 */
 	/* Call ppc_md.hpte_remove */
-.globl htab_call_hpte_remove
-htab_call_hpte_remove:
+_GLOBAL(htab_call_hpte_remove)
 	bl	.			/* patched by htab_finish_init() */
 
 	/* Try all again */
@@ -595,7 +581,7 @@ htab_inval_old_hpte:
 	li	r6,MMU_PAGE_64K		/* psize */
 	ld	r7,STK_PARAM(R9)(r1)	/* ssize */
 	ld	r8,STK_PARAM(R8)(r1)	/* local */
-	bl	flush_hash_page
+	bl	.flush_hash_page
 	/* Clear out _PAGE_HPTE_SUB bits in the new linux PTE */
 	lis	r0,_PAGE_HPTE_SUB@h
 	ori	r0,r0,_PAGE_HPTE_SUB@l
@@ -663,12 +649,10 @@ htab_modify_pte:
 
 	/* Call ppc_md.hpte_updatepp */
 	mr	r5,r29			/* vpn */
-	li	r6,MMU_PAGE_4K		/* base page size */
-	li	r7,MMU_PAGE_4K		/* actual page size */
-	ld	r8,STK_PARAM(R9)(r1)	/* segment size */
-	ld	r9,STK_PARAM(R8)(r1)	/* get "local" param */
-.globl htab_call_hpte_updatepp
-htab_call_hpte_updatepp:
+	li	r6,MMU_PAGE_4K		/* page size */
+	ld	r7,STK_PARAM(R9)(r1)	/* segment size */
+	ld	r8,STK_PARAM(R8)(r1)	/* get "local" param */
+_GLOBAL(htab_call_hpte_updatepp)
 	bl	.			/* patched by htab_finish_init() */
 
 	/* if we failed because typically the HPTE wasn't really here
@@ -809,10 +793,7 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
 	and	r0,r0,r4		/* _PAGE_RW & _PAGE_DIRTY ->r0 bit 30*/
 	andc	r0,r30,r0		/* r0 = pte & ~r0 */
 	rlwimi	r3,r0,32-1,31,31	/* Insert result into PP lsb */
-	/*
-	 * Always add "C" bit for perf. Memory coherence is always enabled
-	 */
-	ori	r3,r3,HPTE_R_C | HPTE_R_M
+	ori	r3,r3,HPTE_R_C		/* Always add "C" bit for perf. */
 
 	/* We eventually do the icache sync here (maybe inline that
 	 * code rather than call a C function...)
@@ -820,7 +801,7 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
 BEGIN_FTR_SECTION
 	mr	r4,r30
 	mr	r5,r7
-	bl	hash_page_do_lazy_icache
+	bl	.hash_page_do_lazy_icache
 END_FTR_SECTION(CPU_FTR_NOEXECUTE|CPU_FTR_COHERENT_ICACHE, CPU_FTR_NOEXECUTE)
 
 	/* At this point, r3 contains new PP bits, save them in
@@ -865,8 +846,7 @@ ht64_insert_pte:
 	li	r8,MMU_PAGE_64K
 	li	r9,MMU_PAGE_64K		/* actual page size */
 	ld	r10,STK_PARAM(R9)(r1)	/* segment size */
-.globl ht64_call_hpte_insert1
-ht64_call_hpte_insert1:
+_GLOBAL(ht64_call_hpte_insert1)
 	bl	.			/* patched by htab_finish_init() */
 	cmpdi	0,r3,0
 	bge	ht64_pte_insert_ok	/* Insertion successful */
@@ -890,8 +870,7 @@ ht64_call_hpte_insert1:
 	li	r8,MMU_PAGE_64K
 	li	r9,MMU_PAGE_64K		/* actual page size */
 	ld	r10,STK_PARAM(R9)(r1)	/* segment size */
-.globl ht64_call_hpte_insert2
-ht64_call_hpte_insert2:
+_GLOBAL(ht64_call_hpte_insert2)
 	bl	.			/* patched by htab_finish_init() */
 	cmpdi	0,r3,0
 	bge+	ht64_pte_insert_ok	/* Insertion successful */
@@ -908,8 +887,7 @@ ht64_call_hpte_insert2:
 2:	and	r0,r5,r27
 	rldicr	r3,r0,3,63-3	/* r0 = (hash & mask) << 3 */
 	/* Call ppc_md.hpte_remove */
-.globl ht64_call_hpte_remove
-ht64_call_hpte_remove:
+_GLOBAL(ht64_call_hpte_remove)
 	bl	.			/* patched by htab_finish_init() */
 
 	/* Try all again */
@@ -959,12 +937,10 @@ ht64_modify_pte:
 
 	/* Call ppc_md.hpte_updatepp */
 	mr	r5,r29			/* vpn */
-	li	r6,MMU_PAGE_64K		/* base page size */
-	li	r7,MMU_PAGE_64K		/* actual page size */
-	ld	r8,STK_PARAM(R9)(r1)	/* segment size */
-	ld	r9,STK_PARAM(R8)(r1)	/* get "local" param */
-.globl ht64_call_hpte_updatepp
-ht64_call_hpte_updatepp:
+	li	r6,MMU_PAGE_64K
+	ld	r7,STK_PARAM(R9)(r1)	/* segment size */
+	ld	r8,STK_PARAM(R8)(r1)	/* get "local" param */
+_GLOBAL(ht64_call_hpte_updatepp)
 	bl	.			/* patched by htab_finish_init() */
 
 	/* if we failed because typically the HPTE wasn't really here

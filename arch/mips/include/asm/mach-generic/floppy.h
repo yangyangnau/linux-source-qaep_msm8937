@@ -9,6 +9,7 @@
 #define __ASM_MACH_GENERIC_FLOPPY_H
 
 #include <linux/delay.h>
+#include <linux/init.h>
 #include <linux/ioport.h>
 #include <linux/sched.h>
 #include <linux/linkage.h>

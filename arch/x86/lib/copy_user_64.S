@@ -186,7 +186,7 @@ ENTRY(copy_user_generic_unrolled)
 30:	shll $6,%ecx
 	addl %ecx,%edx
 	jmp 60f
-40:	leal (%rdx,%rcx,8),%edx
+40:	lea (%rdx,%rcx,8),%rdx
 	jmp 60f
 50:	movl %ecx,%edx
 60:	jmp copy_user_handle_tail /* ecx is zerorest also */
@@ -236,6 +236,8 @@ ENDPROC(copy_user_generic_unrolled)
 ENTRY(copy_user_generic_string)
 	CFI_STARTPROC
 	ASM_STAC
+	andl %edx,%edx
+	jz 4f
 	cmpl $8,%edx
 	jb 2f		/* less than 8 bytes, go to byte copy loop */
 	ALIGN_DESTINATION
@@ -247,12 +249,12 @@ ENTRY(copy_user_generic_string)
 2:	movl %edx,%ecx
 3:	rep
 	movsb
-	xorl %eax,%eax
+4:	xorl %eax,%eax
 	ASM_CLAC
 	ret
 
 	.section .fixup,"ax"
-11:	leal (%rdx,%rcx,8),%ecx
+11:	lea (%rdx,%rcx,8),%rcx
 12:	movl %ecx,%edx		/* ecx is zerorest also */
 	jmp copy_user_handle_tail
 	.previous
@@ -277,10 +279,12 @@ ENDPROC(copy_user_generic_string)
 ENTRY(copy_user_enhanced_fast_string)
 	CFI_STARTPROC
 	ASM_STAC
+	andl %edx,%edx
+	jz 2f
 	movl %edx,%ecx
 1:	rep
 	movsb
-	xorl %eax,%eax
+2:	xorl %eax,%eax
 	ASM_CLAC
 	ret
 

@@ -18,7 +18,6 @@
 #include <linux/sched.h>
 #include <asm/cpu.h>
 #include <asm/cpu-info.h>
-#include <asm/cpu-type.h>
 #include <asm/idle.h>
 #include <asm/mipsregs.h>
 
@@ -64,10 +63,13 @@ void r4k_wait_irqoff(void)
 	if (!need_resched())
 		__asm__(
 		"	.set	push		\n"
-		"	.set	arch=r4000	\n"
+		"	.set	mips3		\n"
 		"	wait			\n"
 		"	.set	pop		\n");
 	local_irq_enable();
+	__asm__(
+	"	.globl __pastwait	\n"
+	"__pastwait:			\n");
 }
 
 /*
@@ -79,7 +81,7 @@ static void rm7k_wait_irqoff(void)
 	if (!need_resched())
 		__asm__(
 		"	.set	push					\n"
-		"	.set	arch=r4000				\n"
+		"	.set	mips3					\n"
 		"	.set	noat					\n"
 		"	mfc0	$1, $12					\n"
 		"	sync						\n"
@@ -100,7 +102,7 @@ static void au1k_wait(void)
 	unsigned long c0status = read_c0_status() | 1;	/* irqs on */
 
 	__asm__(
-	"	.set	arch=r4000			\n"
+	"	.set	mips3			\n"
 	"	cache	0x14, 0(%0)		\n"
 	"	cache	0x14, 32(%0)		\n"
 	"	sync				\n"
@@ -134,7 +136,7 @@ void __init check_wait(void)
 		return;
 	}
 
-	switch (current_cpu_type()) {
+	switch (c->cputype) {
 	case CPU_R3081:
 	case CPU_R3081E:
 		cpu_wait = r3081_wait;
@@ -164,7 +166,6 @@ void __init check_wait(void)
 	case CPU_CAVIUM_OCTEON:
 	case CPU_CAVIUM_OCTEON_PLUS:
 	case CPU_CAVIUM_OCTEON2:
-	case CPU_CAVIUM_OCTEON3:
 	case CPU_JZRISC:
 	case CPU_LOONGSON1:
 	case CPU_XLR:
@@ -181,11 +182,6 @@ void __init check_wait(void)
 	case CPU_24K:
 	case CPU_34K:
 	case CPU_1004K:
-	case CPU_1074K:
-	case CPU_INTERAPTIV:
-	case CPU_PROAPTIV:
-	case CPU_P5600:
-	case CPU_M5150:
 		cpu_wait = r4k_wait;
 		if (read_c0_config7() & MIPS_CONF7_WII)
 			cpu_wait = r4k_wait_irqoff;
@@ -221,26 +217,29 @@ void __init check_wait(void)
 		   cpu_wait = r4k_wait;
 		 */
 		break;
+	case CPU_RM9000:
+		if ((c->processor_id & 0x00ff) >= 0x40)
+			cpu_wait = r4k_wait;
+		break;
 	default:
 		break;
 	}
 }
 
+static void smtc_idle_hook(void)
+{
+#ifdef CONFIG_MIPS_MT_SMTC
+	void smtc_idle_loop_hook(void);
+
+	smtc_idle_loop_hook();
+#endif
+}
+
 void arch_cpu_idle(void)
 {
+	smtc_idle_hook();
 	if (cpu_wait)
 		cpu_wait();
 	else
 		local_irq_enable();
 }
-
-#ifdef CONFIG_CPU_IDLE
-
-int mips_cpuidle_wait_enter(struct cpuidle_device *dev,
-			    struct cpuidle_driver *drv, int index)
-{
-	arch_cpu_idle();
-	return index;
-}
-
-#endif

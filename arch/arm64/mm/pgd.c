@@ -30,14 +30,19 @@
 
 #define PGD_SIZE	(PTRS_PER_PGD * sizeof(pgd_t))
 
-static struct kmem_cache *pgd_cache;
-
 pgd_t *pgd_alloc(struct mm_struct *mm)
 {
+	pgd_t *new_pgd;
+
 	if (PGD_SIZE == PAGE_SIZE)
-		return (pgd_t *)get_zeroed_page(GFP_KERNEL);
+		new_pgd = (pgd_t *)get_zeroed_page(GFP_KERNEL);
 	else
-		return kmem_cache_zalloc(pgd_cache, GFP_KERNEL);
+		new_pgd = kzalloc(PGD_SIZE, GFP_KERNEL);
+
+	if (!new_pgd)
+		return NULL;
+
+	return new_pgd;
 }
 
 void pgd_free(struct mm_struct *mm, pgd_t *pgd)
@@ -45,17 +50,5 @@ void pgd_free(struct mm_struct *mm, pgd_t *pgd)
 	if (PGD_SIZE == PAGE_SIZE)
 		free_page((unsigned long)pgd);
 	else
-		kmem_cache_free(pgd_cache, pgd);
+		kfree(pgd);
 }
-
-static int __init pgd_cache_init(void)
-{
-	/*
-	 * Naturally aligned pgds required by the architecture.
-	 */
-	if (PGD_SIZE != PAGE_SIZE)
-		pgd_cache = kmem_cache_create("pgd_cache", PGD_SIZE, PGD_SIZE,
-					      SLAB_PANIC, NULL);
-	return 0;
-}
-core_initcall(pgd_cache_init);

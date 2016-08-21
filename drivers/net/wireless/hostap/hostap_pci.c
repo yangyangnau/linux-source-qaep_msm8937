@@ -5,6 +5,7 @@
  * Andy Warner <andyw@pobox.com> */
 
 #include <linux/module.h>
+#include <linux/init.h>
 #include <linux/if.h>
 #include <linux/skbuff.h>
 #include <linux/netdevice.h>
@@ -39,7 +40,7 @@ struct hostap_pci_priv {
 /* FIX: do we need mb/wmb/rmb with memory operations? */
 
 
-static const struct pci_device_id prism2_pci_id_table[] = {
+static DEFINE_PCI_DEVICE_TABLE(prism2_pci_id_table) = {
 	/* Intersil Prism3 ISL3872 11Mb/s WLAN Controller */
 	{ 0x1260, 0x3872, PCI_ANY_ID, PCI_ANY_ID },
 	/* Intersil Prism2.5 ISL3874 11Mb/s WLAN Controller */

@@ -1,3 +1,6 @@
-ifneq ($(CONFIG_BLACKFIN),)
 obj-m := gptimers-example.o
-endif
+
+all: modules
+
+modules clean:
+	$(MAKE) -C ../.. SUBDIRS=$(PWD) $@

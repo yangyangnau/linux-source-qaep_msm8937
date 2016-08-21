@@ -29,7 +29,6 @@
 #include <asm/pci-bridge.h>
 #include <asm/prom.h>
 #include <asm/ppc-pci.h>
-#include "pseries.h"
 
 #if 0
 void pcibios_name_device(struct pci_dev *dev)
@@ -114,8 +113,7 @@ int pseries_root_bridge_prepare(struct pci_host_bridge *bridge)
 {
 	struct device_node *dn, *pdn;
 	struct pci_bus *bus;
-	u32 pcie_link_speed_stats[2];
-	int rc;
+	const uint32_t *pcie_link_speed_stats;
 
 	bus = bridge->bus;
 
@@ -124,16 +122,15 @@ int pseries_root_bridge_prepare(struct pci_host_bridge *bridge)
 		return 0;
 
 	for (pdn = dn; pdn != NULL; pdn = of_get_next_parent(pdn)) {
-		rc = of_property_read_u32_array(pdn,
-				"ibm,pcie-link-speed-stats",
-				&pcie_link_speed_stats[0], 2);
-		if (!rc)
+		pcie_link_speed_stats = (const uint32_t *) of_get_property(pdn,
+			"ibm,pcie-link-speed-stats", NULL);
+		if (pcie_link_speed_stats)
 			break;
 	}
 
 	of_node_put(pdn);
 
-	if (rc) {
+	if (!pcie_link_speed_stats) {
 		pr_err("no ibm,pcie-link-speed-stats property\n");
 		return 0;
 	}
@@ -144,9 +141,6 @@ int pseries_root_bridge_prepare(struct pci_host_bridge *bridge)
 		break;
 	case 0x02:
 		bus->max_bus_speed = PCIE_SPEED_5_0GT;
-		break;
-	case 0x04:
-		bus->max_bus_speed = PCIE_SPEED_8_0GT;
 		break;
 	default:
 		bus->max_bus_speed = PCI_SPEED_UNKNOWN;
@@ -159,9 +153,6 @@ int pseries_root_bridge_prepare(struct pci_host_bridge *bridge)
 		break;
 	case 0x02:
 		bus->cur_bus_speed = PCIE_SPEED_5_0GT;
-		break;
-	case 0x04:
-		bus->cur_bus_speed = PCIE_SPEED_8_0GT;
 		break;
 	default:
 		bus->cur_bus_speed = PCI_SPEED_UNKNOWN;

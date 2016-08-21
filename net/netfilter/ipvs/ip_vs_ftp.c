@@ -96,13 +96,13 @@ static int ip_vs_ftp_get_addrport(char *data, char *data_limit,
 
 	if (data_limit - data < plen) {
 		/* check if there is partial match */
-		if (strncasecmp(data, pattern, data_limit - data) == 0)
+		if (strnicmp(data, pattern, data_limit - data) == 0)
 			return -1;
 		else
 			return 0;
 	}
 
-	if (strncasecmp(data, pattern, plen) != 0) {
+	if (strnicmp(data, pattern, plen) != 0) {
 		return 0;
 	}
 	s = data + plen;
@@ -183,8 +183,6 @@ static int ip_vs_ftp_out(struct ip_vs_app *app, struct ip_vs_conn *cp,
 	struct nf_conn *ct;
 	struct net *net;
 
-	*diff = 0;
-
 #ifdef CONFIG_IP_VS_IPV6
 	/* This application helper doesn't work with IPv6 yet,
 	 * so turn this into a no-op for IPv6 packets
@@ -192,6 +190,8 @@ static int ip_vs_ftp_out(struct ip_vs_app *app, struct ip_vs_conn *cp,
 	if (cp->af == AF_INET6)
 		return 1;
 #endif
+
+	*diff = 0;
 
 	/* Only useful for established sessions */
 	if (cp->state != IP_VS_TCP_S_ESTABLISHED)
@@ -233,8 +233,7 @@ static int ip_vs_ftp_out(struct ip_vs_app *app, struct ip_vs_conn *cp,
 			ip_vs_conn_fill_param(ip_vs_conn_net(cp),
 					      AF_INET, IPPROTO_TCP, &cp->caddr,
 					      0, &cp->vaddr, port, &p);
-			/* As above, this is ipv4 only */
-			n_cp = ip_vs_conn_new(&p, AF_INET, &from, port,
+			n_cp = ip_vs_conn_new(&p, &from, port,
 					      IP_VS_CONN_F_NO_CPORT |
 					      IP_VS_CONN_F_NFCT,
 					      cp->dest, skb->mark);
@@ -322,9 +321,6 @@ static int ip_vs_ftp_in(struct ip_vs_app *app, struct ip_vs_conn *cp,
 	struct ip_vs_conn *n_cp;
 	struct net *net;
 
-	/* no diff required for incoming packets */
-	*diff = 0;
-
 #ifdef CONFIG_IP_VS_IPV6
 	/* This application helper doesn't work with IPv6 yet,
 	 * so turn this into a no-op for IPv6 packets
@@ -332,6 +328,9 @@ static int ip_vs_ftp_in(struct ip_vs_app *app, struct ip_vs_conn *cp,
 	if (cp->af == AF_INET6)
 		return 1;
 #endif
+
+	/* no diff required for incoming packets */
+	*diff = 0;
 
 	/* Only useful for established sessions */
 	if (cp->state != IP_VS_TCP_S_ESTABLISHED)
@@ -354,7 +353,7 @@ static int ip_vs_ftp_in(struct ip_vs_app *app, struct ip_vs_conn *cp,
 	data_limit = skb_tail_pointer(skb);
 
 	while (data <= data_limit - 6) {
-		if (strncasecmp(data, "PASV\r\n", 6) == 0) {
+		if (strnicmp(data, "PASV\r\n", 6) == 0) {
 			/* Passive mode on */
 			IP_VS_DBG(7, "got PASV at %td of %td\n",
 				  data - data_start,
@@ -397,8 +396,7 @@ static int ip_vs_ftp_in(struct ip_vs_app *app, struct ip_vs_conn *cp,
 				      htons(ntohs(cp->vport)-1), &p);
 		n_cp = ip_vs_conn_in_get(&p);
 		if (!n_cp) {
-			/* This is ipv4 only */
-			n_cp = ip_vs_conn_new(&p, AF_INET, &cp->daddr,
+			n_cp = ip_vs_conn_new(&p, &cp->daddr,
 					      htons(ntohs(cp->dport)-1),
 					      IP_VS_CONN_F_NFCT, cp->dest,
 					      skb->mark);

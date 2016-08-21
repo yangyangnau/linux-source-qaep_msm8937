@@ -33,9 +33,12 @@
 #include "80211hdr.h"
 #include "80211mgr.h"
 
-#define AUTHENTICATE_TIMEOUT   1000
-#define ASSOCIATE_TIMEOUT      1000
+/*---------------------  Export Definitions -------------------------*/
 
+#define AUTHENTICATE_TIMEOUT   1000 //ms
+#define ASSOCIATE_TIMEOUT      1000 //ms
+
+// Command code
 typedef enum tagCMD_CODE {
 	WLAN_CMD_BSSID_SCAN,
 	WLAN_CMD_SSID,
@@ -73,6 +76,7 @@ typedef struct tagCMD_ITEM {
 	bool bForceSCAN;
 } CMD_ITEM, *PCMD_ITEM;
 
+// Command state
 typedef enum tagCMD_STATE {
 	WLAN_CMD_SCAN_START,
 	WLAN_CMD_SCAN_END,
@@ -88,6 +92,13 @@ typedef enum tagCMD_STATE {
 	WLAN_CMD_IDLE
 } CMD_STATE, *PCMD_STATE;
 
+/*---------------------  Export Classes  ----------------------------*/
+
+/*---------------------  Export Variables  --------------------------*/
+
+/*---------------------  Export Types  ------------------------------*/
+
+/*---------------------  Export Functions  --------------------------*/
 void
 vResetCommandTimer(
 	void *hDeviceContext
@@ -114,10 +125,11 @@ vCommandTimerWait(
 	void *hDeviceContext,
 	unsigned int MSecond
 );
-
+#ifdef TxInSleep
 void
 BSSvSecondTxData(
 	void *hDeviceContext
 );
+#endif
 
 #endif //__WCMD_H__

@@ -11,6 +11,7 @@
  */
 
 #include <linux/kernel.h>
+#include <linux/init.h>
 #include <linux/tty.h>
 #include <linux/slab.h>
 #include <linux/tty_driver.h>
@@ -74,7 +75,9 @@ static void symbol_int_callback(struct urb *urb)
 		tty_insert_flip_string(&port->port, &data[1], data_length);
 		tty_flip_buffer_push(&port->port);
 	} else {
-		dev_dbg(&port->dev, "%s - short packet\n", __func__);
+		dev_dbg(&port->dev,
+			"Improper amount of data received from the device, "
+			"%d bytes", urb->actual_length);
 	}
 
 exit:

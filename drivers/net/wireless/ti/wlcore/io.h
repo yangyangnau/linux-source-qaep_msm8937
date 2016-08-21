@@ -60,9 +60,7 @@ static inline int __must_check wlcore_raw_write(struct wl1271 *wl, int addr,
 {
 	int ret;
 
-	if (test_bit(WL1271_FLAG_IO_FAILED, &wl->flags) ||
-	    WARN_ON((test_bit(WL1271_FLAG_IN_ELP, &wl->flags) &&
-		     addr != HW_ACCESS_ELP_CTRL_REG)))
+	if (test_bit(WL1271_FLAG_IO_FAILED, &wl->flags))
 		return -EIO;
 
 	ret = wl->if_ops->write(wl->dev, addr, buf, len, fixed);
@@ -78,9 +76,7 @@ static inline int __must_check wlcore_raw_read(struct wl1271 *wl, int addr,
 {
 	int ret;
 
-	if (test_bit(WL1271_FLAG_IO_FAILED, &wl->flags) ||
-	    WARN_ON((test_bit(WL1271_FLAG_IN_ELP, &wl->flags) &&
-		     addr != HW_ACCESS_ELP_CTRL_REG)))
+	if (test_bit(WL1271_FLAG_IO_FAILED, &wl->flags))
 		return -EIO;
 
 	ret = wl->if_ops->read(wl->dev, addr, buf, len, fixed);
@@ -169,8 +165,8 @@ static inline int __must_check wlcore_read_hwaddr(struct wl1271 *wl, int hwaddr,
 	int physical;
 	int addr;
 
-	/* Convert from FW internal address which is chip arch dependent */
-	addr = wl->ops->convert_hwaddr(wl, hwaddr);
+	/* Addresses are stored internally as addresses to 32 bytes blocks */
+	addr = hwaddr << 5;
 
 	physical = wlcore_translate_addr(wl, addr);
 

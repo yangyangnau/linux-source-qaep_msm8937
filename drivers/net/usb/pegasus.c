@@ -1159,7 +1159,7 @@ static int pegasus_probe(struct usb_interface *intf,
 
 	net->watchdog_timeo = PEGASUS_TX_TIMEOUT;
 	net->netdev_ops = &pegasus_netdev_ops;
-	net->ethtool_ops = &ops;
+	SET_ETHTOOL_OPS(net, &ops);
 	pegasus->mii.dev = net;
 	pegasus->mii.mdio_read = mdio_read;
 	pegasus->mii.mdio_write = mdio_write;

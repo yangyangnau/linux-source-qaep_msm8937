@@ -30,19 +30,19 @@ struct strfilter *strfilter__new(const char *rules, const char **err);
 
 /**
  * strfilter__compare - compare given string and a string filter
- * @filter: String filter
+ * @self: String filter
  * @str: target string
  *
- * Compare @str and @filter. Return true if the str match the rule
+ * Compare @str and @self. Return true if the str match the rule
  */
-bool strfilter__compare(struct strfilter *filter, const char *str);
+bool strfilter__compare(struct strfilter *self, const char *str);
 
 /**
  * strfilter__delete - delete a string filter
- * @filter: String filter to delete
+ * @self: String filter to delete
  *
- * Delete @filter.
+ * Delete @self.
  */
-void strfilter__delete(struct strfilter *filter);
+void strfilter__delete(struct strfilter *self);
 
 #endif

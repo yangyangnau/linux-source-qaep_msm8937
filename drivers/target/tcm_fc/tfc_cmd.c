@@ -28,7 +28,6 @@
 #include <linux/configfs.h>
 #include <linux/ctype.h>
 #include <linux/hash.h>
-#include <linux/percpu_ida.h>
 #include <asm/unaligned.h>
 #include <scsi/scsi.h>
 #include <scsi/scsi_host.h>
@@ -90,18 +89,16 @@ static void ft_free_cmd(struct ft_cmd *cmd)
 {
 	struct fc_frame *fp;
 	struct fc_lport *lport;
-	struct ft_sess *sess;
 
 	if (!cmd)
 		return;
-	sess = cmd->sess;
 	fp = cmd->req_frame;
 	lport = fr_dev(fp);
 	if (fr_seq(fp))
 		lport->tt.seq_release(fr_seq(fp));
 	fc_frame_free(fp);
-	percpu_ida_free(&sess->se_sess->sess_tag_pool, cmd->se_cmd.map_tag);
-	ft_sess_put(sess);	/* undo get from lookup at recv */
+	ft_sess_put(cmd->sess);	/* undo get from lookup at recv */
+	kfree(cmd);
 }
 
 void ft_release_cmd(struct se_cmd *se_cmd)
@@ -128,7 +125,6 @@ int ft_queue_status(struct se_cmd *se_cmd)
 	struct fc_lport *lport;
 	struct fc_exch *ep;
 	size_t len;
-	int rc;
 
 	if (cmd->aborted)
 		return 0;
@@ -138,10 +134,9 @@ int ft_queue_status(struct se_cmd *se_cmd)
 	len = sizeof(*fcp) + se_cmd->scsi_sense_length;
 	fp = fc_frame_alloc(lport, len);
 	if (!fp) {
-		se_cmd->scsi_status = SAM_STAT_TASK_SET_FULL;
-		return -ENOMEM;
+		/* XXX shouldn't just drop it - requeue and retry? */
+		return 0;
 	}
-
 	fcp = fc_frame_payload_get(fp, len);
 	memset(fcp, 0, len);
 	fcp->resp.fr_status = se_cmd->scsi_status;
@@ -172,18 +167,7 @@ int ft_queue_status(struct se_cmd *se_cmd)
 	fc_fill_fc_hdr(fp, FC_RCTL_DD_CMD_STATUS, ep->did, ep->sid, FC_TYPE_FCP,
 		       FC_FC_EX_CTX | FC_FC_LAST_SEQ | FC_FC_END_SEQ, 0);
 
-	rc = lport->tt.seq_send(lport, cmd->seq, fp);
-	if (rc) {
-		pr_info_ratelimited("%s: Failed to send response frame %p, "
-				    "xid <0x%x>\n", __func__, fp, ep->xid);
-		/*
-		 * Generate a TASK_SET_FULL status to notify the initiator
-		 * to reduce it's queue_depth after the se_cmd response has
-		 * been re-queued by target-core.
-		 */
-		se_cmd->scsi_status = SAM_STAT_TASK_SET_FULL;
-		return -ENOMEM;
-	}
+	lport->tt.seq_send(lport, cmd->seq, fp);
 	lport->tt.exch_done(cmd->seq);
 	return 0;
 }
@@ -410,14 +394,14 @@ static void ft_send_tm(struct ft_cmd *cmd)
 /*
  * Send status from completed task management request.
  */
-void ft_queue_tm_resp(struct se_cmd *se_cmd)
+int ft_queue_tm_resp(struct se_cmd *se_cmd)
 {
 	struct ft_cmd *cmd = container_of(se_cmd, struct ft_cmd, se_cmd);
 	struct se_tmr_req *tmr = se_cmd->se_tmr_req;
 	enum fcp_resp_rsp_codes code;
 
 	if (cmd->aborted)
-		return;
+		return 0;
 	switch (tmr->response) {
 	case TMR_FUNCTION_COMPLETE:
 		code = FCP_TMF_CMPL;
@@ -429,7 +413,10 @@ void ft_queue_tm_resp(struct se_cmd *se_cmd)
 		code = FCP_TMF_REJECTED;
 		break;
 	case TMR_TASK_DOES_NOT_EXIST:
+	case TMR_TASK_STILL_ALLEGIANT:
+	case TMR_TASK_FAILOVER_NOT_SUPPORTED:
 	case TMR_TASK_MGMT_FUNCTION_NOT_SUPPORTED:
+	case TMR_FUNCTION_AUTHORIZATION_FAILED:
 	default:
 		code = FCP_TMF_FAILED;
 		break;
@@ -437,11 +424,7 @@ void ft_queue_tm_resp(struct se_cmd *se_cmd)
 	pr_debug("tmr fn %d resp %d fcp code %d\n",
 		  tmr->function, tmr->response, code);
 	ft_send_resp_code(cmd, code);
-}
-
-void ft_aborted_task(struct se_cmd *se_cmd)
-{
-	return;
+	return 0;
 }
 
 static void ft_send_work(struct work_struct *work);
@@ -453,21 +436,14 @@ static void ft_recv_cmd(struct ft_sess *sess, struct fc_frame *fp)
 {
 	struct ft_cmd *cmd;
 	struct fc_lport *lport = sess->tport->lport;
-	struct se_session *se_sess = sess->se_sess;
-	int tag;
 
-	tag = percpu_ida_alloc(&se_sess->sess_tag_pool, TASK_RUNNING);
-	if (tag < 0)
+	cmd = kzalloc(sizeof(*cmd), GFP_ATOMIC);
+	if (!cmd)
 		goto busy;
-
-	cmd = &((struct ft_cmd *)se_sess->sess_cmd_map)[tag];
-	memset(cmd, 0, sizeof(struct ft_cmd));
-
-	cmd->se_cmd.map_tag = tag;
 	cmd->sess = sess;
 	cmd->seq = lport->tt.seq_assign(lport, fp);
 	if (!cmd->seq) {
-		percpu_ida_free(&se_sess->sess_tag_pool, tag);
+		kfree(cmd);
 		goto busy;
 	}
 	cmd->req_frame = fp;		/* hold frame during cmd */

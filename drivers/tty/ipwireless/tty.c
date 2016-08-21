@@ -15,6 +15,7 @@
  *   Copyright (C) 2007 David Sterba
  */
 
+#include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -93,6 +94,11 @@ static int ipw_open(struct tty_struct *linux_tty, struct file *filp)
 		return -ENODEV;
 
 	mutex_lock(&tty->ipw_tty_mutex);
+
+	if (tty->closing) {
+		mutex_unlock(&tty->ipw_tty_mutex);
+		return -ENODEV;
+	}
 	if (tty->port.count == 0)
 		tty->tx_bytes_queued = 0;
 
@@ -171,6 +177,9 @@ void ipwireless_tty_received(struct ipw_tty *tty, unsigned char *data,
 				": %d chars not inserted to flip buffer!\n",
 				length - work);
 
+	/*
+	 * This may sleep if ->low_latency is set
+	 */
 	if (work)
 		tty_flip_buffer_push(&tty->port);
 }

@@ -14,6 +14,11 @@
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
 */
 /*
 Driver: adq12b
@@ -73,97 +78,101 @@ If you do not specify any options, they will default to
 
 */
 
-#include <linux/module.h>
-#include <linux/delay.h>
-
 #include "../comedidev.h"
 
 /* address scheme (page 2.17 of the manual) */
-#define ADQ12B_CTREG		0x00
-#define ADQ12B_CTREG_MSKP	(1 << 7)	/* enable pacer interrupt */
-#define ADQ12B_CTREG_GTP	(1 << 6)	/* enable pacer */
-#define ADQ12B_CTREG_RANGE(x)	((x) << 4)
-#define ADQ12B_CTREG_CHAN(x)	((x) << 0)
-#define ADQ12B_STINR		0x00
-#define ADQ12B_STINR_OUT2	(1 << 7)	/* timer 2 output state */
-#define ADQ12B_STINR_OUTP	(1 << 6)	/* pacer output state */
-#define ADQ12B_STINR_EOC	(1 << 5)	/* A/D end-of-conversion */
-#define ADQ12B_STINR_IN_MASK	(0x1f << 0)
-#define ADQ12B_OUTBR		0x04
-#define ADQ12B_ADLOW		0x08
-#define ADQ12B_ADHIG		0x09
-#define ADQ12B_TIMER_BASE	0x0c
+#define ADQ12B_SIZE     16
+
+#define ADQ12B_CTREG    0x00
+#define ADQ12B_STINR    0x00
+#define ADQ12B_OUTBR    0x04
+#define ADQ12B_ADLOW    0x08
+#define ADQ12B_ADHIG    0x09
+#define ADQ12B_CONT0    0x0c
+#define ADQ12B_CONT1    0x0d
+#define ADQ12B_CONT2    0x0e
+#define ADQ12B_COWORD   0x0f
+
+/* mask of the bit at STINR to check end of conversion */
+#define ADQ12B_EOC     0x20
+
+#define TIMEOUT        20
 
 /* available ranges through the PGA gains */
-static const struct comedi_lrange range_adq12b_ai_bipolar = {
-	4, {
-		BIP_RANGE(5),
-		BIP_RANGE(2),
-		BIP_RANGE(1),
-		BIP_RANGE(0.5)
-	}
+static const struct comedi_lrange range_adq12b_ai_bipolar = { 4, {
+								  BIP_RANGE(5),
+								  BIP_RANGE(2),
+								  BIP_RANGE(1),
+								  BIP_RANGE(0.5)
+								  }
 };
 
-static const struct comedi_lrange range_adq12b_ai_unipolar = {
-	4, {
-		UNI_RANGE(5),
-		UNI_RANGE(2),
-		UNI_RANGE(1),
-		UNI_RANGE(0.5)
-	}
+static const struct comedi_lrange range_adq12b_ai_unipolar = { 4, {
+								   UNI_RANGE(5),
+								   UNI_RANGE(2),
+								   UNI_RANGE(1),
+								   UNI_RANGE
+								   (0.5)
+								   }
 };
 
 struct adq12b_private {
-	unsigned int last_ctreg;
+	int unipolar;		/* option 2 of comedi_config (1 is iobase) */
+	int differential;	/* option 3 of comedi_config */
+	int last_channel;
+	int last_range;
+	unsigned int digital_state;
 };
 
-static int adq12b_ai_eoc(struct comedi_device *dev,
-			 struct comedi_subdevice *s,
-			 struct comedi_insn *insn,
-			 unsigned long context)
-{
-	unsigned char status;
+/*
+ * "instructions" read/write data in "one-shot" or "software-triggered"
+ * mode.
+ */
 
-	status = inb(dev->iobase + ADQ12B_STINR);
-	if (status & ADQ12B_STINR_EOC)
-		return 0;
-	return -EBUSY;
-}
-
-static int adq12b_ai_insn_read(struct comedi_device *dev,
-			       struct comedi_subdevice *s,
-			       struct comedi_insn *insn,
-			       unsigned int *data)
+static int adq12b_ai_rinsn(struct comedi_device *dev,
+			   struct comedi_subdevice *s, struct comedi_insn *insn,
+			   unsigned int *data)
 {
 	struct adq12b_private *devpriv = dev->private;
-	unsigned int chan = CR_CHAN(insn->chanspec);
-	unsigned int range = CR_RANGE(insn->chanspec);
-	unsigned int val;
-	int ret;
-	int i;
+	int n, i;
+	int range, channel;
+	unsigned char hi, lo, status;
 
 	/* change channel and range only if it is different from the previous */
-	val = ADQ12B_CTREG_RANGE(range) | ADQ12B_CTREG_CHAN(chan);
-	if (val != devpriv->last_ctreg) {
-		outb(val, dev->iobase + ADQ12B_CTREG);
-		devpriv->last_ctreg = val;
+	range = CR_RANGE(insn->chanspec);
+	channel = CR_CHAN(insn->chanspec);
+	if (channel != devpriv->last_channel || range != devpriv->last_range) {
+		outb((range << 4) | channel, dev->iobase + ADQ12B_CTREG);
 		udelay(50);	/* wait for the mux to settle */
 	}
 
-	val = inb(dev->iobase + ADQ12B_ADLOW);	/* trigger A/D */
+	/* trigger conversion */
+	status = inb(dev->iobase + ADQ12B_ADLOW);
 
-	for (i = 0; i < insn->n; i++) {
-		ret = comedi_timeout(dev, s, insn, adq12b_ai_eoc, 0);
-		if (ret)
-			return ret;
+	/* convert n samples */
+	for (n = 0; n < insn->n; n++) {
 
-		val = inb(dev->iobase + ADQ12B_ADHIG) << 8;
-		val |= inb(dev->iobase + ADQ12B_ADLOW);	/* retriggers A/D */
+		/* wait for end of conversion */
+		i = 0;
+		do {
+			/* udelay(1); */
+			status = inb(dev->iobase + ADQ12B_STINR);
+			status = status & ADQ12B_EOC;
+		} while (status == 0 && ++i < TIMEOUT);
+		/* } while (++i < 10); */
 
-		data[i] = val;
+		/* read data */
+		hi = inb(dev->iobase + ADQ12B_ADHIG);
+		lo = inb(dev->iobase + ADQ12B_ADLOW);
+
+		/* printk("debug: chan=%d range=%d status=%d hi=%d lo=%d\n",
+		       channel, range, status,  hi, lo); */
+		data[n] = (hi << 8) | lo;
+
 	}
 
-	return insn->n;
+	/* return the number of samples read/written */
+	return n;
 }
 
 static int adq12b_di_insn_bits(struct comedi_device *dev,
@@ -172,32 +181,30 @@ static int adq12b_di_insn_bits(struct comedi_device *dev,
 {
 
 	/* only bits 0-4 have information about digital inputs */
-	data[1] = (inb(dev->iobase + ADQ12B_STINR) & ADQ12B_STINR_IN_MASK);
+	data[1] = (inb(dev->iobase + ADQ12B_STINR) & (0x1f));
 
 	return insn->n;
 }
 
 static int adq12b_do_insn_bits(struct comedi_device *dev,
 			       struct comedi_subdevice *s,
-			       struct comedi_insn *insn,
-			       unsigned int *data)
+			       struct comedi_insn *insn, unsigned int *data)
 {
-	unsigned int mask;
-	unsigned int chan;
-	unsigned int val;
+	struct adq12b_private *devpriv = dev->private;
+	int channel;
 
-	mask = comedi_dio_update_state(s, data);
-	if (mask) {
-		for (chan = 0; chan < 8; chan++) {
-			if ((mask >> chan) & 0x01) {
-				val = (s->state >> chan) & 0x01;
-				outb((val << 3) | chan,
-				     dev->iobase + ADQ12B_OUTBR);
-			}
-		}
+	for (channel = 0; channel < 8; channel++)
+		if (((data[0] >> channel) & 0x01) != 0)
+			outb((((data[1] >> channel) & 0x01) << 3) | channel,
+			     dev->iobase + ADQ12B_OUTBR);
+
+	/* store information to retrieve when asked for reading */
+	if (data[0]) {
+		devpriv->digital_state &= ~data[0];
+		devpriv->digital_state |= (data[0] & data[1]);
 	}
 
-	data[1] = s->state;
+	data[1] = devpriv->digital_state;
 
 	return insn->n;
 }
@@ -208,52 +215,68 @@ static int adq12b_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	struct comedi_subdevice *s;
 	int ret;
 
-	ret = comedi_request_region(dev, it->options[0], 0x10);
+	ret = comedi_request_region(dev, it->options[0], ADQ12B_SIZE);
 	if (ret)
 		return ret;
 
-	devpriv = comedi_alloc_devpriv(dev, sizeof(*devpriv));
+	devpriv = kzalloc(sizeof(*devpriv), GFP_KERNEL);
 	if (!devpriv)
 		return -ENOMEM;
+	dev->private = devpriv;
 
-	devpriv->last_ctreg = -1;	/* force ctreg update */
+	devpriv->unipolar = it->options[1];
+	devpriv->differential = it->options[2];
+	devpriv->digital_state = 0;
+	/*
+	 * initialize channel and range to -1 so we make sure we
+	 * always write at least once to the CTREG in the instruction
+	 */
+	devpriv->last_channel = -1;
+	devpriv->last_range = -1;
 
 	ret = comedi_alloc_subdevices(dev, 3);
 	if (ret)
 		return ret;
 
-	/* Analog Input subdevice */
 	s = &dev->subdevices[0];
-	s->type		= COMEDI_SUBD_AI;
-	if (it->options[2]) {
-		s->subdev_flags	= SDF_READABLE | SDF_DIFF;
-		s->n_chan	= 8;
+	/* analog input subdevice */
+	s->type = COMEDI_SUBD_AI;
+	if (devpriv->differential) {
+		s->subdev_flags = SDF_READABLE | SDF_GROUND | SDF_DIFF;
+		s->n_chan = 8;
 	} else {
-		s->subdev_flags	= SDF_READABLE | SDF_GROUND;
-		s->n_chan	= 16;
+		s->subdev_flags = SDF_READABLE | SDF_GROUND;
+		s->n_chan = 16;
 	}
-	s->maxdata	= 0xfff;
-	s->range_table	= it->options[1] ? &range_adq12b_ai_unipolar
-					 : &range_adq12b_ai_bipolar;
-	s->insn_read	= adq12b_ai_insn_read;
 
-	/* Digital Input subdevice */
+	if (devpriv->unipolar)
+		s->range_table = &range_adq12b_ai_unipolar;
+	else
+		s->range_table = &range_adq12b_ai_bipolar;
+
+	s->maxdata = 0xfff;
+
+	s->len_chanlist = 4;	/* This is the maximum chanlist length that
+				   the board can handle */
+	s->insn_read = adq12b_ai_rinsn;
+
 	s = &dev->subdevices[1];
-	s->type		= COMEDI_SUBD_DI;
-	s->subdev_flags	= SDF_READABLE;
-	s->n_chan	= 5;
-	s->maxdata	= 1;
-	s->range_table	= &range_digital;
-	s->insn_bits	= adq12b_di_insn_bits;
+	/* digital input subdevice */
+	s->type = COMEDI_SUBD_DI;
+	s->subdev_flags = SDF_READABLE;
+	s->n_chan = 5;
+	s->maxdata = 1;
+	s->range_table = &range_digital;
+	s->insn_bits = adq12b_di_insn_bits;
 
-	/* Digital Output subdevice */
 	s = &dev->subdevices[2];
-	s->type		= COMEDI_SUBD_DO;
-	s->subdev_flags	= SDF_WRITABLE;
-	s->n_chan	= 8;
-	s->maxdata	= 1;
-	s->range_table	= &range_digital;
-	s->insn_bits	= adq12b_do_insn_bits;
+	/* digital output subdevice */
+	s->type = COMEDI_SUBD_DO;
+	s->subdev_flags = SDF_WRITABLE;
+	s->n_chan = 8;
+	s->maxdata = 1;
+	s->range_table = &range_digital;
+	s->insn_bits = adq12b_do_insn_bits;
 
 	return 0;
 }

@@ -1,8 +1,6 @@
 #ifndef __LINUX_ATMEL_MCI_H
 #define __LINUX_ATMEL_MCI_H
 
-#include <linux/types.h>
-
 #define ATMCI_MAX_NR_SLOTS	2
 
 /**

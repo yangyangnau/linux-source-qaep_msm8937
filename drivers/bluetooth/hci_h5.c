@@ -206,11 +206,11 @@ static int h5_close(struct hci_uart *hu)
 {
 	struct h5 *h5 = hu->priv;
 
-	del_timer_sync(&h5->timer);
-
 	skb_queue_purge(&h5->unack);
 	skb_queue_purge(&h5->rel);
 	skb_queue_purge(&h5->unrel);
+
+	del_timer(&h5->timer);
 
 	kfree(h5);
 
@@ -237,7 +237,7 @@ static void h5_pkt_cull(struct h5 *h5)
 			break;
 
 		to_remove--;
-		seq = (seq - 1) & 0x07;
+		seq = (seq - 1) % 8;
 	}
 
 	if (seq != h5->rx_ack)
@@ -340,7 +340,7 @@ static void h5_complete_rx_pkt(struct hci_uart *hu)
 		/* Remove Three-wire header */
 		skb_pull(h5->rx_skb, 4);
 
-		hci_recv_frame(hu->hdev, h5->rx_skb);
+		hci_recv_frame(h5->rx_skb);
 		h5->rx_skb = NULL;
 
 		break;
@@ -355,7 +355,10 @@ static void h5_complete_rx_pkt(struct hci_uart *hu)
 
 static int h5_rx_crc(struct hci_uart *hu, unsigned char c)
 {
+	struct h5 *h5 = hu->priv;
+
 	h5_complete_rx_pkt(hu);
+	h5_reset_rx(h5);
 
 	return 0;
 }
@@ -370,6 +373,7 @@ static int h5_rx_payload(struct hci_uart *hu, unsigned char c)
 		h5->rx_pending = 2;
 	} else {
 		h5_complete_rx_pkt(hu);
+		h5_reset_rx(h5);
 	}
 
 	return 0;
@@ -402,7 +406,6 @@ static int h5_rx_3wire_hdr(struct hci_uart *hu, unsigned char c)
 	    H5_HDR_PKT_TYPE(hdr) != HCI_3WIRE_LINK_PKT) {
 		BT_ERR("Non-link packet received in non-active state");
 		h5_reset_rx(h5);
-		return 0;
 	}
 
 	h5->rx_func = h5_rx_payload;
@@ -670,8 +673,7 @@ static struct sk_buff *h5_dequeue(struct hci_uart *hu)
 		return h5_prepare_pkt(hu, HCI_3WIRE_LINK_PKT, wakeup_req, 2);
 	}
 
-	skb = skb_dequeue(&h5->unrel);
-	if (skb != NULL) {
+	if ((skb = skb_dequeue(&h5->unrel)) != NULL) {
 		nskb = h5_prepare_pkt(hu, bt_cb(skb)->pkt_type,
 				      skb->data, skb->len);
 		if (nskb) {
@@ -688,8 +690,7 @@ static struct sk_buff *h5_dequeue(struct hci_uart *hu)
 	if (h5->unack.qlen >= h5->tx_win)
 		goto unlock;
 
-	skb = skb_dequeue(&h5->rel);
-	if (skb != NULL) {
+	if ((skb = skb_dequeue(&h5->rel)) != NULL) {
 		nskb = h5_prepare_pkt(hu, bt_cb(skb)->pkt_type,
 				      skb->data, skb->len);
 		if (nskb) {

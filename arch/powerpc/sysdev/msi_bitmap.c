@@ -20,37 +20,32 @@ int msi_bitmap_alloc_hwirqs(struct msi_bitmap *bmp, int num)
 	int offset, order = get_count_order(num);
 
 	spin_lock_irqsave(&bmp->lock, flags);
-
-	offset = bitmap_find_next_zero_area(bmp->bitmap, bmp->irq_count, 0,
-					    num, (1 << order) - 1);
-	if (offset > bmp->irq_count)
-		goto err;
-
-	bitmap_set(bmp->bitmap, offset, num);
+	/*
+	 * This is fast, but stricter than we need. We might want to add
+	 * a fallback routine which does a linear search with no alignment.
+	 */
+	offset = bitmap_find_free_region(bmp->bitmap, bmp->irq_count, order);
 	spin_unlock_irqrestore(&bmp->lock, flags);
 
-	pr_debug("msi_bitmap: allocated 0x%x at offset 0x%x\n", num, offset);
+	pr_debug("msi_bitmap: allocated 0x%x (2^%d) at offset 0x%x\n",
+		 num, order, offset);
 
 	return offset;
-err:
-	spin_unlock_irqrestore(&bmp->lock, flags);
-	return -ENOMEM;
 }
-EXPORT_SYMBOL(msi_bitmap_alloc_hwirqs);
 
 void msi_bitmap_free_hwirqs(struct msi_bitmap *bmp, unsigned int offset,
 			    unsigned int num)
 {
 	unsigned long flags;
+	int order = get_count_order(num);
 
-	pr_debug("msi_bitmap: freeing 0x%x at offset 0x%x\n",
-		 num, offset);
+	pr_debug("msi_bitmap: freeing 0x%x (2^%d) at offset 0x%x\n",
+		 num, order, offset);
 
 	spin_lock_irqsave(&bmp->lock, flags);
-	bitmap_clear(bmp->bitmap, offset, num);
+	bitmap_release_region(bmp->bitmap, offset, order);
 	spin_unlock_irqrestore(&bmp->lock, flags);
 }
-EXPORT_SYMBOL(msi_bitmap_free_hwirqs);
 
 void msi_bitmap_reserve_hwirq(struct msi_bitmap *bmp, unsigned int hwirq)
 {
@@ -145,69 +140,55 @@ void msi_bitmap_free(struct msi_bitmap *bmp)
 
 #ifdef CONFIG_MSI_BITMAP_SELFTEST
 
-static void __init test_basics(void)
+#define check(x)	\
+	if (!(x)) printk("msi_bitmap: test failed at line %d\n", __LINE__);
+
+void __init test_basics(void)
 {
 	struct msi_bitmap bmp;
-	int rc, i, size = 512;
+	int i, size = 512;
 
 	/* Can't allocate a bitmap of 0 irqs */
-	WARN_ON(msi_bitmap_alloc(&bmp, 0, NULL) == 0);
+	check(msi_bitmap_alloc(&bmp, 0, NULL) != 0);
 
 	/* of_node may be NULL */
-	WARN_ON(msi_bitmap_alloc(&bmp, size, NULL));
+	check(0 == msi_bitmap_alloc(&bmp, size, NULL));
 
 	/* Should all be free by default */
-	WARN_ON(bitmap_find_free_region(bmp.bitmap, size, get_count_order(size)));
+	check(0 == bitmap_find_free_region(bmp.bitmap, size,
+					   get_count_order(size)));
 	bitmap_release_region(bmp.bitmap, 0, get_count_order(size));
 
 	/* With no node, there's no msi-available-ranges, so expect > 0 */
-	WARN_ON(msi_bitmap_reserve_dt_hwirqs(&bmp) <= 0);
+	check(msi_bitmap_reserve_dt_hwirqs(&bmp) > 0);
 
 	/* Should all still be free */
-	WARN_ON(bitmap_find_free_region(bmp.bitmap, size, get_count_order(size)));
+	check(0 == bitmap_find_free_region(bmp.bitmap, size,
+					   get_count_order(size)));
 	bitmap_release_region(bmp.bitmap, 0, get_count_order(size));
 
 	/* Check we can fill it up and then no more */
 	for (i = 0; i < size; i++)
-		WARN_ON(msi_bitmap_alloc_hwirqs(&bmp, 1) < 0);
+		check(msi_bitmap_alloc_hwirqs(&bmp, 1) >= 0);
 
-	WARN_ON(msi_bitmap_alloc_hwirqs(&bmp, 1) >= 0);
+	check(msi_bitmap_alloc_hwirqs(&bmp, 1) < 0);
 
 	/* Should all be allocated */
-	WARN_ON(bitmap_find_free_region(bmp.bitmap, size, 0) >= 0);
+	check(bitmap_find_free_region(bmp.bitmap, size, 0) < 0);
 
 	/* And if we free one we can then allocate another */
 	msi_bitmap_free_hwirqs(&bmp, size / 2, 1);
-	WARN_ON(msi_bitmap_alloc_hwirqs(&bmp, 1) != size / 2);
-
-	/* Free most of them for the alignment tests */
-	msi_bitmap_free_hwirqs(&bmp, 3, size - 3);
-
-	/* Check we get a naturally aligned offset */
-	rc = msi_bitmap_alloc_hwirqs(&bmp, 2);
-	WARN_ON(rc < 0 && rc % 2 != 0);
-	rc = msi_bitmap_alloc_hwirqs(&bmp, 4);
-	WARN_ON(rc < 0 && rc % 4 != 0);
-	rc = msi_bitmap_alloc_hwirqs(&bmp, 8);
-	WARN_ON(rc < 0 && rc % 8 != 0);
-	rc = msi_bitmap_alloc_hwirqs(&bmp, 9);
-	WARN_ON(rc < 0 && rc % 16 != 0);
-	rc = msi_bitmap_alloc_hwirqs(&bmp, 3);
-	WARN_ON(rc < 0 && rc % 4 != 0);
-	rc = msi_bitmap_alloc_hwirqs(&bmp, 7);
-	WARN_ON(rc < 0 && rc % 8 != 0);
-	rc = msi_bitmap_alloc_hwirqs(&bmp, 121);
-	WARN_ON(rc < 0 && rc % 128 != 0);
+	check(msi_bitmap_alloc_hwirqs(&bmp, 1) == size / 2);
 
 	msi_bitmap_free(&bmp);
 
-	/* Clients may WARN_ON bitmap == NULL for "not-allocated" */
-	WARN_ON(bmp.bitmap != NULL);
+	/* Clients may check bitmap == NULL for "not-allocated" */
+	check(bmp.bitmap == NULL);
 
 	kfree(bmp.bitmap);
 }
 
-static void __init test_of_node(void)
+void __init test_of_node(void)
 {
 	u32 prop_data[] = { 10, 10, 25, 3, 40, 1, 100, 100, 200, 20 };
 	const char *expected_str = "0-9,20-24,28-39,41-99,220-255";
@@ -221,16 +202,17 @@ static void __init test_of_node(void)
 
 	/* There should really be a struct device_node allocator */
 	memset(&of_node, 0, sizeof(of_node));
-	of_node_init(&of_node);
+	kref_init(&of_node.kref);
 	of_node.full_name = node_name;
 
-	WARN_ON(msi_bitmap_alloc(&bmp, size, &of_node));
+	check(0 == msi_bitmap_alloc(&bmp, size, &of_node));
 
 	/* No msi-available-ranges, so expect > 0 */
-	WARN_ON(msi_bitmap_reserve_dt_hwirqs(&bmp) <= 0);
+	check(msi_bitmap_reserve_dt_hwirqs(&bmp) > 0);
 
 	/* Should all still be free */
-	WARN_ON(bitmap_find_free_region(bmp.bitmap, size, get_count_order(size)));
+	check(0 == bitmap_find_free_region(bmp.bitmap, size,
+					   get_count_order(size)));
 	bitmap_release_region(bmp.bitmap, 0, get_count_order(size));
 
 	/* Now create a fake msi-available-ranges property */
@@ -244,17 +226,17 @@ static void __init test_of_node(void)
 	of_node.properties = &prop;
 
 	/* msi-available-ranges, so expect == 0 */
-	WARN_ON(msi_bitmap_reserve_dt_hwirqs(&bmp));
+	check(msi_bitmap_reserve_dt_hwirqs(&bmp) == 0);
 
 	/* Check we got the expected result */
-	WARN_ON(bitmap_parselist(expected_str, expected, size));
-	WARN_ON(!bitmap_equal(expected, bmp.bitmap, size));
+	check(0 == bitmap_parselist(expected_str, expected, size));
+	check(bitmap_equal(expected, bmp.bitmap, size));
 
 	msi_bitmap_free(&bmp);
 	kfree(bmp.bitmap);
 }
 
-static int __init msi_bitmap_selftest(void)
+int __init msi_bitmap_selftest(void)
 {
 	printk(KERN_DEBUG "Running MSI bitmap self-tests ...\n");
 

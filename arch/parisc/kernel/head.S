@@ -41,7 +41,9 @@ END(boot_args)
         .import fault_vector_11,code    /* IVA parisc 1.1 32 bit */
 	.import	$global$		/* forward declaration */
 #endif /*!CONFIG_64BIT*/
-ENTRY(parisc_kernel_start)
+	.export _stext,data		/* Kernel want it this way! */
+_stext:
+ENTRY(stext)
 	.proc
 	.callinfo
 
@@ -345,7 +347,7 @@ smp_slave_stext:
 	.procend
 #endif /* CONFIG_SMP */
 
-ENDPROC(parisc_kernel_start)
+ENDPROC(stext)
 
 #ifndef CONFIG_64BIT
 	.section .data..read_mostly

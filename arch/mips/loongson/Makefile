@@ -15,9 +15,3 @@ obj-$(CONFIG_LEMOTE_FULOONG2E)	+= fuloong-2e/
 #
 
 obj-$(CONFIG_LEMOTE_MACH2F)  += lemote-2f/
-
-#
-# All Loongson-3 family machines
-#
-
-obj-$(CONFIG_CPU_LOONGSON3)  += loongson-3/

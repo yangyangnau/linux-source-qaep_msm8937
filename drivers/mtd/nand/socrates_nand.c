@@ -15,7 +15,6 @@
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/nand.h>
 #include <linux/mtd/partitions.h>
-#include <linux/of_address.h>
 #include <linux/of_platform.h>
 #include <linux/io.h>
 
@@ -150,13 +149,17 @@ static int socrates_nand_probe(struct platform_device *ofdev)
 	struct mtd_part_parser_data ppdata;
 
 	/* Allocate memory for the device structure (and zero it) */
-	host = devm_kzalloc(&ofdev->dev, sizeof(*host), GFP_KERNEL);
-	if (!host)
+	host = kzalloc(sizeof(struct socrates_nand_host), GFP_KERNEL);
+	if (!host) {
+		printk(KERN_ERR
+		       "socrates_nand: failed to allocate device structure.\n");
 		return -ENOMEM;
+	}
 
 	host->io_base = of_iomap(ofdev->dev.of_node, 0);
 	if (host->io_base == NULL) {
-		dev_err(&ofdev->dev, "ioremap failed\n");
+		printk(KERN_ERR "socrates_nand: ioremap failed\n");
+		kfree(host);
 		return -EIO;
 	}
 
@@ -208,7 +211,9 @@ static int socrates_nand_probe(struct platform_device *ofdev)
 	nand_release(mtd);
 
 out:
+	dev_set_drvdata(&ofdev->dev, NULL);
 	iounmap(host->io_base);
+	kfree(host);
 	return res;
 }
 
@@ -222,7 +227,9 @@ static int socrates_nand_remove(struct platform_device *ofdev)
 
 	nand_release(mtd);
 
+	dev_set_drvdata(&ofdev->dev, NULL);
 	iounmap(host->io_base);
+	kfree(host);
 
 	return 0;
 }

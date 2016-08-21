@@ -30,28 +30,22 @@ static const char hcd_name[] = "ehci-atmel";
 static struct hc_driver __read_mostly ehci_atmel_hc_driver;
 
 /* interface and function clocks */
-static struct clk *iclk, *fclk, *uclk;
+static struct clk *iclk, *fclk;
 static int clocked;
 
 /*-------------------------------------------------------------------------*/
 
 static void atmel_start_clock(void)
 {
-	if (IS_ENABLED(CONFIG_COMMON_CLK)) {
-		clk_set_rate(uclk, 48000000);
-		clk_prepare_enable(uclk);
-	}
-	clk_prepare_enable(iclk);
-	clk_prepare_enable(fclk);
+	clk_enable(iclk);
+	clk_enable(fclk);
 	clocked = 1;
 }
 
 static void atmel_stop_clock(void)
 {
-	clk_disable_unprepare(fclk);
-	clk_disable_unprepare(iclk);
-	if (IS_ENABLED(CONFIG_COMMON_CLK))
-		clk_disable_unprepare(uclk);
+	clk_disable(fclk);
+	clk_disable(iclk);
 	clocked = 0;
 }
 
@@ -96,9 +90,10 @@ static int ehci_atmel_drv_probe(struct platform_device *pdev)
 	 * Since shared usb code relies on it, set it here for now.
 	 * Once we have dma capability bindings this can go away.
 	 */
-	retval = dma_coerce_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
-	if (retval)
-		goto fail_create_hcd;
+	if (!pdev->dev.dma_mask)
+		pdev->dev.dma_mask = &pdev->dev.coherent_dma_mask;
+	if (!pdev->dev.coherent_dma_mask)
+		pdev->dev.coherent_dma_mask = DMA_BIT_MASK(32);
 
 	hcd = usb_create_hcd(driver, &pdev->dev, dev_name(&pdev->dev));
 	if (!hcd) {
@@ -135,14 +130,6 @@ static int ehci_atmel_drv_probe(struct platform_device *pdev)
 		retval = -ENOENT;
 		goto fail_request_resource;
 	}
-	if (IS_ENABLED(CONFIG_COMMON_CLK)) {
-		uclk = devm_clk_get(&pdev->dev, "usb_clk");
-		if (IS_ERR(uclk)) {
-			dev_err(&pdev->dev, "failed to get uclk\n");
-			retval = PTR_ERR(uclk);
-			goto fail_request_resource;
-		}
-	}
 
 	ehci = hcd_to_ehci(hcd);
 	/* registers start at offset 0x0 */
@@ -153,7 +140,6 @@ static int ehci_atmel_drv_probe(struct platform_device *pdev)
 	retval = usb_add_hcd(hcd, irq, IRQF_SHARED);
 	if (retval)
 		goto fail_add_hcd;
-	device_wakeup_enable(hcd->self.controller);
 
 	return retval;
 

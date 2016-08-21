@@ -50,22 +50,32 @@ inline struct block_device *I_BDEV(struct inode *inode)
 EXPORT_SYMBOL(I_BDEV);
 
 /*
- * Move the inode from its current bdi to a new bdi.  Make sure the inode
- * is clean before moving so that it doesn't linger on the old bdi.
+ * Move the inode from its current bdi to a new bdi. If the inode is dirty we
+ * need to move it onto the dirty list of @dst so that the inode is always on
+ * the right list.
  */
 static void bdev_inode_switch_bdi(struct inode *inode,
 			struct backing_dev_info *dst)
 {
-	while (true) {
-		spin_lock(&inode->i_lock);
-		if (!(inode->i_state & I_DIRTY)) {
-			inode->i_data.backing_dev_info = dst;
-			spin_unlock(&inode->i_lock);
-			return;
-		}
-		spin_unlock(&inode->i_lock);
-		WARN_ON_ONCE(write_inode_now(inode, true));
+	struct backing_dev_info *old = inode->i_data.backing_dev_info;
+	bool wakeup_bdi = false;
+
+	if (unlikely(dst == old))		/* deadlock avoidance */
+		return;
+	bdi_lock_two(&old->wb, &dst->wb);
+	spin_lock(&inode->i_lock);
+	inode->i_data.backing_dev_info = dst;
+	if (inode->i_state & I_DIRTY) {
+		if (bdi_cap_writeback_dirty(dst) && !wb_has_dirty_io(&dst->wb))
+			wakeup_bdi = true;
+		list_move(&inode->i_wb_list, &dst->wb.b_dirty);
 	}
+	spin_unlock(&inode->i_lock);
+	spin_unlock(&old->wb.list_lock);
+	spin_unlock(&dst->wb.list_lock);
+
+	if (wakeup_bdi)
+		bdi_wakeup_thread_delayed(dst);
 }
 
 /* Kill _all_ buffers and pagecache , dirty or not.. */
@@ -73,7 +83,7 @@ void kill_bdev(struct block_device *bdev)
 {
 	struct address_space *mapping = bdev->bd_inode->i_mapping;
 
-	if (mapping->nrpages == 0 && mapping->nrshadows == 0)
+	if (mapping->nrpages == 0)
 		return;
 
 	invalidate_bh_lrus();
@@ -155,15 +165,14 @@ blkdev_get_block(struct inode *inode, sector_t iblock,
 }
 
 static ssize_t
-blkdev_direct_IO(int rw, struct kiocb *iocb, struct iov_iter *iter,
-			loff_t offset)
+blkdev_direct_IO(int rw, struct kiocb *iocb, const struct iovec *iov,
+			loff_t offset, unsigned long nr_segs)
 {
 	struct file *file = iocb->ki_filp;
 	struct inode *inode = file->f_mapping->host;
 
-	return __blockdev_direct_IO(rw, iocb, inode, I_BDEV(inode), iter,
-				    offset, blkdev_get_block,
-				    NULL, NULL, 0);
+	return __blockdev_direct_IO(rw, iocb, inode, I_BDEV(inode), iov, offset,
+				    nr_segs, blkdev_get_block, NULL, NULL, 0);
 }
 
 int __sync_blockdev(struct block_device *bdev, int wait)
@@ -294,12 +303,6 @@ static int blkdev_readpage(struct file * file, struct page * page)
 	return block_read_full_page(page, blkdev_get_block);
 }
 
-static int blkdev_readpages(struct file *file, struct address_space *mapping,
-			struct list_head *pages, unsigned nr_pages)
-{
-	return mpage_readpages(mapping, pages, nr_pages, blkdev_get_block);
-}
-
 static int blkdev_write_begin(struct file *file, struct address_space *mapping,
 			loff_t pos, unsigned len, unsigned flags,
 			struct page **pagep, void **fsdata)
@@ -329,10 +332,31 @@ static int blkdev_write_end(struct file *file, struct address_space *mapping,
 static loff_t block_llseek(struct file *file, loff_t offset, int whence)
 {
 	struct inode *bd_inode = file->f_mapping->host;
+	loff_t size;
 	loff_t retval;
 
 	mutex_lock(&bd_inode->i_mutex);
-	retval = fixed_size_llseek(file, offset, whence, i_size_read(bd_inode));
+	size = i_size_read(bd_inode);
+
+	retval = -EINVAL;
+	switch (whence) {
+		case SEEK_END:
+			offset += size;
+			break;
+		case SEEK_CUR:
+			offset += file->f_pos;
+		case SEEK_SET:
+			break;
+		default:
+			goto out;
+	}
+	if (offset >= 0 && offset <= size) {
+		if (offset != file->f_pos) {
+			file->f_pos = offset;
+		}
+		retval = offset;
+	}
+out:
 	mutex_unlock(&bd_inode->i_mutex);
 	return retval;
 }
@@ -359,69 +383,6 @@ int blkdev_fsync(struct file *filp, loff_t start, loff_t end, int datasync)
 	return error;
 }
 EXPORT_SYMBOL(blkdev_fsync);
-
-/**
- * bdev_read_page() - Start reading a page from a block device
- * @bdev: The device to read the page from
- * @sector: The offset on the device to read the page to (need not be aligned)
- * @page: The page to read
- *
- * On entry, the page should be locked.  It will be unlocked when the page
- * has been read.  If the block driver implements rw_page synchronously,
- * that will be true on exit from this function, but it need not be.
- *
- * Errors returned by this function are usually "soft", eg out of memory, or
- * queue full; callers should try a different route to read this page rather
- * than propagate an error back up the stack.
- *
- * Return: negative errno if an error occurs, 0 if submission was successful.
- */
-int bdev_read_page(struct block_device *bdev, sector_t sector,
-			struct page *page)
-{
-	const struct block_device_operations *ops = bdev->bd_disk->fops;
-	if (!ops->rw_page)
-		return -EOPNOTSUPP;
-	return ops->rw_page(bdev, sector + get_start_sect(bdev), page, READ);
-}
-EXPORT_SYMBOL_GPL(bdev_read_page);
-
-/**
- * bdev_write_page() - Start writing a page to a block device
- * @bdev: The device to write the page to
- * @sector: The offset on the device to write the page to (need not be aligned)
- * @page: The page to write
- * @wbc: The writeback_control for the write
- *
- * On entry, the page should be locked and not currently under writeback.
- * On exit, if the write started successfully, the page will be unlocked and
- * under writeback.  If the write failed already (eg the driver failed to
- * queue the page to the device), the page will still be locked.  If the
- * caller is a ->writepage implementation, it will need to unlock the page.
- *
- * Errors returned by this function are usually "soft", eg out of memory, or
- * queue full; callers should try a different route to write this page rather
- * than propagate an error back up the stack.
- *
- * Return: negative errno if an error occurs, 0 if submission was successful.
- */
-int bdev_write_page(struct block_device *bdev, sector_t sector,
-			struct page *page, struct writeback_control *wbc)
-{
-	int result;
-	int rw = (wbc->sync_mode == WB_SYNC_ALL) ? WRITE_SYNC : WRITE;
-	const struct block_device_operations *ops = bdev->bd_disk->fops;
-	if (!ops->rw_page)
-		return -EOPNOTSUPP;
-	set_page_writeback(page);
-	result = ops->rw_page(bdev, sector + get_start_sect(bdev), page, rw);
-	if (result)
-		end_page_writeback(page);
-	else
-		unlock_page(page);
-	return result;
-}
-EXPORT_SYMBOL_GPL(bdev_write_page);
 
 /*
  * pseudo-fs
@@ -479,7 +440,7 @@ static void bdev_evict_inode(struct inode *inode)
 {
 	struct block_device *bdev = &BDEV_I(inode)->bdev;
 	struct list_head *p;
-	truncate_inode_pages_final(&inode->i_data);
+	truncate_inode_pages(&inode->i_data, 0);
 	invalidate_inode_buffers(inode); /* is it needed here? */
 	clear_inode(inode);
 	spin_lock(&bdev_lock);
@@ -652,7 +613,7 @@ static struct block_device *bd_acquire(struct inode *inode)
 	return bdev;
 }
 
-int sb_is_blkdev_sb(struct super_block *sb)
+static inline int sb_is_blkdev_sb(struct super_block *sb)
 {
 	return sb == blockdev_superblock;
 }
@@ -1169,6 +1130,8 @@ static int __blkdev_get(struct block_device *bdev, fmode_t mode, int for_part)
 			if (!ret) {
 				bd_set_size(bdev,(loff_t)get_capacity(disk)<<9);
 				bdi = blk_get_backing_dev_info(bdev);
+				if (bdi == NULL)
+					bdi = &default_backing_dev_info;
 				bdev_inode_switch_bdi(bdev->bd_inode, bdi);
 			}
 
@@ -1566,40 +1529,44 @@ static long block_ioctl(struct file *file, unsigned cmd, unsigned long arg)
  * Does not take i_mutex for the write and thus is not for general purpose
  * use.
  */
-ssize_t blkdev_write_iter(struct kiocb *iocb, struct iov_iter *from)
+ssize_t blkdev_aio_write(struct kiocb *iocb, const struct iovec *iov,
+			 unsigned long nr_segs, loff_t pos)
 {
 	struct file *file = iocb->ki_filp;
 	struct blk_plug plug;
 	ssize_t ret;
 
+	BUG_ON(iocb->ki_pos != pos);
+
 	blk_start_plug(&plug);
-	ret = __generic_file_write_iter(iocb, from);
-	if (ret > 0) {
+	ret = __generic_file_aio_write(iocb, iov, nr_segs, &iocb->ki_pos);
+	if (ret > 0 || ret == -EIOCBQUEUED) {
 		ssize_t err;
-		err = generic_write_sync(file, iocb->ki_pos - ret, ret);
-		if (err < 0)
+
+		err = generic_write_sync(file, pos, ret);
+		if (err < 0 && ret > 0)
 			ret = err;
 	}
 	blk_finish_plug(&plug);
 	return ret;
 }
-EXPORT_SYMBOL_GPL(blkdev_write_iter);
+EXPORT_SYMBOL_GPL(blkdev_aio_write);
 
-ssize_t blkdev_read_iter(struct kiocb *iocb, struct iov_iter *to)
+static ssize_t blkdev_aio_read(struct kiocb *iocb, const struct iovec *iov,
+			 unsigned long nr_segs, loff_t pos)
 {
 	struct file *file = iocb->ki_filp;
 	struct inode *bd_inode = file->f_mapping->host;
 	loff_t size = i_size_read(bd_inode);
-	loff_t pos = iocb->ki_pos;
 
 	if (pos >= size)
 		return 0;
 
 	size -= pos;
-	iov_iter_truncate(to, size);
-	return generic_file_read_iter(iocb, to);
+	if (size < iocb->ki_left)
+		nr_segs = iov_shorten((struct iovec *)iov, nr_segs, size);
+	return generic_file_aio_read(iocb, iov, nr_segs, pos);
 }
-EXPORT_SYMBOL_GPL(blkdev_read_iter);
 
 /*
  * Try to release a page associated with block device when the system
@@ -1617,24 +1584,22 @@ static int blkdev_releasepage(struct page *page, gfp_t wait)
 
 static const struct address_space_operations def_blk_aops = {
 	.readpage	= blkdev_readpage,
-	.readpages	= blkdev_readpages,
 	.writepage	= blkdev_writepage,
 	.write_begin	= blkdev_write_begin,
 	.write_end	= blkdev_write_end,
 	.writepages	= generic_writepages,
 	.releasepage	= blkdev_releasepage,
 	.direct_IO	= blkdev_direct_IO,
-	.is_dirty_writeback = buffer_check_dirty_writeback,
 };
 
 const struct file_operations def_blk_fops = {
 	.open		= blkdev_open,
 	.release	= blkdev_close,
 	.llseek		= block_llseek,
-	.read		= new_sync_read,
-	.write		= new_sync_write,
-	.read_iter	= blkdev_read_iter,
-	.write_iter	= blkdev_write_iter,
+	.read		= do_sync_read,
+	.write		= do_sync_write,
+	.aio_read	= blkdev_aio_read,
+	.aio_write	= blkdev_aio_write,
 	.mmap		= generic_file_mmap,
 	.fsync		= blkdev_fsync,
 	.unlocked_ioctl	= block_ioctl,
@@ -1642,7 +1607,7 @@ const struct file_operations def_blk_fops = {
 	.compat_ioctl	= compat_blkdev_ioctl,
 #endif
 	.splice_read	= generic_file_splice_read,
-	.splice_write	= iter_file_splice_write,
+	.splice_write	= generic_file_splice_write,
 };
 
 int ioctl_by_bdev(struct block_device *bdev, unsigned cmd, unsigned long arg)

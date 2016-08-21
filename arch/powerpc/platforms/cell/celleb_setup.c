@@ -102,7 +102,7 @@ static void __init celleb_setup_arch_common(void)
 #endif
 }
 
-static const struct of_device_id celleb_bus_ids[] __initconst = {
+static struct of_device_id celleb_bus_ids[] __initdata = {
 	{ .type = "scc", },
 	{ .type = "ioif", },	/* old style */
 	{},

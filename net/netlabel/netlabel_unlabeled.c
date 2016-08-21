@@ -23,7 +23,8 @@
  * the GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program;  if not, see <http://www.gnu.org/licenses/>.
+ * along with this program;  if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  *
  */
 
@@ -707,7 +708,7 @@ unlhsh_remove_return:
  * netlbl_unlhsh_netdev_handler - Network device notification handler
  * @this: notifier block
  * @event: the event
- * @ptr: the netdevice notifier info (cast to void)
+ * @ptr: the network device (cast to void)
  *
  * Description:
  * Handle network device events, although at present all we care about is a
@@ -716,9 +717,10 @@ unlhsh_remove_return:
  *
  */
 static int netlbl_unlhsh_netdev_handler(struct notifier_block *this,
-					unsigned long event, void *ptr)
+					unsigned long event,
+					void *ptr)
 {
-	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
+	struct net_device *dev = ptr;
 	struct netlbl_unlhsh_iface *iface = NULL;
 
 	if (!net_eq(dev_net(dev), &init_net))
@@ -1322,7 +1324,7 @@ unlabel_staticlistdef_return:
  * NetLabel Generic NETLINK Command Definitions
  */
 
-static const struct genl_ops netlbl_unlabel_genl_ops[] = {
+static struct genl_ops netlbl_unlabel_genl_ops[] = {
 	{
 	.cmd = NLBL_UNLABEL_C_STATICADD,
 	.flags = GENL_ADMIN_PERM,
@@ -1396,7 +1398,7 @@ static const struct genl_ops netlbl_unlabel_genl_ops[] = {
 int __init netlbl_unlabel_genl_init(void)
 {
 	return genl_register_family_with_ops(&netlbl_unlabel_gnl_family,
-					     netlbl_unlabel_genl_ops);
+		netlbl_unlabel_genl_ops, ARRAY_SIZE(netlbl_unlabel_genl_ops));
 }
 
 /*
@@ -1540,7 +1542,7 @@ int __init netlbl_unlabel_defconf(void)
 	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
 	if (entry == NULL)
 		return -ENOMEM;
-	entry->def.type = NETLBL_NLTYPE_UNLABELED;
+	entry->type = NETLBL_NLTYPE_UNLABELED;
 	ret_val = netlbl_domhsh_add_default(entry, &audit_info);
 	if (ret_val != 0)
 		return ret_val;

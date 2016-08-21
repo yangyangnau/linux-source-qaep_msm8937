@@ -576,6 +576,7 @@ static int cx25821_vidioc_g_fmt_vid_cap(struct file *file, void *priv,
 	f->fmt.pix.bytesperline = (chan->width * chan->fmt->depth) >> 3;
 	f->fmt.pix.sizeimage = chan->height * f->fmt.pix.bytesperline;
 	f->fmt.pix.colorspace = V4L2_COLORSPACE_SMPTE170M;
+	f->fmt.pix.priv = 0;
 
 	return 0;
 }
@@ -614,6 +615,7 @@ static int cx25821_vidioc_try_fmt_vid_cap(struct file *file, void *priv,
 	f->fmt.pix.bytesperline = (f->fmt.pix.width * fmt->depth) >> 3;
 	f->fmt.pix.sizeimage = f->fmt.pix.height * f->fmt.pix.bytesperline;
 	f->fmt.pix.colorspace = V4L2_COLORSPACE_SMPTE170M;
+	f->fmt.pix.priv = 0;
 
 	return 0;
 }
@@ -865,6 +867,7 @@ static int cx25821_vidioc_try_fmt_vid_out(struct file *file, void *priv,
 	f->fmt.pix.bytesperline = (f->fmt.pix.width * fmt->depth) >> 3;
 	f->fmt.pix.sizeimage = f->fmt.pix.height * f->fmt.pix.bytesperline;
 	f->fmt.pix.colorspace = V4L2_COLORSPACE_SMPTE170M;
+	f->fmt.pix.priv = 0;
 	return 0;
 }
 
@@ -1106,6 +1109,7 @@ int cx25821_video_register(struct cx25821_dev *dev)
 		else
 			vdev->vfl_dir = VFL_DIR_TX;
 		vdev->lock = &dev->lock;
+		set_bit(V4L2_FL_USE_FH_PRIO, &vdev->flags);
 		snprintf(vdev->name, sizeof(vdev->name), "%s #%d", dev->name, i);
 		video_set_drvdata(vdev, chan);
 

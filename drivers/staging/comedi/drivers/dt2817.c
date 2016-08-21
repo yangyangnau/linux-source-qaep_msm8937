@@ -14,6 +14,11 @@
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
 */
 /*
 Driver: dt2817
@@ -33,34 +38,39 @@ Configuration options:
   [0] - I/O port base base address
 */
 
-#include <linux/module.h>
 #include "../comedidev.h"
+
+#include <linux/ioport.h>
+
+#define DT2817_SIZE 5
 
 #define DT2817_CR 0
 #define DT2817_DATA 1
 
 static int dt2817_dio_insn_config(struct comedi_device *dev,
 				  struct comedi_subdevice *s,
-				  struct comedi_insn *insn,
-				  unsigned int *data)
+				  struct comedi_insn *insn, unsigned int *data)
 {
-	unsigned int chan = CR_CHAN(insn->chanspec);
-	unsigned int oe = 0;
-	unsigned int mask;
-	int ret;
+	int mask;
+	int chan;
+	int oe = 0;
 
+	if (insn->n != 1)
+		return -EINVAL;
+
+	chan = CR_CHAN(insn->chanspec);
 	if (chan < 8)
-		mask = 0x000000ff;
+		mask = 0xff;
 	else if (chan < 16)
-		mask = 0x0000ff00;
+		mask = 0xff00;
 	else if (chan < 24)
-		mask = 0x00ff0000;
+		mask = 0xff0000;
 	else
 		mask = 0xff000000;
-
-	ret = comedi_dio_insn_config(dev, s, insn, data, mask);
-	if (ret)
-		return ret;
+	if (data[0])
+		s->io_bits |= mask;
+	else
+		s->io_bits &= ~mask;
 
 	if (s->io_bits & 0x000000ff)
 		oe |= 0x1;
@@ -73,36 +83,41 @@ static int dt2817_dio_insn_config(struct comedi_device *dev,
 
 	outb(oe, dev->iobase + DT2817_CR);
 
-	return insn->n;
+	return 1;
 }
 
 static int dt2817_dio_insn_bits(struct comedi_device *dev,
 				struct comedi_subdevice *s,
-				struct comedi_insn *insn,
-				unsigned int *data)
+				struct comedi_insn *insn, unsigned int *data)
 {
-	unsigned long iobase = dev->iobase + DT2817_DATA;
-	unsigned int mask;
-	unsigned int val;
+	unsigned int changed;
 
-	mask = comedi_dio_update_state(s, data);
-	if (mask) {
-		if (mask & 0x000000ff)
-			outb(s->state & 0xff, iobase + 0);
-		if (mask & 0x0000ff00)
-			outb((s->state >> 8) & 0xff, iobase + 1);
-		if (mask & 0x00ff0000)
-			outb((s->state >> 16) & 0xff, iobase + 2);
-		if (mask & 0xff000000)
-			outb((s->state >> 24) & 0xff, iobase + 3);
+	/* It's questionable whether it is more important in
+	 * a driver like this to be deterministic or fast.
+	 * We choose fast. */
+
+	if (data[0]) {
+		changed = s->state;
+		s->state &= ~data[0];
+		s->state |= (data[0] & data[1]);
+		changed ^= s->state;
+		changed &= s->io_bits;
+		if (changed & 0x000000ff)
+			outb(s->state & 0xff, dev->iobase + DT2817_DATA + 0);
+		if (changed & 0x0000ff00)
+			outb((s->state >> 8) & 0xff,
+			     dev->iobase + DT2817_DATA + 1);
+		if (changed & 0x00ff0000)
+			outb((s->state >> 16) & 0xff,
+			     dev->iobase + DT2817_DATA + 2);
+		if (changed & 0xff000000)
+			outb((s->state >> 24) & 0xff,
+			     dev->iobase + DT2817_DATA + 3);
 	}
-
-	val = inb(iobase + 0);
-	val |= (inb(iobase + 1) << 8);
-	val |= (inb(iobase + 2) << 16);
-	val |= (inb(iobase + 3) << 24);
-
-	data[1] = val;
+	data[1] = inb(dev->iobase + DT2817_DATA + 0);
+	data[1] |= (inb(dev->iobase + DT2817_DATA + 1) << 8);
+	data[1] |= (inb(dev->iobase + DT2817_DATA + 2) << 16);
+	data[1] |= (inb(dev->iobase + DT2817_DATA + 3) << 24);
 
 	return insn->n;
 }
@@ -112,7 +127,7 @@ static int dt2817_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	int ret;
 	struct comedi_subdevice *s;
 
-	ret = comedi_request_region(dev, it->options[0], 0x5);
+	ret = comedi_request_region(dev, it->options[0], DT2817_SIZE);
 	if (ret)
 		return ret;
 

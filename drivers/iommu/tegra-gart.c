@@ -252,7 +252,7 @@ static int gart_iommu_map(struct iommu_domain *domain, unsigned long iova,
 	spin_lock_irqsave(&gart->pte_lock, flags);
 	pfn = __phys_to_pfn(pa);
 	if (!pfn_valid(pfn)) {
-		dev_err(gart->dev, "Invalid page: %pa\n", &pa);
+		dev_err(gart->dev, "Invalid page: %08x\n", pa);
 		spin_unlock_irqrestore(&gart->pte_lock, flags);
 		return -EINVAL;
 	}
@@ -295,21 +295,21 @@ static phys_addr_t gart_iommu_iova_to_phys(struct iommu_domain *domain,
 
 	pa = (pte & GART_PAGE_MASK);
 	if (!pfn_valid(__phys_to_pfn(pa))) {
-		dev_err(gart->dev, "No entry for %08llx:%pa\n",
-			 (unsigned long long)iova, &pa);
+		dev_err(gart->dev, "No entry for %08llx:%08x\n",
+			 (unsigned long long)iova, pa);
 		gart_dump_table(gart);
 		return -EINVAL;
 	}
 	return pa;
 }
 
-static bool gart_iommu_capable(enum iommu_cap cap)
+static int gart_iommu_domain_has_cap(struct iommu_domain *domain,
+				     unsigned long cap)
 {
-	return false;
+	return 0;
 }
 
-static const struct iommu_ops gart_iommu_ops = {
-	.capable	= gart_iommu_capable,
+static struct iommu_ops gart_iommu_ops = {
 	.domain_init	= gart_iommu_domain_init,
 	.domain_destroy	= gart_iommu_domain_destroy,
 	.attach_dev	= gart_iommu_attach_dev,
@@ -317,6 +317,7 @@ static const struct iommu_ops gart_iommu_ops = {
 	.map		= gart_iommu_map,
 	.unmap		= gart_iommu_unmap,
 	.iova_to_phys	= gart_iommu_iova_to_phys,
+	.domain_has_cap	= gart_iommu_domain_has_cap,
 	.pgsize_bitmap	= GART_IOMMU_PGSIZES,
 };
 
@@ -350,6 +351,7 @@ static int tegra_gart_probe(struct platform_device *pdev)
 	struct gart_device *gart;
 	struct resource *res, *res_remap;
 	void __iomem *gart_regs;
+	int err;
 	struct device *dev = &pdev->dev;
 
 	if (gart_handle)
@@ -374,7 +376,8 @@ static int tegra_gart_probe(struct platform_device *pdev)
 	gart_regs = devm_ioremap(dev, res->start, resource_size(res));
 	if (!gart_regs) {
 		dev_err(dev, "failed to remap GART registers\n");
-		return -ENXIO;
+		err = -ENXIO;
+		goto fail;
 	}
 
 	gart->dev = &pdev->dev;
@@ -388,7 +391,8 @@ static int tegra_gart_probe(struct platform_device *pdev)
 	gart->savedata = vmalloc(sizeof(u32) * gart->page_count);
 	if (!gart->savedata) {
 		dev_err(dev, "failed to allocate context save area\n");
-		return -ENOMEM;
+		err = -ENOMEM;
+		goto fail;
 	}
 
 	platform_set_drvdata(pdev, gart);
@@ -397,25 +401,37 @@ static int tegra_gart_probe(struct platform_device *pdev)
 	gart_handle = gart;
 	bus_set_iommu(&platform_bus_type, &gart_iommu_ops);
 	return 0;
+
+fail:
+	if (gart_regs)
+		devm_iounmap(dev, gart_regs);
+	if (gart && gart->savedata)
+		vfree(gart->savedata);
+	devm_kfree(dev, gart);
+	return err;
 }
 
 static int tegra_gart_remove(struct platform_device *pdev)
 {
 	struct gart_device *gart = platform_get_drvdata(pdev);
+	struct device *dev = gart->dev;
 
 	writel(0, gart->regs + GART_CONFIG);
 	if (gart->savedata)
 		vfree(gart->savedata);
+	if (gart->regs)
+		devm_iounmap(dev, gart->regs);
+	devm_kfree(dev, gart);
 	gart_handle = NULL;
 	return 0;
 }
 
-static const struct dev_pm_ops tegra_gart_pm_ops = {
+const struct dev_pm_ops tegra_gart_pm_ops = {
 	.suspend	= tegra_gart_suspend,
 	.resume		= tegra_gart_resume,
 };
 
-static const struct of_device_id tegra_gart_of_match[] = {
+static struct of_device_id tegra_gart_of_match[] = {
 	{ .compatible = "nvidia,tegra20-gart", },
 	{ },
 };

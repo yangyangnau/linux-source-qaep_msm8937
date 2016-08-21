@@ -146,14 +146,15 @@ static void __init cache_build_info(void)
 	ct.raw = ecag(EXTRACT_TOPOLOGY, 0, 0);
 	for (level = 0; level < CACHE_MAX_LEVEL; level++) {
 		switch (ct.ci[level].scope) {
+		case CACHE_SCOPE_NOTEXISTS:
+		case CACHE_SCOPE_RESERVED:
+			return;
 		case CACHE_SCOPE_SHARED:
 			private = 0;
 			break;
 		case CACHE_SCOPE_PRIVATE:
 			private = 1;
 			break;
-		default:
-			return;
 		}
 		if (ct.ci[level].type == CACHE_TYPE_SEPARATE) {
 			rc  = cache_add(level, private, CACHE_TYPE_DATA);
@@ -172,7 +173,7 @@ error:
 	}
 }
 
-static struct cache_dir *cache_create_cache_dir(int cpu)
+static struct cache_dir *__cpuinit cache_create_cache_dir(int cpu)
 {
 	struct cache_dir *cache_dir;
 	struct kobject *kobj = NULL;
@@ -288,8 +289,9 @@ static struct kobj_type cache_index_type = {
 	.default_attrs = cache_index_default_attrs,
 };
 
-static int cache_create_index_dir(struct cache_dir *cache_dir,
-				  struct cache *cache, int index, int cpu)
+static int __cpuinit cache_create_index_dir(struct cache_dir *cache_dir,
+					    struct cache *cache, int index,
+					    int cpu)
 {
 	struct cache_index_dir *index_dir;
 	int rc;
@@ -311,7 +313,7 @@ out:
 	return rc;
 }
 
-static int cache_add_cpu(int cpu)
+static int __cpuinit cache_add_cpu(int cpu)
 {
 	struct cache_dir *cache_dir;
 	struct cache *cache;
@@ -333,7 +335,7 @@ static int cache_add_cpu(int cpu)
 	return 0;
 }
 
-static void cache_remove_cpu(int cpu)
+static void __cpuinit cache_remove_cpu(int cpu)
 {
 	struct cache_index_dir *index, *next;
 	struct cache_dir *cache_dir;
@@ -352,8 +354,8 @@ static void cache_remove_cpu(int cpu)
 	cache_dir_cpu[cpu] = NULL;
 }
 
-static int cache_hotplug(struct notifier_block *nfb, unsigned long action,
-			 void *hcpu)
+static int __cpuinit cache_hotplug(struct notifier_block *nfb,
+				   unsigned long action, void *hcpu)
 {
 	int cpu = (long)hcpu;
 	int rc = 0;
@@ -378,12 +380,9 @@ static int __init cache_init(void)
 	if (!test_facility(34))
 		return 0;
 	cache_build_info();
-
-	cpu_notifier_register_begin();
 	for_each_online_cpu(cpu)
 		cache_add_cpu(cpu);
-	__hotcpu_notifier(cache_hotplug, 0);
-	cpu_notifier_register_done();
+	hotcpu_notifier(cache_hotplug, 0);
 	return 0;
 }
 device_initcall(cache_init);

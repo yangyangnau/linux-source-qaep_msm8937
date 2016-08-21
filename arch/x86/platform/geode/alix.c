@@ -98,7 +98,7 @@ static struct platform_device alix_leds_dev = {
 	.dev.platform_data = &alix_leds_data,
 };
 
-static struct platform_device *alix_devs[] __initdata = {
+static struct __initdata platform_device *alix_devs[] = {
 	&alix_buttons_dev,
 	&alix_leds_dev,
 };

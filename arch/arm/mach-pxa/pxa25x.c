@@ -331,12 +331,7 @@ static struct map_desc pxa25x_io_desc[] __initdata = {
 	{	/* Mem Ctl */
 		.virtual	= (unsigned long)SMEMC_VIRT,
 		.pfn		= __phys_to_pfn(PXA2XX_SMEMC_BASE),
-		.length		= SMEMC_SIZE,
-		.type		= MT_DEVICE
-	}, {	/* UNCACHED_PHYS_0 */
-		.virtual	= UNCACHED_PHYS_0,
-		.pfn		= __phys_to_pfn(0x00000000),
-		.length		= UNCACHED_PHYS_0_SIZE,
+		.length		= 0x00200000,
 		.type		= MT_DEVICE
 	},
 };

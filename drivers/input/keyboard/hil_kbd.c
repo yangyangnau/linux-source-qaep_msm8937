@@ -36,6 +36,7 @@
 #include <linux/serio.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/init.h>
 #include <linux/completion.h>
 #include <linux/slab.h>
 #include <linux/pci_ids.h>

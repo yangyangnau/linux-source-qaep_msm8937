@@ -21,7 +21,8 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, see <http://www.gnu.org/licenses/>.
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
 #include "asix.h"
@@ -160,8 +161,7 @@ static const struct net_device_ops ax88172a_netdev_ops = {
 	.ndo_set_rx_mode        = asix_set_multicast,
 };
 
-static int ax88172a_get_settings(struct net_device *net,
-				 struct ethtool_cmd *cmd)
+int ax88172a_get_settings(struct net_device *net, struct ethtool_cmd *cmd)
 {
 	if (!net->phydev)
 		return -ENODEV;
@@ -169,8 +169,7 @@ static int ax88172a_get_settings(struct net_device *net,
 	return phy_ethtool_gset(net->phydev, cmd);
 }
 
-static int ax88172a_set_settings(struct net_device *net,
-				 struct ethtool_cmd *cmd)
+int ax88172a_set_settings(struct net_device *net, struct ethtool_cmd *cmd)
 {
 	if (!net->phydev)
 		return -ENODEV;
@@ -178,7 +177,7 @@ static int ax88172a_set_settings(struct net_device *net,
 	return phy_ethtool_sset(net->phydev, cmd);
 }
 
-static int ax88172a_nway_reset(struct net_device *net)
+int ax88172a_nway_reset(struct net_device *net)
 {
 	if (!net->phydev)
 		return -ENODEV;

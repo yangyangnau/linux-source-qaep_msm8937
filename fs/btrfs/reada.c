@@ -189,8 +189,8 @@ static int __readahead_hook(struct btrfs_root *root, struct extent_buffer *eb,
 			 */
 #ifdef DEBUG
 			if (rec->generation != generation) {
-				btrfs_debug(root->fs_info,
-					   "generation mismatch for (%llu,%d,%llu) %llu != %llu",
+				printk(KERN_DEBUG "generation mismatch for "
+						"(%llu,%d,%llu) %llu != %llu\n",
 				       key.objectid, key.type, key.offset,
 				       rec->generation, generation);
 			}
@@ -347,7 +347,7 @@ static struct reada_extent *reada_find_extent(struct btrfs_root *root,
 	if (!re)
 		return NULL;
 
-	blocksize = root->nodesize;
+	blocksize = btrfs_level_size(root, level);
 	re->logical = logical;
 	re->blocksize = blocksize;
 	re->top = *top;
@@ -365,9 +365,8 @@ static struct reada_extent *reada_find_extent(struct btrfs_root *root,
 		goto error;
 
 	if (bbio->num_stripes > BTRFS_MAX_MIRRORS) {
-		btrfs_err(root->fs_info,
-			   "readahead: more than %d copies not supported",
-			   BTRFS_MAX_MIRRORS);
+		printk(KERN_ERR "btrfs readahead: more than %d copies not "
+				"supported", BTRFS_MAX_MIRRORS);
 		goto error;
 	}
 
@@ -428,13 +427,8 @@ static struct reada_extent *reada_find_extent(struct btrfs_root *root,
 			continue;
 		}
 		if (!dev->bdev) {
-			/*
-			 * cannot read ahead on missing device, but for RAID5/6,
-			 * REQ_GET_READ_MIRRORS return 1. So don't skip missing
-			 * device for such case.
-			 */
-			if (nzones > 1)
-				continue;
+			/* cannot read ahead on missing device */
+			continue;
 		}
 		if (dev_replace_is_ongoing &&
 		    dev == fs_info->dev_replace.tgtdev) {
@@ -798,11 +792,10 @@ static void reada_start_machine(struct btrfs_fs_info *fs_info)
 		/* FIXME we cannot handle this properly right now */
 		BUG();
 	}
-	btrfs_init_work(&rmw->work, btrfs_readahead_helper,
-			reada_start_machine_worker, NULL, NULL);
+	rmw->work.func = reada_start_machine_worker;
 	rmw->fs_info = fs_info;
 
-	btrfs_queue_work(fs_info->readahead_workers, &rmw->work);
+	btrfs_queue_worker(&fs_info->readahead_workers, &rmw->work);
 }
 
 #ifdef DEBUG

@@ -90,14 +90,14 @@ static void dwmac100_dump_dma_regs(void __iomem *ioaddr)
 {
 	int i;
 
-	pr_debug("DWMAC 100 DMA CSR\n");
+	CHIP_DBG(KERN_DEBUG "DWMAC 100 DMA CSR\n");
 	for (i = 0; i < 9; i++)
 		pr_debug("\t CSR%d (offset 0x%x): 0x%08x\n", i,
 			 (DMA_BUS_MODE + i * 4),
 			 readl(ioaddr + DMA_BUS_MODE + i * 4));
-
-	pr_debug("\tCSR20 (0x%x): 0x%08x, CSR21 (0x%x): 0x%08x\n",
-		 DMA_CUR_TX_BUF_ADDR, readl(ioaddr + DMA_CUR_TX_BUF_ADDR),
+	CHIP_DBG(KERN_DEBUG "\t CSR20 (offset 0x%x): 0x%08x\n",
+		 DMA_CUR_TX_BUF_ADDR, readl(ioaddr + DMA_CUR_TX_BUF_ADDR));
+	CHIP_DBG(KERN_DEBUG "\t CSR21 (offset 0x%x): 0x%08x\n",
 		 DMA_CUR_RX_BUF_ADDR, readl(ioaddr + DMA_CUR_RX_BUF_ADDR));
 }
 

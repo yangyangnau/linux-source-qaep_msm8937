@@ -8,7 +8,6 @@
  * By Greg Banks <gnb@melbourne.sgi.com>
  * Copyright (c) 2008 Silicon Graphics Inc.  All Rights Reserved.
  * Copyright (C) 2011 Bart Van Assche.  All Rights Reserved.
- * Copyright (C) 2013 Du, Changbin <changbin.du@gmail.com>
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ":%s: " fmt, __func__
@@ -25,7 +24,6 @@
 #include <linux/sysctl.h>
 #include <linux/ctype.h>
 #include <linux/string.h>
-#include <linux/parser.h>
 #include <linux/string_helpers.h>
 #include <linux/uaccess.h>
 #include <linux/dynamic_debug.h>
@@ -149,8 +147,7 @@ static int ddebug_change(const struct ddebug_query *query,
 	list_for_each_entry(dt, &ddebug_tables, link) {
 
 		/* match against the module name */
-		if (query->module &&
-		    !match_wildcard(query->module, dt->mod_name))
+		if (query->module && strcmp(query->module, dt->mod_name))
 			continue;
 
 		for (i = 0; i < dt->num_ddebugs; i++) {
@@ -158,16 +155,14 @@ static int ddebug_change(const struct ddebug_query *query,
 
 			/* match against the source filename */
 			if (query->filename &&
-			    !match_wildcard(query->filename, dp->filename) &&
-			    !match_wildcard(query->filename,
-					   kbasename(dp->filename)) &&
-			    !match_wildcard(query->filename,
-					   trim_prefix(dp->filename)))
+			    strcmp(query->filename, dp->filename) &&
+			    strcmp(query->filename, kbasename(dp->filename)) &&
+			    strcmp(query->filename, trim_prefix(dp->filename)))
 				continue;
 
 			/* match against the function */
 			if (query->function &&
-			    !match_wildcard(query->function, dp->function))
+			    strcmp(query->function, dp->function))
 				continue;
 
 			/* match against the format */
@@ -268,12 +263,14 @@ static int ddebug_tokenize(char *buf, char *words[], int maxwords)
  */
 static inline int parse_lineno(const char *str, unsigned int *val)
 {
+	char *end = NULL;
 	BUG_ON(str == NULL);
 	if (*str == '\0') {
 		*val = 0;
 		return 0;
 	}
-	if (kstrtouint(str, 10, val) < 0) {
+	*val = simple_strtoul(str, &end, 10);
+	if (end == NULL || end == str || *end != '\0') {
 		pr_err("bad line-number: %s\n", str);
 		return -EINVAL;
 	}
@@ -312,7 +309,7 @@ static int ddebug_parse_query(char *words[], int nwords,
 			struct ddebug_query *query, const char *modname)
 {
 	unsigned int i;
-	int rc = 0;
+	int rc;
 
 	/* check we have an even number of words */
 	if (nwords % 2 != 0) {
@@ -346,14 +343,14 @@ static int ddebug_parse_query(char *words[], int nwords,
 			}
 			if (last)
 				*last++ = '\0';
-			if (parse_lineno(first, &query->first_lineno) < 0)
+			if (parse_lineno(first, &query->first_lineno) < 0) {
+				pr_err("line-number is <0\n");
 				return -EINVAL;
+			}
 			if (last) {
 				/* range <first>-<last> */
-				if (parse_lineno(last, &query->last_lineno) < 0)
-					return -EINVAL;
-
-				if (query->last_lineno < query->first_lineno) {
+				if (parse_lineno(last, &query->last_lineno)
+				    < query->first_lineno) {
 					pr_err("last-line:%d < 1st-line:%d\n",
 						query->last_lineno,
 						query->first_lineno);
@@ -537,9 +534,10 @@ static char *dynamic_emit_prefix(const struct _ddebug *desc, char *buf)
 	return buf;
 }
 
-void __dynamic_pr_debug(struct _ddebug *descriptor, const char *fmt, ...)
+int __dynamic_pr_debug(struct _ddebug *descriptor, const char *fmt, ...)
 {
 	va_list args;
+	int res;
 	struct va_format vaf;
 	char buf[PREFIX_SIZE];
 
@@ -551,17 +549,21 @@ void __dynamic_pr_debug(struct _ddebug *descriptor, const char *fmt, ...)
 	vaf.fmt = fmt;
 	vaf.va = &args;
 
-	printk(KERN_DEBUG "%s%pV", dynamic_emit_prefix(descriptor, buf), &vaf);
+	res = printk(KERN_DEBUG "%s%pV",
+		     dynamic_emit_prefix(descriptor, buf), &vaf);
 
 	va_end(args);
+
+	return res;
 }
 EXPORT_SYMBOL(__dynamic_pr_debug);
 
-void __dynamic_dev_dbg(struct _ddebug *descriptor,
+int __dynamic_dev_dbg(struct _ddebug *descriptor,
 		      const struct device *dev, const char *fmt, ...)
 {
 	struct va_format vaf;
 	va_list args;
+	int res;
 
 	BUG_ON(!descriptor);
 	BUG_ON(!fmt);
@@ -572,27 +574,30 @@ void __dynamic_dev_dbg(struct _ddebug *descriptor,
 	vaf.va = &args;
 
 	if (!dev) {
-		printk(KERN_DEBUG "(NULL device *): %pV", &vaf);
+		res = printk(KERN_DEBUG "(NULL device *): %pV", &vaf);
 	} else {
 		char buf[PREFIX_SIZE];
 
-		dev_printk_emit(7, dev, "%s%s %s: %pV",
-				dynamic_emit_prefix(descriptor, buf),
-				dev_driver_string(dev), dev_name(dev),
-				&vaf);
+		res = dev_printk_emit(7, dev, "%s%s %s: %pV",
+				      dynamic_emit_prefix(descriptor, buf),
+				      dev_driver_string(dev), dev_name(dev),
+				      &vaf);
 	}
 
 	va_end(args);
+
+	return res;
 }
 EXPORT_SYMBOL(__dynamic_dev_dbg);
 
 #ifdef CONFIG_NET
 
-void __dynamic_netdev_dbg(struct _ddebug *descriptor,
-			  const struct net_device *dev, const char *fmt, ...)
+int __dynamic_netdev_dbg(struct _ddebug *descriptor,
+			 const struct net_device *dev, const char *fmt, ...)
 {
 	struct va_format vaf;
 	va_list args;
+	int res;
 
 	BUG_ON(!descriptor);
 	BUG_ON(!fmt);
@@ -605,21 +610,21 @@ void __dynamic_netdev_dbg(struct _ddebug *descriptor,
 	if (dev && dev->dev.parent) {
 		char buf[PREFIX_SIZE];
 
-		dev_printk_emit(7, dev->dev.parent,
-				"%s%s %s %s%s: %pV",
-				dynamic_emit_prefix(descriptor, buf),
-				dev_driver_string(dev->dev.parent),
-				dev_name(dev->dev.parent),
-				netdev_name(dev), netdev_reg_state(dev),
-				&vaf);
+		res = dev_printk_emit(7, dev->dev.parent,
+				      "%s%s %s %s: %pV",
+				      dynamic_emit_prefix(descriptor, buf),
+				      dev_driver_string(dev->dev.parent),
+				      dev_name(dev->dev.parent),
+				      netdev_name(dev), &vaf);
 	} else if (dev) {
-		printk(KERN_DEBUG "%s%s: %pV", netdev_name(dev),
-		       netdev_reg_state(dev), &vaf);
+		res = printk(KERN_DEBUG "%s: %pV", netdev_name(dev), &vaf);
 	} else {
-		printk(KERN_DEBUG "(NULL net_device): %pV", &vaf);
+		res = printk(KERN_DEBUG "(NULL net_device): %pV", &vaf);
 	}
 
 	va_end(args);
+
+	return res;
 }
 EXPORT_SYMBOL(__dynamic_netdev_dbg);
 
@@ -819,9 +824,22 @@ static const struct seq_operations ddebug_proc_seqops = {
  */
 static int ddebug_proc_open(struct inode *inode, struct file *file)
 {
+	struct ddebug_iter *iter;
+	int err;
+
 	vpr_info("called\n");
-	return seq_open_private(file, &ddebug_proc_seqops,
-				sizeof(struct ddebug_iter));
+
+	iter = kzalloc(sizeof(*iter), GFP_KERNEL);
+	if (iter == NULL)
+		return -ENOMEM;
+
+	err = seq_open(file, &ddebug_proc_seqops);
+	if (err) {
+		kfree(iter);
+		return err;
+	}
+	((struct seq_file *)file->private_data)->private = iter;
+	return 0;
 }
 
 static const struct file_operations ddebug_proc_fops = {

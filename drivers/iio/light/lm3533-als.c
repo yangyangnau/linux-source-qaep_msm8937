@@ -847,7 +847,7 @@ static int lm3533_als_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	indio_dev = devm_iio_device_alloc(&pdev->dev, sizeof(*als));
+	indio_dev = iio_device_alloc(sizeof(*als));
 	if (!indio_dev)
 		return -ENOMEM;
 
@@ -870,7 +870,7 @@ static int lm3533_als_probe(struct platform_device *pdev)
 	if (als->irq) {
 		ret = lm3533_als_setup_irq(als, indio_dev);
 		if (ret)
-			return ret;
+			goto err_free_dev;
 	}
 
 	ret = lm3533_als_setup(als, pdata);
@@ -894,6 +894,8 @@ err_disable:
 err_free_irq:
 	if (als->irq)
 		free_irq(als->irq, indio_dev);
+err_free_dev:
+	iio_device_free(indio_dev);
 
 	return ret;
 }
@@ -908,6 +910,7 @@ static int lm3533_als_remove(struct platform_device *pdev)
 	lm3533_als_disable(als);
 	if (als->irq)
 		free_irq(als->irq, indio_dev);
+	iio_device_free(indio_dev);
 
 	return 0;
 }
@@ -915,6 +918,7 @@ static int lm3533_als_remove(struct platform_device *pdev)
 static struct platform_driver lm3533_als_driver = {
 	.driver	= {
 		.name	= "lm3533-als",
+		.owner	= THIS_MODULE,
 	},
 	.probe		= lm3533_als_probe,
 	.remove		= lm3533_als_remove,

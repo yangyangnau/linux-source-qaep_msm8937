@@ -32,7 +32,6 @@
 #include <linux/mount.h>
 #include <linux/blkpg.h>
 #include <linux/magic.h>
-#include <linux/major.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
 #include <linux/mtd/map.h>
@@ -56,7 +55,25 @@ struct mtd_file_info {
 static loff_t mtdchar_lseek(struct file *file, loff_t offset, int orig)
 {
 	struct mtd_file_info *mfi = file->private_data;
-	return fixed_size_llseek(file, offset, orig, mfi->mtd->size);
+	struct mtd_info *mtd = mfi->mtd;
+
+	switch (orig) {
+	case SEEK_SET:
+		break;
+	case SEEK_CUR:
+		offset += file->f_pos;
+		break;
+	case SEEK_END:
+		offset += mtd->size;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	if (offset >= 0 && offset <= mtd->size)
+		return file->f_pos = offset;
+
+	return -EINVAL;
 }
 
 static int count;
@@ -324,15 +341,6 @@ static ssize_t mtdchar_write(struct file *file, const char __user *buf, size_t c
 		default:
 			ret = mtd_write(mtd, *ppos, len, &retlen, kbuf);
 		}
-
-		/*
-		 * Return -ENOSPC only if no data could be written at all.
-		 * Otherwise just return the number of bytes that actually
-		 * have been written.
-		 */
-		if ((ret == -ENOSPC) && (total_retlen))
-			break;
-
 		if (!ret) {
 			*ppos += retlen;
 			total_retlen += retlen;
@@ -549,9 +557,6 @@ static int mtdchar_blkpg_ioctl(struct mtd_info *mtd,
 		if (mtd_is_partition(mtd))
 			return -EINVAL;
 
-		/* Sanitize user input */
-		p.devname[BLKPG_DEVNAMELTH - 1] = '\0';
-
 		return mtd_add_partition(mtd, p.devname, p.start, p.length);
 
 	case BLKPG_DEL_PARTITION:
@@ -571,18 +576,13 @@ static int mtdchar_write_ioctl(struct mtd_info *mtd,
 {
 	struct mtd_write_req req;
 	struct mtd_oob_ops ops;
-	const void __user *usr_data, *usr_oob;
+	void __user *usr_data, *usr_oob;
 	int ret;
 
-	if (copy_from_user(&req, argp, sizeof(req)))
+	if (copy_from_user(&req, argp, sizeof(req)) ||
+			!access_ok(VERIFY_READ, req.usr_data, req.len) ||
+			!access_ok(VERIFY_READ, req.usr_oob, req.ooblen))
 		return -EFAULT;
-
-	usr_data = (const void __user *)(uintptr_t)req.usr_data;
-	usr_oob = (const void __user *)(uintptr_t)req.usr_oob;
-	if (!access_ok(VERIFY_READ, usr_data, req.len) ||
-	    !access_ok(VERIFY_READ, usr_oob, req.ooblen))
-		return -EFAULT;
-
 	if (!mtd->_write_oob)
 		return -EOPNOTSUPP;
 
@@ -591,7 +591,10 @@ static int mtdchar_write_ioctl(struct mtd_info *mtd,
 	ops.ooblen = (size_t)req.ooblen;
 	ops.ooboffs = 0;
 
-	if (usr_data) {
+	usr_data = (void __user *)(uintptr_t)req.usr_data;
+	usr_oob = (void __user *)(uintptr_t)req.usr_oob;
+
+	if (req.usr_data) {
 		ops.datbuf = memdup_user(usr_data, ops.len);
 		if (IS_ERR(ops.datbuf))
 			return PTR_ERR(ops.datbuf);
@@ -599,7 +602,7 @@ static int mtdchar_write_ioctl(struct mtd_info *mtd,
 		ops.datbuf = NULL;
 	}
 
-	if (usr_oob) {
+	if (req.usr_oob) {
 		ops.oobbuf = memdup_user(usr_oob, ops.ooblen);
 		if (IS_ERR(ops.oobbuf)) {
 			kfree(ops.datbuf);
@@ -903,26 +906,25 @@ static int mtdchar_ioctl(struct file *file, u_int cmd, u_long arg)
 	case OTPGETREGIONINFO:
 	{
 		struct otp_info *buf = kmalloc(4096, GFP_KERNEL);
-		size_t retlen;
 		if (!buf)
 			return -ENOMEM;
 		switch (mfi->mode) {
 		case MTD_FILE_MODE_OTP_FACTORY:
-			ret = mtd_get_fact_prot_info(mtd, 4096, &retlen, buf);
+			ret = mtd_get_fact_prot_info(mtd, buf, 4096);
 			break;
 		case MTD_FILE_MODE_OTP_USER:
-			ret = mtd_get_user_prot_info(mtd, 4096, &retlen, buf);
+			ret = mtd_get_user_prot_info(mtd, buf, 4096);
 			break;
 		default:
 			ret = -EINVAL;
 			break;
 		}
-		if (!ret) {
+		if (ret >= 0) {
 			if (cmd == OTPGETREGIONCOUNT) {
-				int nbr = retlen / sizeof(struct otp_info);
+				int nbr = ret / sizeof(struct otp_info);
 				ret = copy_to_user(argp, &nbr, sizeof(int));
 			} else
-				ret = copy_to_user(argp, buf, retlen);
+				ret = copy_to_user(argp, buf, ret);
 			if (ret)
 				ret = -EFAULT;
 		}
@@ -1115,7 +1117,7 @@ static unsigned long mtdchar_get_unmapped_area(struct file *file,
 		return (unsigned long) -EINVAL;
 
 	ret = mtd_get_unmapped_area(mtd, len, offset, flags);
-	return ret == -EOPNOTSUPP ? -ENODEV : ret;
+	return ret == -EOPNOTSUPP ? -ENOSYS : ret;
 }
 #endif
 
@@ -1140,9 +1142,9 @@ static int mtdchar_mmap(struct file *file, struct vm_area_struct *vma)
 #endif
 		return vm_iomap_memory(vma, map->phys, map->size);
 	}
-	return -ENODEV;
+	return -ENOSYS;
 #else
-	return vma->vm_flags & VM_SHARED ? 0 : -EACCES;
+	return vma->vm_flags & VM_SHARED ? 0 : -ENOSYS;
 #endif
 }
 

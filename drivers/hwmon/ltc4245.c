@@ -51,9 +51,7 @@ enum ltc4245_cmd {
 };
 
 struct ltc4245_data {
-	struct i2c_client *client;
-
-	const struct attribute_group *groups[3];
+	struct device *hwmon_dev;
 
 	struct mutex update_lock;
 	bool valid;
@@ -79,8 +77,8 @@ struct ltc4245_data {
  */
 static void ltc4245_update_gpios(struct device *dev)
 {
-	struct ltc4245_data *data = dev_get_drvdata(dev);
-	struct i2c_client *client = data->client;
+	struct i2c_client *client = to_i2c_client(dev);
+	struct ltc4245_data *data = i2c_get_clientdata(client);
 	u8 gpio_curr, gpio_next, gpio_reg;
 	int i;
 
@@ -95,6 +93,7 @@ static void ltc4245_update_gpios(struct device *dev)
 	 * readings as stale by setting them to -EAGAIN
 	 */
 	if (time_after(jiffies, data->last_updated + 5 * HZ)) {
+		dev_dbg(&client->dev, "Marking GPIOs invalid\n");
 		for (i = 0; i < ARRAY_SIZE(data->gpios); i++)
 			data->gpios[i] = -EAGAIN;
 	}
@@ -131,14 +130,16 @@ static void ltc4245_update_gpios(struct device *dev)
 
 static struct ltc4245_data *ltc4245_update_device(struct device *dev)
 {
-	struct ltc4245_data *data = dev_get_drvdata(dev);
-	struct i2c_client *client = data->client;
+	struct i2c_client *client = to_i2c_client(dev);
+	struct ltc4245_data *data = i2c_get_clientdata(client);
 	s32 val;
 	int i;
 
 	mutex_lock(&data->update_lock);
 
 	if (time_after(jiffies, data->last_updated + HZ) || !data->valid) {
+
+		dev_dbg(&client->dev, "Starting ltc4245 update\n");
 
 		/* Read control registers -- 0x00 to 0x07 */
 		for (i = 0; i < ARRAY_SIZE(data->cregs); i++) {
@@ -454,28 +455,59 @@ static const struct attribute_group ltc4245_gpio_group = {
 	.attrs = ltc4245_gpio_attributes,
 };
 
-static void ltc4245_sysfs_add_groups(struct ltc4245_data *data)
+static int ltc4245_sysfs_create_groups(struct i2c_client *client)
 {
-	/* standard sysfs attributes */
-	data->groups[0] = &ltc4245_std_group;
+	struct ltc4245_data *data = i2c_get_clientdata(client);
+	struct device *dev = &client->dev;
+	int ret;
+
+	/* register the standard sysfs attributes */
+	ret = sysfs_create_group(&dev->kobj, &ltc4245_std_group);
+	if (ret) {
+		dev_err(dev, "unable to register standard attributes\n");
+		return ret;
+	}
 
 	/* if we're using the extra gpio support, register it's attributes */
+	if (data->use_extra_gpios) {
+		ret = sysfs_create_group(&dev->kobj, &ltc4245_gpio_group);
+		if (ret) {
+			dev_err(dev, "unable to register gpio attributes\n");
+			sysfs_remove_group(&dev->kobj, &ltc4245_std_group);
+			return ret;
+		}
+	}
+
+	return 0;
+}
+
+static void ltc4245_sysfs_remove_groups(struct i2c_client *client)
+{
+	struct ltc4245_data *data = i2c_get_clientdata(client);
+	struct device *dev = &client->dev;
+
 	if (data->use_extra_gpios)
-		data->groups[1] = &ltc4245_gpio_group;
+		sysfs_remove_group(&dev->kobj, &ltc4245_gpio_group);
+
+	sysfs_remove_group(&dev->kobj, &ltc4245_std_group);
 }
 
 static bool ltc4245_use_extra_gpios(struct i2c_client *client)
 {
 	struct ltc4245_platform_data *pdata = dev_get_platdata(&client->dev);
+#ifdef CONFIG_OF
 	struct device_node *np = client->dev.of_node;
+#endif
 
 	/* prefer platform data */
 	if (pdata)
 		return pdata->use_extra_gpios;
 
+#ifdef CONFIG_OF
 	/* fallback on OF */
 	if (of_find_property(np, "ltc4245,use-extra-gpios", NULL))
 		return true;
+#endif
 
 	return false;
 }
@@ -485,7 +517,7 @@ static int ltc4245_probe(struct i2c_client *client,
 {
 	struct i2c_adapter *adapter = client->adapter;
 	struct ltc4245_data *data;
-	struct device *hwmon_dev;
+	int ret;
 
 	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE_DATA))
 		return -ENODEV;
@@ -494,7 +526,7 @@ static int ltc4245_probe(struct i2c_client *client,
 	if (!data)
 		return -ENOMEM;
 
-	data->client = client;
+	i2c_set_clientdata(client, data);
 	mutex_init(&data->update_lock);
 	data->use_extra_gpios = ltc4245_use_extra_gpios(client);
 
@@ -502,13 +534,32 @@ static int ltc4245_probe(struct i2c_client *client,
 	i2c_smbus_write_byte_data(client, LTC4245_FAULT1, 0x00);
 	i2c_smbus_write_byte_data(client, LTC4245_FAULT2, 0x00);
 
-	/* Add sysfs hooks */
-	ltc4245_sysfs_add_groups(data);
+	/* Register sysfs hooks */
+	ret = ltc4245_sysfs_create_groups(client);
+	if (ret)
+		return ret;
 
-	hwmon_dev = devm_hwmon_device_register_with_groups(&client->dev,
-							   client->name, data,
-							   data->groups);
-	return PTR_ERR_OR_ZERO(hwmon_dev);
+	data->hwmon_dev = hwmon_device_register(&client->dev);
+	if (IS_ERR(data->hwmon_dev)) {
+		ret = PTR_ERR(data->hwmon_dev);
+		goto out_hwmon_device_register;
+	}
+
+	return 0;
+
+out_hwmon_device_register:
+	ltc4245_sysfs_remove_groups(client);
+	return ret;
+}
+
+static int ltc4245_remove(struct i2c_client *client)
+{
+	struct ltc4245_data *data = i2c_get_clientdata(client);
+
+	hwmon_device_unregister(data->hwmon_dev);
+	ltc4245_sysfs_remove_groups(client);
+
+	return 0;
 }
 
 static const struct i2c_device_id ltc4245_id[] = {
@@ -523,6 +574,7 @@ static struct i2c_driver ltc4245_driver = {
 		.name	= "ltc4245",
 	},
 	.probe		= ltc4245_probe,
+	.remove		= ltc4245_remove,
 	.id_table	= ltc4245_id,
 };
 

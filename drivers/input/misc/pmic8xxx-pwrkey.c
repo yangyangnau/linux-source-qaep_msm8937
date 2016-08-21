@@ -11,15 +11,17 @@
  */
 
 #include <linux/module.h>
+#include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/slab.h>
 #include <linux/input.h>
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
-#include <linux/regmap.h>
 #include <linux/log2.h>
-#include <linux/of.h>
+
+#include <linux/mfd/pm8xxx/core.h>
+#include <linux/input/pmic8xxx-pwrkey.h>
 
 #define PON_CNTL_1 0x1C
 #define PON_CNTL_PULL_UP BIT(7)
@@ -30,25 +32,26 @@
  * @key_press_irq: key press irq number
  */
 struct pmic8xxx_pwrkey {
+	struct input_dev *pwr;
 	int key_press_irq;
 };
 
-static irqreturn_t pwrkey_press_irq(int irq, void *_pwr)
+static irqreturn_t pwrkey_press_irq(int irq, void *_pwrkey)
 {
-	struct input_dev *pwr = _pwr;
+	struct pmic8xxx_pwrkey *pwrkey = _pwrkey;
 
-	input_report_key(pwr, KEY_POWER, 1);
-	input_sync(pwr);
+	input_report_key(pwrkey->pwr, KEY_POWER, 1);
+	input_sync(pwrkey->pwr);
 
 	return IRQ_HANDLED;
 }
 
-static irqreturn_t pwrkey_release_irq(int irq, void *_pwr)
+static irqreturn_t pwrkey_release_irq(int irq, void *_pwrkey)
 {
-	struct input_dev *pwr = _pwr;
+	struct pmic8xxx_pwrkey *pwrkey = _pwrkey;
 
-	input_report_key(pwr, KEY_POWER, 0);
-	input_sync(pwr);
+	input_report_key(pwrkey->pwr, KEY_POWER, 0);
+	input_sync(pwrkey->pwr);
 
 	return IRQ_HANDLED;
 }
@@ -85,119 +88,129 @@ static int pmic8xxx_pwrkey_probe(struct platform_device *pdev)
 	int key_press_irq = platform_get_irq(pdev, 1);
 	int err;
 	unsigned int delay;
-	unsigned int pon_cntl;
-	struct regmap *regmap;
+	u8 pon_cntl;
 	struct pmic8xxx_pwrkey *pwrkey;
-	u32 kpd_delay;
-	bool pull_up;
+	const struct pm8xxx_pwrkey_platform_data *pdata =
+					dev_get_platdata(&pdev->dev);
 
-	if (of_property_read_u32(pdev->dev.of_node, "debounce", &kpd_delay))
-		kpd_delay = 15625;
+	if (!pdata) {
+		dev_err(&pdev->dev, "power key platform data not supplied\n");
+		return -EINVAL;
+	}
 
-	if (kpd_delay > 62500 || kpd_delay == 0) {
+	if (pdata->kpd_trigger_delay_us > 62500) {
 		dev_err(&pdev->dev, "invalid power key trigger delay\n");
 		return -EINVAL;
 	}
 
-	pull_up = of_property_read_bool(pdev->dev.of_node, "pull-up");
-
-	regmap = dev_get_regmap(pdev->dev.parent, NULL);
-	if (!regmap) {
-		dev_err(&pdev->dev, "failed to locate regmap for the device\n");
-		return -ENODEV;
-	}
-
-	pwrkey = devm_kzalloc(&pdev->dev, sizeof(*pwrkey), GFP_KERNEL);
+	pwrkey = kzalloc(sizeof(*pwrkey), GFP_KERNEL);
 	if (!pwrkey)
 		return -ENOMEM;
 
-	pwrkey->key_press_irq = key_press_irq;
-
-	pwr = devm_input_allocate_device(&pdev->dev);
+	pwr = input_allocate_device();
 	if (!pwr) {
 		dev_dbg(&pdev->dev, "Can't allocate power button\n");
-		return -ENOMEM;
+		err = -ENOMEM;
+		goto free_pwrkey;
 	}
 
 	input_set_capability(pwr, EV_KEY, KEY_POWER);
 
 	pwr->name = "pmic8xxx_pwrkey";
 	pwr->phys = "pmic8xxx_pwrkey/input0";
+	pwr->dev.parent = &pdev->dev;
 
-	delay = (kpd_delay << 10) / USEC_PER_SEC;
+	delay = (pdata->kpd_trigger_delay_us << 10) / USEC_PER_SEC;
 	delay = 1 + ilog2(delay);
 
-	err = regmap_read(regmap, PON_CNTL_1, &pon_cntl);
+	err = pm8xxx_readb(pdev->dev.parent, PON_CNTL_1, &pon_cntl);
 	if (err < 0) {
 		dev_err(&pdev->dev, "failed reading PON_CNTL_1 err=%d\n", err);
-		return err;
+		goto free_input_dev;
 	}
 
 	pon_cntl &= ~PON_CNTL_TRIG_DELAY_MASK;
 	pon_cntl |= (delay & PON_CNTL_TRIG_DELAY_MASK);
-	if (pull_up)
+	if (pdata->pull_up)
 		pon_cntl |= PON_CNTL_PULL_UP;
 	else
 		pon_cntl &= ~PON_CNTL_PULL_UP;
 
-	err = regmap_write(regmap, PON_CNTL_1, pon_cntl);
+	err = pm8xxx_writeb(pdev->dev.parent, PON_CNTL_1, pon_cntl);
 	if (err < 0) {
 		dev_err(&pdev->dev, "failed writing PON_CNTL_1 err=%d\n", err);
-		return err;
-	}
-
-	err = devm_request_irq(&pdev->dev, key_press_irq, pwrkey_press_irq,
-			       IRQF_TRIGGER_RISING,
-			       "pmic8xxx_pwrkey_press", pwr);
-	if (err) {
-		dev_err(&pdev->dev, "Can't get %d IRQ for pwrkey: %d\n",
-			key_press_irq, err);
-		return err;
-	}
-
-	err = devm_request_irq(&pdev->dev, key_release_irq, pwrkey_release_irq,
-			       IRQF_TRIGGER_RISING,
-			       "pmic8xxx_pwrkey_release", pwr);
-	if (err) {
-		dev_err(&pdev->dev, "Can't get %d IRQ for pwrkey: %d\n",
-			key_release_irq, err);
-		return err;
+		goto free_input_dev;
 	}
 
 	err = input_register_device(pwr);
 	if (err) {
-		dev_err(&pdev->dev, "Can't register power key: %d\n", err);
-		return err;
+		dev_dbg(&pdev->dev, "Can't register power key: %d\n", err);
+		goto free_input_dev;
 	}
 
+	pwrkey->key_press_irq = key_press_irq;
+	pwrkey->pwr = pwr;
+
 	platform_set_drvdata(pdev, pwrkey);
-	device_init_wakeup(&pdev->dev, 1);
+
+	err = request_irq(key_press_irq, pwrkey_press_irq,
+		IRQF_TRIGGER_RISING, "pmic8xxx_pwrkey_press", pwrkey);
+	if (err < 0) {
+		dev_dbg(&pdev->dev, "Can't get %d IRQ for pwrkey: %d\n",
+				 key_press_irq, err);
+		goto unreg_input_dev;
+	}
+
+	err = request_irq(key_release_irq, pwrkey_release_irq,
+		 IRQF_TRIGGER_RISING, "pmic8xxx_pwrkey_release", pwrkey);
+	if (err < 0) {
+		dev_dbg(&pdev->dev, "Can't get %d IRQ for pwrkey: %d\n",
+				 key_release_irq, err);
+
+		goto free_press_irq;
+	}
+
+	device_init_wakeup(&pdev->dev, pdata->wakeup);
 
 	return 0;
+
+free_press_irq:
+	free_irq(key_press_irq, NULL);
+unreg_input_dev:
+	platform_set_drvdata(pdev, NULL);
+	input_unregister_device(pwr);
+	pwr = NULL;
+free_input_dev:
+	input_free_device(pwr);
+free_pwrkey:
+	kfree(pwrkey);
+	return err;
 }
 
 static int pmic8xxx_pwrkey_remove(struct platform_device *pdev)
 {
+	struct pmic8xxx_pwrkey *pwrkey = platform_get_drvdata(pdev);
+	int key_release_irq = platform_get_irq(pdev, 0);
+	int key_press_irq = platform_get_irq(pdev, 1);
+
 	device_init_wakeup(&pdev->dev, 0);
+
+	free_irq(key_press_irq, pwrkey);
+	free_irq(key_release_irq, pwrkey);
+	input_unregister_device(pwrkey->pwr);
+	platform_set_drvdata(pdev, NULL);
+	kfree(pwrkey);
 
 	return 0;
 }
-
-static const struct of_device_id pm8xxx_pwr_key_id_table[] = {
-	{ .compatible = "qcom,pm8058-pwrkey" },
-	{ .compatible = "qcom,pm8921-pwrkey" },
-	{ }
-};
-MODULE_DEVICE_TABLE(of, pm8xxx_pwr_key_id_table);
 
 static struct platform_driver pmic8xxx_pwrkey_driver = {
 	.probe		= pmic8xxx_pwrkey_probe,
 	.remove		= pmic8xxx_pwrkey_remove,
 	.driver		= {
-		.name	= "pm8xxx-pwrkey",
+		.name	= PM8XXX_PWRKEY_DEV_NAME,
 		.owner	= THIS_MODULE,
 		.pm	= &pm8xxx_pwr_key_pm_ops,
-		.of_match_table = pm8xxx_pwr_key_id_table,
 	},
 };
 module_platform_driver(pmic8xxx_pwrkey_driver);

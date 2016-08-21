@@ -73,7 +73,7 @@
  * Return Value: data read
  *
  */
-unsigned char SROMbyReadEmbedded(void __iomem *dwIoBase, unsigned char byContntOffset)
+unsigned char SROMbyReadEmbedded(unsigned long dwIoBase, unsigned char byContntOffset)
 {
 	unsigned short wDelay, wNoACK;
 	unsigned char byWait;
@@ -121,7 +121,7 @@ unsigned char SROMbyReadEmbedded(void __iomem *dwIoBase, unsigned char byContntO
  * Return Value: true if succeeded; false if failed.
  *
  */
-bool SROMbWriteEmbedded(void __iomem *dwIoBase, unsigned char byContntOffset, unsigned char byData)
+bool SROMbWriteEmbedded(unsigned long dwIoBase, unsigned char byContntOffset, unsigned char byData)
 {
 	unsigned short wDelay, wNoACK;
 	unsigned char byWait;
@@ -173,7 +173,7 @@ bool SROMbWriteEmbedded(void __iomem *dwIoBase, unsigned char byContntOffset, un
  * Return Value: none
  *
  */
-void SROMvRegBitsOn(void __iomem *dwIoBase, unsigned char byContntOffset, unsigned char byBits)
+void SROMvRegBitsOn(unsigned long dwIoBase, unsigned char byContntOffset, unsigned char byBits)
 {
 	unsigned char byOrgData;
 
@@ -193,7 +193,7 @@ void SROMvRegBitsOn(void __iomem *dwIoBase, unsigned char byContntOffset, unsign
  *      none
  *
  */
-void SROMvRegBitsOff(void __iomem *dwIoBase, unsigned char byContntOffset, unsigned char byBits)
+void SROMvRegBitsOff(unsigned long dwIoBase, unsigned char byContntOffset, unsigned char byBits)
 {
 	unsigned char byOrgData;
 
@@ -215,7 +215,7 @@ void SROMvRegBitsOff(void __iomem *dwIoBase, unsigned char byContntOffset, unsig
  * Return Value: true if all test bits on; otherwise false
  *
  */
-bool SROMbIsRegBitsOn(void __iomem *dwIoBase, unsigned char byContntOffset, unsigned char byTestBits)
+bool SROMbIsRegBitsOn(unsigned long dwIoBase, unsigned char byContntOffset, unsigned char byTestBits)
 {
 	unsigned char byOrgData;
 
@@ -237,7 +237,7 @@ bool SROMbIsRegBitsOn(void __iomem *dwIoBase, unsigned char byContntOffset, unsi
  * Return Value: true if all test bits off; otherwise false
  *
  */
-bool SROMbIsRegBitsOff(void __iomem *dwIoBase, unsigned char byContntOffset, unsigned char byTestBits)
+bool SROMbIsRegBitsOff(unsigned long dwIoBase, unsigned char byContntOffset, unsigned char byTestBits)
 {
 	unsigned char byOrgData;
 
@@ -257,7 +257,7 @@ bool SROMbIsRegBitsOff(void __iomem *dwIoBase, unsigned char byContntOffset, uns
  * Return Value: none
  *
  */
-void SROMvReadAllContents(void __iomem *dwIoBase, unsigned char *pbyEepromRegs)
+void SROMvReadAllContents(unsigned long dwIoBase, unsigned char *pbyEepromRegs)
 {
 	int     ii;
 
@@ -281,7 +281,7 @@ void SROMvReadAllContents(void __iomem *dwIoBase, unsigned char *pbyEepromRegs)
  * Return Value: none
  *
  */
-void SROMvWriteAllContents(void __iomem *dwIoBase, unsigned char *pbyEepromRegs)
+void SROMvWriteAllContents(unsigned long dwIoBase, unsigned char *pbyEepromRegs)
 {
 	int     ii;
 
@@ -304,7 +304,7 @@ void SROMvWriteAllContents(void __iomem *dwIoBase, unsigned char *pbyEepromRegs)
  * Return Value: none
  *
  */
-void SROMvReadEtherAddress(void __iomem *dwIoBase, unsigned char *pbyEtherAddress)
+void SROMvReadEtherAddress(unsigned long dwIoBase, unsigned char *pbyEtherAddress)
 {
 	unsigned char ii;
 
@@ -328,7 +328,7 @@ void SROMvReadEtherAddress(void __iomem *dwIoBase, unsigned char *pbyEtherAddres
  * Return Value: none
  *
  */
-void SROMvWriteEtherAddress(void __iomem *dwIoBase, unsigned char *pbyEtherAddress)
+void SROMvWriteEtherAddress(unsigned long dwIoBase, unsigned char *pbyEtherAddress)
 {
 	unsigned char ii;
 
@@ -351,7 +351,7 @@ void SROMvWriteEtherAddress(void __iomem *dwIoBase, unsigned char *pbyEtherAddre
  * Return Value: none
  *
  */
-void SROMvReadSubSysVenId(void __iomem *dwIoBase, unsigned long *pdwSubSysVenId)
+void SROMvReadSubSysVenId(unsigned long dwIoBase, unsigned long *pdwSubSysVenId)
 {
 	unsigned char *pbyData;
 
@@ -376,7 +376,7 @@ void SROMvReadSubSysVenId(void __iomem *dwIoBase, unsigned long *pdwSubSysVenId)
  * Return Value: true if success; otherwise false
  *
  */
-bool SROMbAutoLoad(void __iomem *dwIoBase)
+bool SROMbAutoLoad(unsigned long dwIoBase)
 {
 	unsigned char byWait;
 	int     ii;

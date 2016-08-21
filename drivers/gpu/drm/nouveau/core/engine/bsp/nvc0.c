@@ -22,7 +22,8 @@
  * Authors: Maarten Lankhorst
  */
 
-#include <engine/falcon.h>
+#include <core/falcon.h>
+
 #include <engine/bsp.h>
 
 struct nvc0_bsp_priv {
@@ -90,7 +91,6 @@ nvc0_bsp_ctor(struct nouveau_object *parent, struct nouveau_object *engine,
 		return ret;
 
 	nv_subdev(priv)->unit = 0x00008000;
-	nv_subdev(priv)->intr = nouveau_falcon_intr;
 	nv_engine(priv)->cclass = &nvc0_bsp_cclass;
 	nv_engine(priv)->sclass = nvc0_bsp_sclass;
 	return 0;

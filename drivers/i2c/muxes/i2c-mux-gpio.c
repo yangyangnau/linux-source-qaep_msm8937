@@ -12,9 +12,11 @@
 #include <linux/i2c-mux.h>
 #include <linux/i2c-mux-gpio.h>
 #include <linux/platform_device.h>
+#include <linux/init.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/gpio.h>
+#include <linux/of_i2c.h>
 #include <linux/of_gpio.h>
 
 struct gpiomux {
@@ -65,7 +67,7 @@ static int i2c_mux_gpio_probe_dt(struct gpiomux *mux,
 	struct device_node *adapter_np, *child;
 	struct i2c_adapter *adapter;
 	unsigned *values, *gpios;
-	int i = 0, ret;
+	int i = 0;
 
 	if (!np)
 		return -ENODEV;
@@ -78,7 +80,7 @@ static int i2c_mux_gpio_probe_dt(struct gpiomux *mux,
 	adapter = of_find_i2c_adapter_by_node(adapter_np);
 	if (!adapter) {
 		dev_err(&pdev->dev, "Cannot find parent bus\n");
-		return -EPROBE_DEFER;
+		return -ENODEV;
 	}
 	mux->data.parent = i2c_adapter_id(adapter);
 	put_device(&adapter->dev);
@@ -115,12 +117,8 @@ static int i2c_mux_gpio_probe_dt(struct gpiomux *mux,
 		return -ENOMEM;
 	}
 
-	for (i = 0; i < mux->data.n_gpios; i++) {
-		ret = of_get_named_gpio(np, "mux-gpios", i);
-		if (ret < 0)
-			return ret;
-		gpios[i] = ret;
-	}
+	for (i = 0; i < mux->data.n_gpios; i++)
+		gpios[i] = of_get_named_gpio(np, "mux-gpios", i);
 
 	mux->data.gpios = gpios;
 
@@ -150,14 +148,12 @@ static int i2c_mux_gpio_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, mux);
 
-	if (!dev_get_platdata(&pdev->dev)) {
+	if (!pdev->dev.platform_data) {
 		ret = i2c_mux_gpio_probe_dt(mux, pdev);
 		if (ret < 0)
 			return ret;
-	} else {
-		memcpy(&mux->data, dev_get_platdata(&pdev->dev),
-			sizeof(mux->data));
-	}
+	} else
+		memcpy(&mux->data, pdev->dev.platform_data, sizeof(mux->data));
 
 	/*
 	 * If a GPIO chip name is provided, the GPIO pin numbers provided are
@@ -180,7 +176,7 @@ static int i2c_mux_gpio_probe(struct platform_device *pdev)
 	if (!parent) {
 		dev_err(&pdev->dev, "Parent adapter (%d) not found\n",
 			mux->data.parent);
-		return -EPROBE_DEFER;
+		return -ENODEV;
 	}
 
 	mux->parent = parent;
@@ -282,7 +278,7 @@ static struct platform_driver i2c_mux_gpio_driver = {
 	.driver	= {
 		.owner	= THIS_MODULE,
 		.name	= "i2c-mux-gpio",
-		.of_match_table = i2c_mux_gpio_of_match,
+		.of_match_table = of_match_ptr(i2c_mux_gpio_of_match),
 	},
 };
 

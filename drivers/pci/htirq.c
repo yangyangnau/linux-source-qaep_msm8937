@@ -87,9 +87,12 @@ void unmask_ht_irq(struct irq_data *data)
 int __ht_create_irq(struct pci_dev *dev, int idx, ht_irq_update_t *update)
 {
 	struct ht_irq_cfg *cfg;
-	int max_irq, pos, irq;
 	unsigned long flags;
 	u32 data;
+	int max_irq;
+	int pos;
+	int irq;
+	int node;
 
 	pos = pci_find_ht_capability(dev, HT_CAPTYPE_IRQ);
 	if (!pos)
@@ -102,7 +105,7 @@ int __ht_create_irq(struct pci_dev *dev, int idx, ht_irq_update_t *update)
 	spin_unlock_irqrestore(&ht_irq_lock, flags);
 
 	max_irq = (data >> 16) & 0xff;
-	if (idx > max_irq)
+	if ( idx > max_irq)
 		return -EINVAL;
 
 	cfg = kmalloc(sizeof(*cfg), GFP_KERNEL);
@@ -117,8 +120,10 @@ int __ht_create_irq(struct pci_dev *dev, int idx, ht_irq_update_t *update)
 	cfg->msg.address_lo = 0xffffffff;
 	cfg->msg.address_hi = 0xffffffff;
 
-	irq = irq_alloc_hwirq(dev_to_node(&dev->dev));
-	if (!irq) {
+	node = dev_to_node(&dev->dev);
+	irq = create_irq_nr(0, node);
+
+	if (irq <= 0) {
 		kfree(cfg);
 		return -EBUSY;
 	}
@@ -131,7 +136,6 @@ int __ht_create_irq(struct pci_dev *dev, int idx, ht_irq_update_t *update)
 
 	return irq;
 }
-EXPORT_SYMBOL(__ht_create_irq);
 
 /**
  * ht_create_irq - create an irq and attach it to a device.
@@ -147,7 +151,6 @@ int ht_create_irq(struct pci_dev *dev, int idx)
 {
 	return __ht_create_irq(dev, idx, NULL);
 }
-EXPORT_SYMBOL(ht_create_irq);
 
 /**
  * ht_destroy_irq - destroy an irq created with ht_create_irq
@@ -163,8 +166,11 @@ void ht_destroy_irq(unsigned int irq)
 	cfg = irq_get_handler_data(irq);
 	irq_set_chip(irq, NULL);
 	irq_set_handler_data(irq, NULL);
-	irq_free_hwirq(irq);
+	destroy_irq(irq);
 
 	kfree(cfg);
 }
+
+EXPORT_SYMBOL(__ht_create_irq);
+EXPORT_SYMBOL(ht_create_irq);
 EXPORT_SYMBOL(ht_destroy_irq);

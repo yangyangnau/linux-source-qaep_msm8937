@@ -1,8 +1,6 @@
 #ifndef _PARISC_SHMBUF_H
 #define _PARISC_SHMBUF_H
 
-#include <asm/bitsperlong.h>
-
 /* 
  * The shmid64_ds structure for parisc architecture.
  * Note extra padding because this structure is passed back and forth
@@ -15,19 +13,19 @@
 
 struct shmid64_ds {
 	struct ipc64_perm	shm_perm;	/* operation perms */
-#if __BITS_PER_LONG != 64
+#ifndef CONFIG_64BIT
 	unsigned int		__pad1;
 #endif
 	__kernel_time_t		shm_atime;	/* last attach time */
-#if __BITS_PER_LONG != 64
+#ifndef CONFIG_64BIT
 	unsigned int		__pad2;
 #endif
 	__kernel_time_t		shm_dtime;	/* last detach time */
-#if __BITS_PER_LONG != 64
+#ifndef CONFIG_64BIT
 	unsigned int		__pad3;
 #endif
 	__kernel_time_t		shm_ctime;	/* last change time */
-#if __BITS_PER_LONG != 64
+#ifndef CONFIG_64BIT
 	unsigned int		__pad4;
 #endif
 	size_t			shm_segsz;	/* size of segment (bytes) */
@@ -38,16 +36,23 @@ struct shmid64_ds {
 	unsigned int		__unused2;
 };
 
+#ifdef CONFIG_64BIT
+/* The 'unsigned int' (formerly 'unsigned long') data types below will
+ * ensure that a 32-bit app calling shmctl(*,IPC_INFO,*) will work on
+ * a wide kernel, but if some of these values are meant to contain pointers
+ * they may need to be 'long long' instead. -PB XXX FIXME
+ */
+#endif
 struct shminfo64 {
-	unsigned long	shmmax;
-	unsigned long	shmmin;
-	unsigned long	shmmni;
-	unsigned long	shmseg;
-	unsigned long	shmall;
-	unsigned long	__unused1;
-	unsigned long	__unused2;
-	unsigned long	__unused3;
-	unsigned long	__unused4;
+	unsigned int	shmmax;
+	unsigned int	shmmin;
+	unsigned int	shmmni;
+	unsigned int	shmseg;
+	unsigned int	shmall;
+	unsigned int	__unused1;
+	unsigned int	__unused2;
+	unsigned int	__unused3;
+	unsigned int	__unused4;
 };
 
 #endif /* _PARISC_SHMBUF_H */

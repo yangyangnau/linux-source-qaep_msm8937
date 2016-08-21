@@ -5,7 +5,7 @@
  ******************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2014, Intel Corp.
+ * Copyright (C) 2000 - 2013, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,8 +41,7 @@
  * POSSIBILITY OF SUCH DAMAGES.
  */
 
-#define EXPORT_ACPI_INTERFACES
-
+#include <linux/export.h>
 #include <acpi/acpi.h>
 #include "accommon.h"
 #include "acresrc.h"
@@ -403,7 +402,6 @@ acpi_resource_to_address64(struct acpi_resource *resource,
 		break;
 
 	default:
-
 		return (AE_BAD_PARAMETER);
 	}
 

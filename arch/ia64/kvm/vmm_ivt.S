@@ -64,7 +64,7 @@
 #include "kvm_minstate.h"
 #include "vti.h"
 
-#if 0
+#if 1
 # define PSR_DEFAULT_BITS   psr.ac
 #else
 # define PSR_DEFAULT_BITS   0

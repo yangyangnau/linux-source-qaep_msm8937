@@ -915,7 +915,7 @@ static int pxa_irda_probe(struct platform_device *pdev)
 	err = register_netdev(dev);
 
 	if (err == 0)
-		platform_set_drvdata(pdev, dev);
+		dev_set_drvdata(&pdev->dev, dev);
 
 	if (err) {
 		if (si->pdata->shutdown)

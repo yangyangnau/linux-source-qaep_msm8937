@@ -57,7 +57,6 @@ struct cache_head {
 #define	CACHE_VALID	0	/* Entry contains valid data */
 #define	CACHE_NEGATIVE	1	/* Negative entry - there is no match for the key */
 #define	CACHE_PENDING	2	/* An upcall has been sent but no reply received yet*/
-#define	CACHE_CLEANED	3	/* Entry has been cleaned from cache */
 
 #define	CACHE_NEW_EXPIRY 120	/* keep new things pending confirmation for 120 seconds */
 
@@ -149,24 +148,6 @@ struct cache_deferred_req {
 					   int too_many);
 };
 
-/*
- * timestamps kept in the cache are expressed in seconds
- * since boot.  This is the best for measuring differences in
- * real time.
- */
-static inline time_t seconds_since_boot(void)
-{
-	struct timespec boot;
-	getboottime(&boot);
-	return get_seconds() - boot.tv_sec;
-}
-
-static inline time_t convert_to_wallclock(time_t sinceboot)
-{
-	struct timespec boot;
-	getboottime(&boot);
-	return boot.tv_sec + sinceboot;
-}
 
 extern const struct file_operations cache_file_operations_pipefs;
 extern const struct file_operations content_file_operations_pipefs;
@@ -200,10 +181,15 @@ static inline void cache_put(struct cache_head *h, struct cache_detail *cd)
 	kref_put(&h->ref, cd->cache_put);
 }
 
-static inline int cache_is_expired(struct cache_detail *detail, struct cache_head *h)
+static inline int cache_valid(struct cache_head *h)
 {
-	return  (h->expiry_time < seconds_since_boot()) ||
-		(detail->flush_time > h->last_refresh);
+	/* If an item has been unhashed pending removal when
+	 * the refcount drops to 0, the expiry_time will be
+	 * set to 0.  We don't want to consider such items
+	 * valid in this context even though CACHE_VALID is
+	 * set.
+	 */
+	return (h->expiry_time != 0 && test_bit(CACHE_VALID, &h->flags));
 }
 
 extern int cache_check(struct cache_detail *detail,
@@ -264,30 +250,31 @@ static inline int get_uint(char **bpp, unsigned int *anint)
 	return 0;
 }
 
-static inline int get_time(char **bpp, time_t *time)
+/*
+ * timestamps kept in the cache are expressed in seconds
+ * since boot.  This is the best for measuring differences in
+ * real time.
+ */
+static inline time_t seconds_since_boot(void)
 {
-	char buf[50];
-	long long ll;
-	int len = qword_get(bpp, buf, sizeof(buf));
+	struct timespec boot;
+	getboottime(&boot);
+	return get_seconds() - boot.tv_sec;
+}
 
-	if (len < 0)
-		return -EINVAL;
-	if (len == 0)
-		return -ENOENT;
-
-	if (kstrtoll(buf, 0, &ll))
-		return -EINVAL;
-
-	*time = (time_t)ll;
-	return 0;
+static inline time_t convert_to_wallclock(time_t sinceboot)
+{
+	struct timespec boot;
+	getboottime(&boot);
+	return boot.tv_sec + sinceboot;
 }
 
 static inline time_t get_expiry(char **bpp)
 {
-	time_t rv;
+	int rv;
 	struct timespec boot;
 
-	if (get_time(bpp, &rv))
+	if (get_int(bpp, &rv))
 		return 0;
 	if (rv < 0)
 		return 0;

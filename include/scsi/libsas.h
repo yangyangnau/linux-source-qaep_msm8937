@@ -172,6 +172,7 @@ struct sata_device {
         enum   ata_command_set command_set;
         struct smp_resp        rps_resp; /* report_phy_sata_resp */
         u8     port_no;        /* port number, if this is a PM (Port) */
+	int    pm_result;
 
 	struct ata_port *ap;
 	struct ata_host ata_host;
@@ -607,7 +608,7 @@ struct sas_ssp_task {
 	u8     enable_first_burst:1;
 	enum   task_attribute task_attr;
 	u8     task_prio;
-	struct scsi_cmnd *cmd;
+	u8     cdb[16];
 };
 
 struct sas_task {

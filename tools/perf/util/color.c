@@ -1,7 +1,6 @@
 #include <linux/kernel.h>
 #include "cache.h"
 #include "color.h"
-#include <math.h>
 
 int perf_use_color_default = -1;
 
@@ -299,10 +298,10 @@ const char *get_percent_color(double percent)
 	 * entries in green - and keep the low overhead places
 	 * normal:
 	 */
-	if (fabs(percent) >= MIN_RED)
+	if (percent >= MIN_RED)
 		color = PERF_COLOR_RED;
 	else {
-		if (fabs(percent) > MIN_GREEN)
+		if (percent > MIN_GREEN)
 			color = PERF_COLOR_GREEN;
 	}
 	return color;
@@ -319,35 +318,15 @@ int percent_color_fprintf(FILE *fp, const char *fmt, double percent)
 	return r;
 }
 
-int value_color_snprintf(char *bf, size_t size, const char *fmt, double value)
-{
-	const char *color = get_percent_color(value);
-	return color_snprintf(bf, size, color, fmt, value);
-}
-
 int percent_color_snprintf(char *bf, size_t size, const char *fmt, ...)
 {
 	va_list args;
 	double percent;
-
-	va_start(args, fmt);
-	percent = va_arg(args, double);
-	va_end(args);
-	return value_color_snprintf(bf, size, fmt, percent);
-}
-
-int percent_color_len_snprintf(char *bf, size_t size, const char *fmt, ...)
-{
-	va_list args;
-	int len;
-	double percent;
 	const char *color;
 
 	va_start(args, fmt);
-	len = va_arg(args, int);
 	percent = va_arg(args, double);
 	va_end(args);
-
 	color = get_percent_color(percent);
-	return color_snprintf(bf, size, color, fmt, len, percent);
+	return color_snprintf(bf, size, color, fmt, percent);
 }

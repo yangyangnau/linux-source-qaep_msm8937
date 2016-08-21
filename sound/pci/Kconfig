@@ -1,5 +1,10 @@
 # ALSA PCI drivers
 
+config SND_TEA575X
+	tristate
+	depends on SND_FM801_TEA575X_BOOL || SND_ES1968_RADIO || RADIO_SF16FMR2 || RADIO_MAXIRADIO || RADIO_SHARK
+	default SND_FM801 || SND_ES1968 || RADIO_SF16FMR2 || RADIO_MAXIRADIO || RADIO_SHARK
+
 menuconfig SND_PCI
 	bool "PCI sound devices"
 	depends on PCI
@@ -257,7 +262,6 @@ config SND_CS46XX
 	tristate "Cirrus Logic (Sound Fusion) CS4280/CS461x/CS462x/CS463x"
 	select SND_RAWMIDI
 	select SND_AC97_CODEC
-	select FW_LOADER
 	help
 	  Say Y here to include support for Cirrus Logic CS4610/CS4612/
 	  CS4614/CS4615/CS4622/CS4624/CS4630/CS4280 chips.
@@ -276,7 +280,7 @@ config SND_CS46XX_NEW_DSP
 
 config SND_CS5530
 	tristate "CS5530 Audio"
-	depends on ISA_DMA_API && (X86_32 || COMPILE_TEST)
+	depends on ISA_DMA_API
 	select SND_SB16_DSP
 	help
 	  Say Y here to include support for audio on Cyrix/NatSemi CS5530 chips.
@@ -286,7 +290,6 @@ config SND_CS5530
 
 config SND_CS5535AUDIO
 	tristate "CS5535/CS5536 Audio"
-	depends on X86_32 || MIPS || COMPILE_TEST
 	select SND_PCM
 	select SND_AC97_CODEC
 	help
@@ -546,11 +549,7 @@ config SND_ES1968_INPUT
 config SND_ES1968_RADIO
 	bool "Enable TEA5757 radio tuner support for es1968"
 	depends on SND_ES1968
-	depends on MEDIA_RADIO_SUPPORT
 	depends on VIDEO_V4L2=y || VIDEO_V4L2=SND_ES1968
-	select RADIO_ADAPTERS
-	select RADIO_TEA575X
-
 	help
 	  Say Y here to include support for TEA5757 radio tuner integrated on
 	  some MediaForte cards (e.g. SF64-PCE2).
@@ -570,14 +569,13 @@ config SND_FM801
 config SND_FM801_TEA575X_BOOL
 	bool "ForteMedia FM801 + TEA5757 tuner"
 	depends on SND_FM801
-	depends on MEDIA_RADIO_SUPPORT
 	depends on VIDEO_V4L2=y || VIDEO_V4L2=SND_FM801
-	select RADIO_ADAPTERS
-	select RADIO_TEA575X
 	help
 	  Say Y here to include support for soundcards based on the ForteMedia
 	  FM801 chip with a TEA5757 tuner (MediaForte SF256-PCS, SF256-PCP and
 	  SF64-PCR) into the snd-fm801 driver.
+
+source "sound/pci/hda/Kconfig"
 
 config SND_HDSP
 	tristate "RME Hammerfall DSP Audio"
@@ -688,7 +686,7 @@ config SND_LOLA
 
 config SND_LX6464ES
 	tristate "Digigram LX6464ES"
-	depends on HAS_IOPORT_MAP
+	depends on HAS_IOPORT
 	select SND_PCM
 	help
 	  Say Y here to include support for Digigram LX6464ES boards.
@@ -795,7 +793,7 @@ config SND_RME9652
 
 config SND_SIS7019
 	tristate "SiS 7019 Audio Accelerator"
-	depends on X86_32
+	depends on X86 && !X86_64
 	select SND_AC97_CODEC
 	select ZONE_DMA
 	help
@@ -858,8 +856,8 @@ config SND_VIRTUOSO
 	select SND_JACK if INPUT=y || INPUT=SND
 	help
 	  Say Y here to include support for sound cards based on the
-	  Asus AV66/AV100/AV200 chips, i.e., Xonar D1, DX, D2, D2X, DS, DSX,
-	  Essence ST (Deluxe), and Essence STX (II).
+	  Asus AV66/AV100/AV200 chips, i.e., Xonar D1, DX, D2, D2X, DS,
+	  Essence ST (Deluxe), and Essence STX.
 	  Support for the HDAV1.3 (Deluxe) and HDAV1.3 Slim is experimental;
 	  for the Xense, missing.
 
@@ -888,5 +886,3 @@ config SND_YMFPCI
 	  will be called snd-ymfpci.
 
 endif	# SND_PCI
-
-source "sound/pci/hda/Kconfig"

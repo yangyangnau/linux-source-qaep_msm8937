@@ -23,11 +23,10 @@
 #include <linux/syscalls.h>
 #include <linux/ratelimit.h>
 
-#include <asm/esr.h>
 #include <asm/fpsimd.h>
 #include <asm/signal32.h>
 #include <asm/uaccess.h>
-#include <asm/unistd.h>
+#include <asm/unistd32.h>
 
 struct compat_sigcontext {
 	/* We always set these two fields to 0 */
@@ -82,8 +81,6 @@ struct compat_vfp_sigframe {
 #define VFP_MAGIC		0x56465001
 #define VFP_STORAGE_SIZE	sizeof(struct compat_vfp_sigframe)
 
-#define FSR_WRITE_SHIFT		(11)
-
 struct compat_aux_sigframe {
 	struct compat_vfp_sigframe	vfp;
 
@@ -102,6 +99,34 @@ struct compat_rt_sigframe {
 };
 
 #define _BLOCKABLE (~(sigmask(SIGKILL) | sigmask(SIGSTOP)))
+
+/*
+ * For ARM syscalls, the syscall number has to be loaded into r7.
+ * We do not support an OABI userspace.
+ */
+#define MOV_R7_NR_SIGRETURN	(0xe3a07000 | __NR_compat_sigreturn)
+#define SVC_SYS_SIGRETURN	(0xef000000 | __NR_compat_sigreturn)
+#define MOV_R7_NR_RT_SIGRETURN	(0xe3a07000 | __NR_compat_rt_sigreturn)
+#define SVC_SYS_RT_SIGRETURN	(0xef000000 | __NR_compat_rt_sigreturn)
+
+/*
+ * For Thumb syscalls, we also pass the syscall number via r7. We therefore
+ * need two 16-bit instructions.
+ */
+#define SVC_THUMB_SIGRETURN	(((0xdf00 | __NR_compat_sigreturn) << 16) | \
+				   0x2700 | __NR_compat_sigreturn)
+#define SVC_THUMB_RT_SIGRETURN	(((0xdf00 | __NR_compat_rt_sigreturn) << 16) | \
+				   0x2700 | __NR_compat_rt_sigreturn)
+
+const compat_ulong_t aarch32_sigret_code[6] = {
+	/*
+	 * AArch32 sigreturn code.
+	 * We don't construct an OABI SWI - instead we just set the imm24 field
+	 * to the EABI syscall number so that we create a sane disassembly.
+	 */
+	MOV_R7_NR_SIGRETURN,    SVC_SYS_SIGRETURN,    SVC_THUMB_SIGRETURN,
+	MOV_R7_NR_RT_SIGRETURN, SVC_SYS_RT_SIGRETURN, SVC_THUMB_RT_SIGRETURN,
+};
 
 static inline int put_sigset_t(compat_sigset_t __user *uset, sigset_t *set)
 {
@@ -125,7 +150,7 @@ static inline int get_sigset_t(sigset_t *set,
 	return 0;
 }
 
-int copy_siginfo_to_user32(compat_siginfo_t __user *to, const siginfo_t *from)
+int copy_siginfo_to_user32(compat_siginfo_t __user *to, siginfo_t *from)
 {
 	int err;
 
@@ -154,7 +179,8 @@ int copy_siginfo_to_user32(compat_siginfo_t __user *to, const siginfo_t *from)
 	case __SI_TIMER:
 		 err |= __put_user(from->si_tid, &to->si_tid);
 		 err |= __put_user(from->si_overrun, &to->si_overrun);
-		 err |= __put_user(from->si_int, &to->si_int);
+		 err |= __put_user((compat_uptr_t)(unsigned long)from->si_ptr,
+				   &to->si_ptr);
 		break;
 	case __SI_POLL:
 		err |= __put_user(from->si_band, &to->si_band);
@@ -183,7 +209,7 @@ int copy_siginfo_to_user32(compat_siginfo_t __user *to, const siginfo_t *from)
 	case __SI_MESGQ: /* But this is */
 		err |= __put_user(from->si_pid, &to->si_pid);
 		err |= __put_user(from->si_uid, &to->si_uid);
-		err |= __put_user(from->si_int, &to->si_int);
+		err |= __put_user((compat_uptr_t)(unsigned long)from->si_ptr, &to->si_ptr);
 		break;
 	default: /* this is just in case for now ... */
 		err |= __put_user(from->si_pid, &to->si_pid);
@@ -221,7 +247,7 @@ static int compat_preserve_vfp_context(struct compat_vfp_sigframe __user *frame)
 	 * Note that this also saves V16-31, which aren't visible
 	 * in AArch32.
 	 */
-	fpsimd_preserve_current_state();
+	fpsimd_save_state(fpsimd);
 
 	/* Place structure header on the stack */
 	__put_user_error(magic, &frame->magic, err);
@@ -284,8 +310,11 @@ static int compat_restore_vfp_context(struct compat_vfp_sigframe __user *frame)
 	 * We don't need to touch the exception register, so
 	 * reload the hardware state.
 	 */
-	if (!err)
-		fpsimd_update_current_state(&fpsimd);
+	if (!err) {
+		preempt_disable();
+		fpsimd_load_state(&fpsimd);
+		preempt_enable();
+	}
 
 	return err ? -EFAULT : 0;
 }
@@ -406,12 +435,18 @@ badframe:
 	return 0;
 }
 
-static void __user *compat_get_sigframe(struct ksignal *ksig,
+static void __user *compat_get_sigframe(struct k_sigaction *ka,
 					struct pt_regs *regs,
 					int framesize)
 {
-	compat_ulong_t sp = sigsp(regs->compat_sp, ksig);
+	compat_ulong_t sp = regs->compat_sp;
 	void __user *frame;
+
+	/*
+	 * This is the X/Open sanctioned signal stack switching.
+	 */
+	if ((ka->sa.sa_flags & SA_ONSTACK) && !sas_ss_flags(sp))
+		sp = current->sas_ss_sp + current->sas_ss_size;
 
 	/*
 	 * ATPCS B01 mandates 8-byte alignment
@@ -439,13 +474,12 @@ static void compat_setup_return(struct pt_regs *regs, struct k_sigaction *ka,
 	/* Check if the handler is written for ARM or Thumb */
 	thumb = handler & 1;
 
-	if (thumb)
+	if (thumb) {
 		spsr |= COMPAT_PSR_T_BIT;
-	else
+		spsr &= ~COMPAT_PSR_IT_MASK;
+	} else {
 		spsr &= ~COMPAT_PSR_T_BIT;
-
-	/* The IT state must be cleared for both ARM and Thumb-2 */
-	spsr &= ~COMPAT_PSR_IT_MASK;
+	}
 
 	if (ka->sa.sa_flags & SA_RESTORER) {
 		retcode = ptr_to_compat(ka->sa.sa_restorer);
@@ -493,9 +527,7 @@ static int compat_setup_sigframe(struct compat_sigframe __user *sf,
 	__put_user_error(regs->pstate, &sf->uc.uc_mcontext.arm_cpsr, err);
 
 	__put_user_error((compat_ulong_t)0, &sf->uc.uc_mcontext.trap_no, err);
-	/* set the compat FSR WnR */
-	__put_user_error(!!(current->thread.fault_code & ESR_EL1_WRITE) <<
-			 FSR_WRITE_SHIFT, &sf->uc.uc_mcontext.error_code, err);
+	__put_user_error((compat_ulong_t)0, &sf->uc.uc_mcontext.error_code, err);
 	__put_user_error(current->thread.fault_address, &sf->uc.uc_mcontext.fault_address, err);
 	__put_user_error(set->sig[0], &sf->uc.uc_mcontext.oldmask, err);
 
@@ -513,18 +545,18 @@ static int compat_setup_sigframe(struct compat_sigframe __user *sf,
 /*
  * 32-bit signal handling routines called from signal.c
  */
-int compat_setup_rt_frame(int usig, struct ksignal *ksig,
+int compat_setup_rt_frame(int usig, struct k_sigaction *ka, siginfo_t *info,
 			  sigset_t *set, struct pt_regs *regs)
 {
 	struct compat_rt_sigframe __user *frame;
 	int err = 0;
 
-	frame = compat_get_sigframe(ksig, regs, sizeof(*frame));
+	frame = compat_get_sigframe(ka, regs, sizeof(*frame));
 
 	if (!frame)
 		return 1;
 
-	err |= copy_siginfo_to_user32(&frame->info, &ksig->info);
+	err |= copy_siginfo_to_user32(&frame->info, info);
 
 	__put_user_error(0, &frame->sig.uc.uc_flags, err);
 	__put_user_error(0, &frame->sig.uc.uc_link, err);
@@ -534,7 +566,7 @@ int compat_setup_rt_frame(int usig, struct ksignal *ksig,
 	err |= compat_setup_sigframe(&frame->sig, regs, set);
 
 	if (err == 0) {
-		compat_setup_return(regs, &ksig->ka, frame->sig.retcode, frame, usig);
+		compat_setup_return(regs, ka, frame->sig.retcode, frame, usig);
 		regs->regs[1] = (compat_ulong_t)(unsigned long)&frame->info;
 		regs->regs[2] = (compat_ulong_t)(unsigned long)&frame->sig.uc;
 	}
@@ -542,13 +574,13 @@ int compat_setup_rt_frame(int usig, struct ksignal *ksig,
 	return err;
 }
 
-int compat_setup_frame(int usig, struct ksignal *ksig, sigset_t *set,
+int compat_setup_frame(int usig, struct k_sigaction *ka, sigset_t *set,
 		       struct pt_regs *regs)
 {
 	struct compat_sigframe __user *frame;
 	int err = 0;
 
-	frame = compat_get_sigframe(ksig, regs, sizeof(*frame));
+	frame = compat_get_sigframe(ka, regs, sizeof(*frame));
 
 	if (!frame)
 		return 1;
@@ -557,7 +589,7 @@ int compat_setup_frame(int usig, struct ksignal *ksig, sigset_t *set,
 
 	err |= compat_setup_sigframe(frame, regs, set);
 	if (err == 0)
-		compat_setup_return(regs, &ksig->ka, frame->retcode, frame, usig);
+		compat_setup_return(regs, ka, frame->retcode, frame, usig);
 
 	return err;
 }

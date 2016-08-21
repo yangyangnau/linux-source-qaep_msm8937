@@ -328,7 +328,7 @@ MODULE_DEVICE_TABLE(usb, usbpn_ids);
 
 static struct usb_driver usbpn_driver;
 
-static int usbpn_probe(struct usb_interface *intf, const struct usb_device_id *id)
+int usbpn_probe(struct usb_interface *intf, const struct usb_device_id *id)
 {
 	static const char ifname[] = "usbpn%d";
 	const struct usb_cdc_union_desc *union_header = NULL;
@@ -387,7 +387,7 @@ static int usbpn_probe(struct usb_interface *intf, const struct usb_device_id *i
 		return -EINVAL;
 
 	dev = alloc_netdev(sizeof(*pnd) + sizeof(pnd->urbs[0]) * rxq_size,
-			   ifname, NET_NAME_UNKNOWN, usbpn_setup);
+				ifname, usbpn_setup);
 	if (!dev)
 		return -ENOMEM;
 

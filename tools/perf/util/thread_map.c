@@ -9,7 +9,6 @@
 #include "strlist.h"
 #include <string.h>
 #include "thread_map.h"
-#include "util.h"
 
 /* Skip "." and ".." directories */
 static int filter(const struct dirent *dir)
@@ -41,7 +40,7 @@ struct thread_map *thread_map__new_by_pid(pid_t pid)
 	}
 
 	for (i=0; i<items; i++)
-		zfree(&namelist[i]);
+		free(namelist[i]);
 	free(namelist);
 
 	return threads;
@@ -118,7 +117,7 @@ struct thread_map *thread_map__new_by_uid(uid_t uid)
 			threads->map[threads->nr + i] = atoi(namelist[i]->d_name);
 
 		for (i = 0; i < items; i++)
-			zfree(&namelist[i]);
+			free(namelist[i]);
 		free(namelist);
 
 		threads->nr += items;
@@ -135,11 +134,12 @@ out_free_threads:
 
 out_free_namelist:
 	for (i = 0; i < items; i++)
-		zfree(&namelist[i]);
+		free(namelist[i]);
 	free(namelist);
 
 out_free_closedir:
-	zfree(&threads);
+	free(threads);
+	threads = NULL;
 	goto out_closedir;
 }
 
@@ -194,7 +194,7 @@ static struct thread_map *thread_map__new_by_pid_str(const char *pid_str)
 
 		for (i = 0; i < items; i++) {
 			threads->map[j++] = atoi(namelist[i]->d_name);
-			zfree(&namelist[i]);
+			free(namelist[i]);
 		}
 		threads->nr = total_tasks;
 		free(namelist);
@@ -206,23 +206,13 @@ out:
 
 out_free_namelist:
 	for (i = 0; i < items; i++)
-		zfree(&namelist[i]);
+		free(namelist[i]);
 	free(namelist);
 
 out_free_threads:
-	zfree(&threads);
+	free(threads);
+	threads = NULL;
 	goto out;
-}
-
-struct thread_map *thread_map__new_dummy(void)
-{
-	struct thread_map *threads = malloc(sizeof(*threads) + sizeof(pid_t));
-
-	if (threads != NULL) {
-		threads->map[0]	= -1;
-		threads->nr	= 1;
-	}
-	return threads;
 }
 
 static struct thread_map *thread_map__new_by_tid_str(const char *tid_str)
@@ -235,8 +225,14 @@ static struct thread_map *thread_map__new_by_tid_str(const char *tid_str)
 	struct strlist *slist;
 
 	/* perf-stat expects threads to be generated even if tid not given */
-	if (!tid_str)
-		return thread_map__new_dummy();
+	if (!tid_str) {
+		threads = malloc(sizeof(*threads) + sizeof(pid_t));
+		if (threads != NULL) {
+			threads->map[0] = -1;
+			threads->nr	= 1;
+		}
+		return threads;
+	}
 
 	slist = strlist__new(false, tid_str);
 	if (!slist)
@@ -266,7 +262,8 @@ out:
 	return threads;
 
 out_free_threads:
-	zfree(&threads);
+	free(threads);
+	threads = NULL;
 	goto out;
 }
 

@@ -16,6 +16,7 @@
 #include <linux/interrupt.h>
 #include <linux/delay.h>
 #include <linux/of_gpio.h>
+#include <linux/of_i2c.h>
 #include <linux/slab.h>
 #include <linux/export.h>
 
@@ -25,10 +26,9 @@
 #include <asm/time.h>
 #include <asm/uic.h>
 #include <asm/ppc4xx.h>
-#include <asm/dma.h>
 
 
-static const struct of_device_id warp_of_bus[] __initconst = {
+static __initdata struct of_device_id warp_of_bus[] = {
 	{ .compatible = "ibm,plb4", },
 	{ .compatible = "ibm,opb", },
 	{ .compatible = "ibm,ebc", },

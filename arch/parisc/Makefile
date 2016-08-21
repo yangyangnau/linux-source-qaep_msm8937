@@ -17,8 +17,6 @@
 # Mike Shaver, Helge Deller and Martin K. Petersen
 #
 
-KBUILD_IMAGE := vmlinuz
-
 KBUILD_DEFCONFIG := default_defconfig
 
 NM		= sh $(srctree)/arch/parisc/nm
@@ -48,12 +46,7 @@ cflags-y	:= -pipe
 
 # These flags should be implied by an hppa-linux configuration, but they
 # are not in gcc 3.2.
-cflags-y	+= -mno-space-regs
-
-# -mfast-indirect-calls is only relevant for 32-bit kernels.
-ifndef CONFIG_64BIT
-cflags-y	+= -mfast-indirect-calls
-endif
+cflags-y	+= -mno-space-regs -mfast-indirect-calls
 
 # Currently we save and restore fpregs on all kernel entry/interruption paths.
 # If that gets optimized, we might need to disable the use of fpregs in the
@@ -99,7 +92,7 @@ PALOCONF := $(shell if [ -f $(src)/palo.conf ]; then echo $(src)/palo.conf; \
 	else echo $(obj)/palo.conf; \
 	fi)
 
-palo lifimage: vmlinuz
+palo: vmlinux
 	@if test ! -x "$(PALO)"; then \
 		echo 'ERROR: Please install palo first (apt-get install palo)';\
 		echo 'or build it from source and install it somewhere in your $$PATH';\
@@ -114,36 +107,23 @@ palo lifimage: vmlinuz
 	fi
 	$(PALO) -f $(PALOCONF)
 
-BOOT_TARGETS    = zImage Image palo lifimage
-INSTALL_TARGETS = zinstall install
+# Shorthands for known targets not supported by parisc, use vmlinux as default
+Image zImage bzImage: vmlinux
 
-PHONY += bzImage $(BOOT_TARGETS) $(INSTALL_TARGETS)
-
-bzImage zImage: vmlinuz
-Image: vmlinux
-
-vmlinuz: vmlinux
-	@gzip -cf -9 $< > $@
-
-install:
-	$(CONFIG_SHELL) $(src)/arch/parisc/install.sh \
-			$(KERNELRELEASE) vmlinux System.map "$(INSTALL_PATH)"
-zinstall:
-	$(CONFIG_SHELL) $(src)/arch/parisc/install.sh \
-			$(KERNELRELEASE) vmlinuz System.map "$(INSTALL_PATH)"
+install: vmlinux
+	sh $(src)/arch/parisc/install.sh \
+			$(KERNELRELEASE) $< System.map "$(INSTALL_PATH)"
 
 CLEAN_FILES	+= lifimage
 MRPROPER_FILES	+= palo.conf
 
 define archhelp
 	@echo  '* vmlinux	- Uncompressed kernel image (./vmlinux)'
-	@echo  '  vmlinuz	- Compressed kernel image (./vmlinuz)'
 	@echo  '  palo		- Bootable image (./lifimage)'
-	@echo  '  install	- Install uncompressed vmlinux kernel using'
+	@echo  '  install	- Install kernel using'
 	@echo  '		  (your) ~/bin/$(INSTALLKERNEL) or'
 	@echo  '		  (distribution) /sbin/$(INSTALLKERNEL) or'
 	@echo  '		  copy to $$(INSTALL_PATH)'
-	@echo  '  zinstall	- Install compressed vmlinuz kernel'
 endef
 
 # we require gcc 3.3 or above to compile the kernel

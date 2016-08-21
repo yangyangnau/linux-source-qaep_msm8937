@@ -121,6 +121,3 @@ void mpi_free(MPI a)
 	kfree(a);
 }
 EXPORT_SYMBOL_GPL(mpi_free);
-
-MODULE_DESCRIPTION("Multiprecision maths library");
-MODULE_LICENSE("GPL");

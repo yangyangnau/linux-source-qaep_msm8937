@@ -18,6 +18,7 @@
 
 #include <linux/kernel.h>
 #include <linux/errno.h>
+#include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/tty.h>
 #include <linux/tty_driver.h>
@@ -287,8 +288,12 @@ static int whiteheat_attach(struct usb_serial *serial)
 
 	command_info = kmalloc(sizeof(struct whiteheat_command_private),
 								GFP_KERNEL);
-	if (!command_info)
+	if (command_info == NULL) {
+		dev_err(&serial->dev->dev,
+			"%s: Out of memory for port structures\n",
+			serial->type->description);
 		goto no_command_private;
+	}
 
 	mutex_init(&command_info->mutex);
 	command_info->port_running = 0;
@@ -450,12 +455,14 @@ static int whiteheat_ioctl(struct tty_struct *tty,
 	struct serial_struct serstruct;
 	void __user *user_arg = (void __user *)arg;
 
+	dev_dbg(&port->dev, "%s - cmd 0x%.4x\n", __func__, cmd);
+
 	switch (cmd) {
 	case TIOCGSERIAL:
 		memset(&serstruct, 0, sizeof(serstruct));
 		serstruct.type = PORT_16654;
-		serstruct.line = port->minor;
-		serstruct.port = port->port_number;
+		serstruct.line = port->serial->minor;
+		serstruct.port = port->number;
 		serstruct.flags = ASYNC_SKIP_TEST | ASYNC_AUTO_IRQ;
 		serstruct.xmit_fifo_size = kfifo_size(&port->write_fifo);
 		serstruct.custom_divisor = 0;
@@ -514,10 +521,6 @@ static void command_port_read_callback(struct urb *urb)
 		dev_dbg(&urb->dev->dev, "%s - command_info is NULL, exiting.\n", __func__);
 		return;
 	}
-	if (!urb->actual_length) {
-		dev_dbg(&urb->dev->dev, "%s - empty response, exiting.\n", __func__);
-		return;
-	}
 	if (status) {
 		dev_dbg(&urb->dev->dev, "%s - nonzero urb status: %d\n", __func__, status);
 		if (status != -ENOENT)
@@ -538,8 +541,7 @@ static void command_port_read_callback(struct urb *urb)
 		/* These are unsolicited reports from the firmware, hence no
 		   waiting command to wakeup */
 		dev_dbg(&urb->dev->dev, "%s - event received\n", __func__);
-	} else if ((data[0] == WHITEHEAT_GET_DTR_RTS) &&
-		(urb->actual_length - 1 <= sizeof(command_info->result_buffer))) {
+	} else if (data[0] == WHITEHEAT_GET_DTR_RTS) {
 		memcpy(command_info->result_buffer, &data[1],
 						urb->actual_length - 1);
 		command_info->command_finished = WHITEHEAT_CMD_COMPLETE;
@@ -624,7 +626,7 @@ static int firm_open(struct usb_serial_port *port)
 {
 	struct whiteheat_simple open_command;
 
-	open_command.port = port->port_number + 1;
+	open_command.port = port->number - port->serial->minor + 1;
 	return firm_send_command(port, WHITEHEAT_OPEN,
 		(__u8 *)&open_command, sizeof(open_command));
 }
@@ -634,7 +636,7 @@ static int firm_close(struct usb_serial_port *port)
 {
 	struct whiteheat_simple close_command;
 
-	close_command.port = port->port_number + 1;
+	close_command.port = port->number - port->serial->minor + 1;
 	return firm_send_command(port, WHITEHEAT_CLOSE,
 			(__u8 *)&close_command, sizeof(close_command));
 }
@@ -647,7 +649,7 @@ static void firm_setup_port(struct tty_struct *tty)
 	struct whiteheat_port_settings port_settings;
 	unsigned int cflag = tty->termios.c_cflag;
 
-	port_settings.port = port->port_number + 1;
+	port_settings.port = port->number - port->serial->minor + 1;
 
 	/* get the byte size */
 	switch (cflag & CSIZE) {
@@ -724,7 +726,7 @@ static int firm_set_rts(struct usb_serial_port *port, __u8 onoff)
 {
 	struct whiteheat_set_rdb rts_command;
 
-	rts_command.port = port->port_number + 1;
+	rts_command.port = port->number - port->serial->minor + 1;
 	rts_command.state = onoff;
 	return firm_send_command(port, WHITEHEAT_SET_RTS,
 			(__u8 *)&rts_command, sizeof(rts_command));
@@ -735,7 +737,7 @@ static int firm_set_dtr(struct usb_serial_port *port, __u8 onoff)
 {
 	struct whiteheat_set_rdb dtr_command;
 
-	dtr_command.port = port->port_number + 1;
+	dtr_command.port = port->number - port->serial->minor + 1;
 	dtr_command.state = onoff;
 	return firm_send_command(port, WHITEHEAT_SET_DTR,
 			(__u8 *)&dtr_command, sizeof(dtr_command));
@@ -746,7 +748,7 @@ static int firm_set_break(struct usb_serial_port *port, __u8 onoff)
 {
 	struct whiteheat_set_rdb break_command;
 
-	break_command.port = port->port_number + 1;
+	break_command.port = port->number - port->serial->minor + 1;
 	break_command.state = onoff;
 	return firm_send_command(port, WHITEHEAT_SET_BREAK,
 			(__u8 *)&break_command, sizeof(break_command));
@@ -757,7 +759,7 @@ static int firm_purge(struct usb_serial_port *port, __u8 rxtx)
 {
 	struct whiteheat_purge purge_command;
 
-	purge_command.port = port->port_number + 1;
+	purge_command.port = port->number - port->serial->minor + 1;
 	purge_command.what = rxtx;
 	return firm_send_command(port, WHITEHEAT_PURGE,
 			(__u8 *)&purge_command, sizeof(purge_command));
@@ -768,7 +770,7 @@ static int firm_get_dtr_rts(struct usb_serial_port *port)
 {
 	struct whiteheat_simple get_dr_command;
 
-	get_dr_command.port = port->port_number + 1;
+	get_dr_command.port = port->number - port->serial->minor + 1;
 	return firm_send_command(port, WHITEHEAT_GET_DTR_RTS,
 			(__u8 *)&get_dr_command, sizeof(get_dr_command));
 }
@@ -778,7 +780,7 @@ static int firm_report_tx_done(struct usb_serial_port *port)
 {
 	struct whiteheat_simple close_command;
 
-	close_command.port = port->port_number + 1;
+	close_command.port = port->number - port->serial->minor + 1;
 	return firm_send_command(port, WHITEHEAT_REPORT_TX_DONE,
 			(__u8 *)&close_command, sizeof(close_command));
 }

@@ -20,6 +20,7 @@
 #include <linux/string.h>
 #include <linux/errno.h>
 #include <linux/slab.h>
+#include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/mii.h>
@@ -28,9 +29,7 @@
 #include <linux/of_device.h>
 
 #include <asm/io.h>
-#if IS_ENABLED(CONFIG_UCC_GETH)
 #include <asm/ucc.h>	/* for ucc_set_qe_mux_mii_mng() */
-#endif
 
 #include "gianfar.h"
 
@@ -104,22 +103,19 @@ static int fsl_pq_mdio_write(struct mii_bus *bus, int mii_id, int regnum,
 {
 	struct fsl_pq_mdio_priv *priv = bus->priv;
 	struct fsl_pq_mii __iomem *regs = priv->regs;
-	unsigned int timeout;
+	u32 status;
 
 	/* Set the PHY address and the register address we want to write */
-	iowrite32be((mii_id << 8) | regnum, &regs->miimadd);
+	out_be32(&regs->miimadd, (mii_id << 8) | regnum);
 
 	/* Write out the value we want */
-	iowrite32be(value, &regs->miimcon);
+	out_be32(&regs->miimcon, value);
 
 	/* Wait for the transaction to finish */
-	timeout = MII_TIMEOUT;
-	while ((ioread32be(&regs->miimind) & MIIMIND_BUSY) && timeout) {
-		cpu_relax();
-		timeout--;
-	}
+	status = spin_event_timeout(!(in_be32(&regs->miimind) &	MIIMIND_BUSY),
+				    MII_TIMEOUT, 0);
 
-	return timeout ? 0 : -ETIMEDOUT;
+	return status ? 0 : -ETIMEDOUT;
 }
 
 /*
@@ -136,29 +132,25 @@ static int fsl_pq_mdio_read(struct mii_bus *bus, int mii_id, int regnum)
 {
 	struct fsl_pq_mdio_priv *priv = bus->priv;
 	struct fsl_pq_mii __iomem *regs = priv->regs;
-	unsigned int timeout;
+	u32 status;
 	u16 value;
 
 	/* Set the PHY address and the register address we want to read */
-	iowrite32be((mii_id << 8) | regnum, &regs->miimadd);
+	out_be32(&regs->miimadd, (mii_id << 8) | regnum);
 
 	/* Clear miimcom, and then initiate a read */
-	iowrite32be(0, &regs->miimcom);
-	iowrite32be(MII_READ_COMMAND, &regs->miimcom);
+	out_be32(&regs->miimcom, 0);
+	out_be32(&regs->miimcom, MII_READ_COMMAND);
 
 	/* Wait for the transaction to finish, normally less than 100us */
-	timeout = MII_TIMEOUT;
-	while ((ioread32be(&regs->miimind) &
-	       (MIIMIND_NOTVALID | MIIMIND_BUSY)) && timeout) {
-		cpu_relax();
-		timeout--;
-	}
-
-	if (!timeout)
+	status = spin_event_timeout(!(in_be32(&regs->miimind) &
+				    (MIIMIND_NOTVALID | MIIMIND_BUSY)),
+				    MII_TIMEOUT, 0);
+	if (!status)
 		return -ETIMEDOUT;
 
 	/* Grab the value of the register from miimstat */
-	value = ioread32be(&regs->miimstat);
+	value = in_be32(&regs->miimstat);
 
 	dev_dbg(&bus->dev, "read %04x from address %x/%x\n", value, mii_id, regnum);
 	return value;
@@ -169,26 +161,23 @@ static int fsl_pq_mdio_reset(struct mii_bus *bus)
 {
 	struct fsl_pq_mdio_priv *priv = bus->priv;
 	struct fsl_pq_mii __iomem *regs = priv->regs;
-	unsigned int timeout;
+	u32 status;
 
 	mutex_lock(&bus->mdio_lock);
 
 	/* Reset the management interface */
-	iowrite32be(MIIMCFG_RESET, &regs->miimcfg);
+	out_be32(&regs->miimcfg, MIIMCFG_RESET);
 
 	/* Setup the MII Mgmt clock speed */
-	iowrite32be(MIIMCFG_INIT_VALUE, &regs->miimcfg);
+	out_be32(&regs->miimcfg, MIIMCFG_INIT_VALUE);
 
 	/* Wait until the bus is free */
-	timeout = MII_TIMEOUT;
-	while ((ioread32be(&regs->miimind) & MIIMIND_BUSY) && timeout) {
-		cpu_relax();
-		timeout--;
-	}
+	status = spin_event_timeout(!(in_be32(&regs->miimind) &	MIIMIND_BUSY),
+				    MII_TIMEOUT, 0);
 
 	mutex_unlock(&bus->mdio_lock);
 
-	if (!timeout) {
+	if (!status) {
 		dev_err(&bus->dev, "timeout waiting for MII bus\n");
 		return -EBUSY;
 	}
@@ -420,7 +409,7 @@ static int fsl_pq_mdio_probe(struct platform_device *pdev)
 	priv->regs = priv->map + data->mii_offset;
 
 	new_bus->parent = &pdev->dev;
-	platform_set_drvdata(pdev, new_bus);
+	dev_set_drvdata(&pdev->dev, new_bus);
 
 	if (data->get_tbipa) {
 		for_each_child_of_node(np, tbi) {
@@ -445,7 +434,7 @@ static int fsl_pq_mdio_probe(struct platform_device *pdev)
 
 			tbipa = data->get_tbipa(priv->map);
 
-			iowrite32be(be32_to_cpup(prop), tbipa);
+			out_be32(tbipa, be32_to_cpup(prop));
 		}
 	}
 
@@ -478,6 +467,8 @@ static int fsl_pq_mdio_remove(struct platform_device *pdev)
 	struct fsl_pq_mdio_priv *priv = bus->priv;
 
 	mdiobus_unregister(bus);
+
+	dev_set_drvdata(device, NULL);
 
 	iounmap(priv->map);
 	mdiobus_free(bus);

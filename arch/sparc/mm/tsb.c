@@ -9,7 +9,6 @@
 #include <asm/page.h>
 #include <asm/pgtable.h>
 #include <asm/mmu_context.h>
-#include <asm/setup.h>
 #include <asm/tsb.h>
 #include <asm/tlb.h>
 #include <asm/oplib.h>
@@ -88,7 +87,7 @@ void flush_tsb_user(struct tlb_batch *tb)
 		nentries = mm->context.tsb_block[MM_TSB_HUGE].tsb_nentries;
 		if (tlb_type == cheetah_plus || tlb_type == hypervisor)
 			base = __pa(base);
-		__flush_tsb_one(tb, REAL_HPAGE_SHIFT, base, nentries);
+		__flush_tsb_one(tb, HPAGE_SHIFT, base, nentries);
 	}
 #endif
 	spin_unlock_irqrestore(&mm->context.lock, flags);
@@ -112,7 +111,7 @@ void flush_tsb_user_page(struct mm_struct *mm, unsigned long vaddr)
 		nentries = mm->context.tsb_block[MM_TSB_HUGE].tsb_nentries;
 		if (tlb_type == cheetah_plus || tlb_type == hypervisor)
 			base = __pa(base);
-		__flush_tsb_one_entry(base, vaddr, REAL_HPAGE_SHIFT, nentries);
+		__flush_tsb_one_entry(base, vaddr, HPAGE_SHIFT, nentries);
 	}
 #endif
 	spin_unlock_irqrestore(&mm->context.lock, flags);
@@ -134,19 +133,7 @@ static void setup_tsb_params(struct mm_struct *mm, unsigned long tsb_idx, unsign
 	mm->context.tsb_block[tsb_idx].tsb_nentries =
 		tsb_bytes / sizeof(struct tsb);
 
-	switch (tsb_idx) {
-	case MM_TSB_BASE:
-		base = TSBMAP_8K_BASE;
-		break;
-#if defined(CONFIG_HUGETLB_PAGE) || defined(CONFIG_TRANSPARENT_HUGEPAGE)
-	case MM_TSB_HUGE:
-		base = TSBMAP_4M_BASE;
-		break;
-#endif
-	default:
-		BUG();
-	}
-
+	base = TSBMAP_BASE;
 	tte = pgprot_val(PAGE_KERNEL_LOCKED);
 	tsb_paddr = __pa(mm->context.tsb_block[tsb_idx].tsb);
 	BUG_ON(tsb_paddr & (tsb_bytes - 1UL));
@@ -286,7 +273,7 @@ void __init pgtable_cache_init(void)
 		prom_halt();
 	}
 
-	for (i = 0; i < ARRAY_SIZE(tsb_cache_names); i++) {
+	for (i = 0; i < 8; i++) {
 		unsigned long size = 8192 << i;
 		const char *name = tsb_cache_names[i];
 
@@ -485,6 +472,8 @@ int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
 	mm->context.huge_pte_count = 0;
 #endif
 
+	mm->context.pgtable_page = NULL;
+
 	/* copy_mm() copies over the parent's mm_struct before calling
 	 * us, so we need to zero out the TSB pointer or else tsb_grow()
 	 * will be confused and think there is an older TSB to free up.
@@ -523,9 +512,16 @@ static void tsb_destroy_one(struct tsb_config *tp)
 void destroy_context(struct mm_struct *mm)
 {
 	unsigned long flags, i;
+	struct page *page;
 
 	for (i = 0; i < MM_NUM_TSBS; i++)
 		tsb_destroy_one(&mm->context.tsb_block[i]);
+
+	page = mm->context.pgtable_page;
+	if (page && put_page_testzero(page)) {
+		pgtable_page_dtor(page);
+		free_hot_cold_page(page, 0);
+	}
 
 	spin_lock_irqsave(&ctx_alloc_lock, flags);
 

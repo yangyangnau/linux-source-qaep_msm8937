@@ -1,12 +1,12 @@
 /*
- *  Copyright (c) 2000-2014 LSI Corporation.
+ *  Copyright (c) 2000-2011 LSI Corporation.
  *
  *
  *           Name:  mpi2_cnfg.h
  *          Title:  MPI Configuration messages and pages
  *  Creation Date:  November 10, 2006
  *
- *    mpi2_cnfg.h Version:  02.00.26
+ *    mpi2_cnfg.h Version:  02.00.22
  *
  *  Version History
  *  ---------------
@@ -149,14 +149,6 @@
  *  11-18-11  02.00.22  Added define MPI2_IOCPAGE6_CAP_FLAGS_4K_SECTORS_SUPPORT.
  *                      Added UEFIVersion field to BIOS Page 1 and defined new
  *                      BiosOptions bits.
- *  11-27-12  02.00.23  Added MPI2_MANPAGE7_FLAG_EVENTREPLAY_SLOT_ORDER.
- *			Added MPI2_BIOSPAGE1_OPTIONS_MASK_OEM_ID.
- *  12-20-12  02.00.24  Marked MPI2_SASIOUNIT1_CONTROL_CLEAR_AFFILIATION as
- *			obsolete for MPI v2.5 and later.
- *			Added some defines for 12G SAS speeds.
- *  04-09-13  02.00.25  Added MPI2_IOUNITPAGE1_ATA_SECURITY_FREEZE_LOCK.
- *			Fixed MPI2_IOUNITPAGE5_DMA_CAP_MASK_MAX_REQUESTS to
- *			match the specification.
  *  --------------------------------------------------------------------------
  */
 
@@ -706,7 +698,6 @@ typedef struct _MPI2_CONFIG_PAGE_MAN_7
 #define MPI2_MANUFACTURING7_PAGEVERSION                 (0x01)
 
 /* defines for the Flags field */
-#define MPI2_MANPAGE7_FLAG_EVENTREPLAY_SLOT_ORDER       (0x00000002)
 #define MPI2_MANPAGE7_FLAG_USE_SLOT_INFO                (0x00000001)
 
 
@@ -779,7 +770,6 @@ typedef struct _MPI2_CONFIG_PAGE_IO_UNIT_1
 #define MPI2_IOUNITPAGE1_PAGEVERSION                    (0x04)
 
 /* IO Unit Page 1 Flags defines */
-#define MPI2_IOUNITPAGE1_ATA_SECURITY_FREEZE_LOCK       (0x00004000)
 #define MPI2_IOUNITPAGE1_ENABLE_HOST_BASED_DISCOVERY    (0x00000800)
 #define MPI2_IOUNITPAGE1_MASK_SATA_WRITE_CACHE          (0x00000600)
 #define MPI2_IOUNITPAGE1_SATA_WRITE_CACHE_SHIFT         (9)
@@ -851,7 +841,7 @@ typedef struct _MPI2_CONFIG_PAGE_IO_UNIT_5 {
 #define MPI2_IOUNITPAGE5_PAGEVERSION                    (0x00)
 
 /* defines for IO Unit Page 5 DmaEngineCapabilities field */
-#define MPI2_IOUNITPAGE5_DMA_CAP_MASK_MAX_REQUESTS      (0xFFFF0000)
+#define MPI2_IOUNITPAGE5_DMA_CAP_MASK_MAX_REQUESTS      (0xFF00)
 #define MPI2_IOUNITPAGE5_DMA_CAP_SHIFT_MAX_REQUESTS     (16)
 
 #define MPI2_IOUNITPAGE5_DMA_CAP_EEDP                   (0x0008)
@@ -892,17 +882,13 @@ typedef struct _MPI2_CONFIG_PAGE_IO_UNIT_7 {
     U16                     IOCTemperature;                         /* 0x10 */
     U8                      IOCTemperatureUnits;                    /* 0x12 */
     U8                      IOCSpeed;                               /* 0x13 */
-	U16                     BoardTemperature;		    /* 0x14 */
-	U8                      BoardTemperatureUnits;		    /* 0x16 */
-	U8                      Reserved3;			    /* 0x17 */
-	U32                     Reserved4;                          /* 0x18 */
-	U32                     Reserved5;                          /* 0x1C */
-	U32                     Reserved6;                          /* 0x20 */
-	U32                     Reserved7;                          /* 0x24 */
+	U16                     BoardTemperature;              /* 0x14 */
+	U8                      BoardTemperatureUnits;         /* 0x16 */
+	U8                      Reserved3;                     /* 0x17 */
 } MPI2_CONFIG_PAGE_IO_UNIT_7, MPI2_POINTER PTR_MPI2_CONFIG_PAGE_IO_UNIT_7,
   Mpi2IOUnitPage7_t, MPI2_POINTER pMpi2IOUnitPage7_t;
 
-#define MPI2_IOUNITPAGE7_PAGEVERSION                    (0x04)
+#define MPI2_IOUNITPAGE7_PAGEVERSION                    (0x02)
 
 /* defines for IO Unit Page 7 PCIeWidth field */
 #define MPI2_IOUNITPAGE7_PCIE_WIDTH_X1              (0x01)
@@ -1238,9 +1224,6 @@ typedef struct _MPI2_CONFIG_PAGE_BIOS_1
 #define MPI2_BIOSPAGE1_PAGEVERSION                      (0x05)
 
 /* values for BIOS Page 1 BiosOptions field */
-#define MPI2_BIOSPAGE1_OPTIONS_MASK_OEM_ID                  (0x000000F0)
-#define MPI2_BIOSPAGE1_OPTIONS_LSI_OEM_ID                   (0x00000000)
-
 #define MPI2_BIOSPAGE1_OPTIONS_MASK_UEFI_HII_REGISTRATION   (0x00000006)
 #define MPI2_BIOSPAGE1_OPTIONS_ENABLE_UEFI_HII              (0x00000000)
 #define MPI2_BIOSPAGE1_OPTIONS_DISABLE_UEFI_HII             (0x00000002)
@@ -1812,7 +1795,6 @@ typedef struct _MPI2_CONFIG_PAGE_RD_PDISK_1
 #define MPI2_SAS_PRATE_MAX_RATE_1_5                     (0x80)
 #define MPI2_SAS_PRATE_MAX_RATE_3_0                     (0x90)
 #define MPI2_SAS_PRATE_MAX_RATE_6_0                     (0xA0)
-#define MPI25_SAS_PRATE_MAX_RATE_12_0                   (0xB0)
 #define MPI2_SAS_PRATE_MIN_RATE_MASK                    (0x0F)
 #define MPI2_SAS_PRATE_MIN_RATE_NOT_PROGRAMMABLE        (0x00)
 #define MPI2_SAS_PRATE_MIN_RATE_1_5                     (0x08)
@@ -1825,7 +1807,6 @@ typedef struct _MPI2_CONFIG_PAGE_RD_PDISK_1
 #define MPI2_SAS_HWRATE_MAX_RATE_1_5                    (0x80)
 #define MPI2_SAS_HWRATE_MAX_RATE_3_0                    (0x90)
 #define MPI2_SAS_HWRATE_MAX_RATE_6_0                    (0xA0)
-#define MPI25_SAS_HWRATE_MAX_RATE_12_0                  (0xB0)
 #define MPI2_SAS_HWRATE_MIN_RATE_MASK                   (0x0F)
 #define MPI2_SAS_HWRATE_MIN_RATE_1_5                    (0x08)
 #define MPI2_SAS_HWRATE_MIN_RATE_3_0                    (0x09)

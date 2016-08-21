@@ -23,6 +23,7 @@
  */
 
 #include <core/os.h>
+#include <core/class.h>
 #include <core/engctx.h>
 
 #include <subdev/vm.h>
@@ -124,6 +125,13 @@ nv50_mpeg_cclass = {
  * PMPEG engine/subdev functions
  ******************************************************************************/
 
+int
+nv50_mpeg_tlb_flush(struct nouveau_engine *engine)
+{
+	nv50_vm_flush_engine(&engine->base, 0x08);
+	return 0;
+}
+
 void
 nv50_mpeg_intr(struct nouveau_subdev *subdev)
 {
@@ -183,6 +191,7 @@ nv50_mpeg_ctor(struct nouveau_object *parent, struct nouveau_object *engine,
 	nv_subdev(priv)->intr = nv50_vpe_intr;
 	nv_engine(priv)->cclass = &nv50_mpeg_cclass;
 	nv_engine(priv)->sclass = nv50_mpeg_sclass;
+	nv_engine(priv)->tlb_flush = nv50_mpeg_tlb_flush;
 	return 0;
 }
 

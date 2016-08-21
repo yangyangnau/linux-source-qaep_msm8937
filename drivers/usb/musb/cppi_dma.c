@@ -150,10 +150,13 @@ static void cppi_pool_free(struct cppi_channel *c)
 	c->last_processed = NULL;
 }
 
-static void cppi_controller_start(struct cppi *controller)
+static int cppi_controller_start(struct dma_controller *c)
 {
+	struct cppi	*controller;
 	void __iomem	*tibase;
 	int		i;
+
+	controller = container_of(c, struct cppi, controller);
 
 	/* do whatever is necessary to start controller */
 	for (i = 0; i < ARRAY_SIZE(controller->tx); i++) {
@@ -209,6 +212,8 @@ static void cppi_controller_start(struct cppi *controller)
 	/* disable RNDIS mode, also host rx RNDIS autorequest */
 	musb_writel(tibase, DAVINCI_RNDIS_REG, 0);
 	musb_writel(tibase, DAVINCI_AUTOREQ_REG, 0);
+
+	return 0;
 }
 
 /*
@@ -217,12 +222,14 @@ static void cppi_controller_start(struct cppi *controller)
  *  De-Init the DMA controller as necessary.
  */
 
-static void cppi_controller_stop(struct cppi *controller)
+static int cppi_controller_stop(struct dma_controller *c)
 {
+	struct cppi		*controller;
 	void __iomem		*tibase;
 	int			i;
 	struct musb		*musb;
 
+	controller = container_of(c, struct cppi, controller);
 	musb = controller->musb;
 
 	tibase = controller->tibase;
@@ -248,6 +255,8 @@ static void cppi_controller_stop(struct cppi *controller)
 	/*disable tx/rx cppi */
 	musb_writel(tibase, DAVINCI_TXCPPI_CTRL_REG, DAVINCI_DMA_CTRL_DISABLE);
 	musb_writel(tibase, DAVINCI_RXCPPI_CTRL_REG, DAVINCI_DMA_CTRL_DISABLE);
+
+	return 0;
 }
 
 /* While dma channel is allocated, we only want the core irqs active
@@ -1312,6 +1321,8 @@ struct dma_controller *dma_controller_create(struct musb *musb, void __iomem *mr
 	controller->tibase = mregs - DAVINCI_BASE_OFFSET;
 
 	controller->musb = musb;
+	controller->controller.start = cppi_controller_start;
+	controller->controller.stop = cppi_controller_stop;
 	controller->controller.channel_alloc = cppi_channel_allocate;
 	controller->controller.channel_release = cppi_channel_release;
 	controller->controller.channel_program = cppi_channel_program;
@@ -1340,7 +1351,6 @@ struct dma_controller *dma_controller_create(struct musb *musb, void __iomem *mr
 		controller->irq = irq;
 	}
 
-	cppi_controller_start(controller);
 	return &controller->controller;
 }
 
@@ -1352,8 +1362,6 @@ void dma_controller_destroy(struct dma_controller *c)
 	struct cppi	*cppi;
 
 	cppi = container_of(c, struct cppi, controller);
-
-	cppi_controller_stop(cppi);
 
 	if (cppi->irq)
 		free_irq(cppi->irq, cppi->musb);

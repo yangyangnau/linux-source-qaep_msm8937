@@ -36,7 +36,6 @@
 #define EF_MIPS_ABI2		0x00000020
 #define EF_MIPS_OPTIONS_FIRST	0x00000080
 #define EF_MIPS_32BITMODE	0x00000100
-#define EF_MIPS_FP64		0x00000200
 #define EF_MIPS_ABI		0x0000f000
 #define EF_MIPS_ARCH		0xf0000000
 
@@ -177,18 +176,6 @@ typedef elf_fpreg_t elf_fpregset_t[ELF_NFPREG];
 #ifdef CONFIG_32BIT
 
 /*
- * In order to be sure that we don't attempt to execute an O32 binary which
- * requires 64 bit FP (FR=1) on a system which does not support it we refuse
- * to execute any binary which has bits specified by the following macro set
- * in its ELF header flags.
- */
-#ifdef CONFIG_MIPS_O32_FP64_SUPPORT
-# define __MIPS_O32_FP64_MUST_BE_ZERO	0
-#else
-# define __MIPS_O32_FP64_MUST_BE_ZERO	EF_MIPS_FP64
-#endif
-
-/*
  * This is used to ensure we don't load something for the wrong architecture.
  */
 #define elf_check_arch(hdr)						\
@@ -204,8 +191,6 @@ typedef elf_fpreg_t elf_fpregset_t[ELF_NFPREG];
 		__res = 0;						\
 	if (((__h->e_flags & EF_MIPS_ABI) != 0) &&			\
 	    ((__h->e_flags & EF_MIPS_ABI) != EF_MIPS_ABI_O32))		\
-		__res = 0;						\
-	if (__h->e_flags & __MIPS_O32_FP64_MUST_BE_ZERO)		\
 		__res = 0;						\
 									\
 	__res;								\
@@ -264,11 +249,6 @@ extern struct mips_abi mips_abi_n32;
 
 #define SET_PERSONALITY(ex)						\
 do {									\
-	if ((ex).e_flags & EF_MIPS_FP64)				\
-		clear_thread_flag(TIF_32BIT_FPREGS);			\
-	else								\
-		set_thread_flag(TIF_32BIT_FPREGS);			\
-									\
 	if (personality(current->personality) != PER_LINUX)		\
 		set_personality(PER_LINUX);				\
 									\
@@ -291,18 +271,14 @@ do {									\
 #endif
 
 #ifdef CONFIG_MIPS32_O32
-#define __SET_PERSONALITY32_O32(ex)					\
+#define __SET_PERSONALITY32_O32()					\
 	do {								\
 		set_thread_flag(TIF_32BIT_REGS);			\
 		set_thread_flag(TIF_32BIT_ADDR);			\
-									\
-		if (!((ex).e_flags & EF_MIPS_FP64))			\
-			set_thread_flag(TIF_32BIT_FPREGS);		\
-									\
 		current->thread.abi = &mips_abi_32;			\
 	} while (0)
 #else
-#define __SET_PERSONALITY32_O32(ex)					\
+#define __SET_PERSONALITY32_O32()					\
 	do { } while (0)
 #endif
 
@@ -313,7 +289,7 @@ do {									\
 	     ((ex).e_flags & EF_MIPS_ABI) == 0)				\
 		__SET_PERSONALITY32_N32();				\
 	else								\
-		__SET_PERSONALITY32_O32(ex);                            \
+		__SET_PERSONALITY32_O32();				\
 } while (0)
 #else
 #define __SET_PERSONALITY32(ex) do { } while (0)
@@ -324,7 +300,6 @@ do {									\
 	unsigned int p;							\
 									\
 	clear_thread_flag(TIF_32BIT_REGS);				\
-	clear_thread_flag(TIF_32BIT_FPREGS);				\
 	clear_thread_flag(TIF_32BIT_ADDR);				\
 									\
 	if ((ex).e_ident[EI_CLASS] == ELFCLASS32)			\
@@ -339,7 +314,23 @@ do {									\
 
 #endif /* CONFIG_64BIT */
 
-#define CORE_DUMP_USE_REGSET
+struct pt_regs;
+struct task_struct;
+
+extern void elf_dump_regs(elf_greg_t *, struct pt_regs *regs);
+extern int dump_task_regs(struct task_struct *, elf_gregset_t *);
+extern int dump_task_fpu(struct task_struct *, elf_fpregset_t *);
+
+#ifndef ELF_CORE_COPY_REGS
+#define ELF_CORE_COPY_REGS(elf_regs, regs)			\
+	elf_dump_regs((elf_greg_t *)&(elf_regs), regs);
+#endif
+#ifndef ELF_CORE_COPY_TASK_REGS
+#define ELF_CORE_COPY_TASK_REGS(tsk, elf_regs) dump_task_regs(tsk, elf_regs)
+#endif
+#define ELF_CORE_COPY_FPREGS(tsk, elf_fpregs)			\
+	dump_task_fpu(tsk, elf_fpregs)
+
 #define ELF_EXEC_PAGESIZE	PAGE_SIZE
 
 /* This yields a mask that user programs can use to figure out what

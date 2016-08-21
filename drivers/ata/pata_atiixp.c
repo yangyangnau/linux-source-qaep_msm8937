@@ -15,6 +15,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/pci.h>
+#include <linux/init.h>
 #include <linux/blkdev.h>
 #include <linux/delay.h>
 #include <scsi/scsi_host.h>
@@ -298,7 +299,7 @@ static struct pci_driver atiixp_pci_driver = {
 	.id_table	= atiixp,
 	.probe 		= atiixp_init_one,
 	.remove		= ata_pci_remove_one,
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_PM
 	.resume		= ata_pci_device_resume,
 	.suspend	= ata_pci_device_suspend,
 #endif

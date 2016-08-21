@@ -16,7 +16,6 @@ struct vmemmap_backing {
 	unsigned long phys;
 	unsigned long virt_addr;
 };
-extern struct vmemmap_backing *vmemmap_list;
 
 /*
  * Functions that deal with pagetables that could be at any level of
@@ -92,10 +91,7 @@ static inline pgtable_t pte_alloc_one(struct mm_struct *mm,
 	if (!pte)
 		return NULL;
 	page = virt_to_page(pte);
-	if (!pgtable_page_ctor(page)) {
-		__free_page(page);
-		return NULL;
-	}
+	pgtable_page_ctor(page);
 	return page;
 }
 
@@ -223,17 +219,17 @@ static inline void __pte_free_tlb(struct mmu_gather *tlb, pgtable_t table,
 
 static inline pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long addr)
 {
-	return kmem_cache_alloc(PGT_CACHE(PMD_CACHE_INDEX),
+	return kmem_cache_alloc(PGT_CACHE(PMD_INDEX_SIZE),
 				GFP_KERNEL|__GFP_REPEAT);
 }
 
 static inline void pmd_free(struct mm_struct *mm, pmd_t *pmd)
 {
-	kmem_cache_free(PGT_CACHE(PMD_CACHE_INDEX), pmd);
+	kmem_cache_free(PGT_CACHE(PMD_INDEX_SIZE), pmd);
 }
 
 #define __pmd_free_tlb(tlb, pmd, addr)		      \
-	pgtable_free_tlb(tlb, pmd, PMD_CACHE_INDEX)
+	pgtable_free_tlb(tlb, pmd, PMD_INDEX_SIZE)
 #ifndef CONFIG_PPC_64K_PAGES
 #define __pud_free_tlb(tlb, pud, addr)		      \
 	pgtable_free_tlb(tlb, pud, PUD_INDEX_SIZE)

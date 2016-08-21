@@ -2,7 +2,7 @@
  * A hwmon driver for the IBM PowerExecutive temperature/power sensors
  * Copyright (C) 2007 IBM
  *
- * Author: Darrick J. Wong <darrick.wong@oracle.com>
+ * Author: Darrick J. Wong <djwong@us.ibm.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -463,8 +463,10 @@ static void ibmpex_register_bmc(int iface, struct device *dev)
 	int err;
 
 	data = kzalloc(sizeof(*data), GFP_KERNEL);
-	if (!data)
+	if (!data) {
+		dev_err(dev, "Insufficient memory for BMC interface.\n");
 		return;
+	}
 
 	data->address.addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
 	data->address.channel = IPMI_BMC_CHANNEL;
@@ -604,7 +606,7 @@ static void __exit ibmpex_exit(void)
 		ibmpex_bmc_delete(p);
 }
 
-MODULE_AUTHOR("Darrick J. Wong <darrick.wong@oracle.com>");
+MODULE_AUTHOR("Darrick J. Wong <djwong@us.ibm.com>");
 MODULE_DESCRIPTION("IBM PowerExecutive power/temperature sensor driver");
 MODULE_LICENSE("GPL");
 

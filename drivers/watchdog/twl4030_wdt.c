@@ -90,8 +90,10 @@ static int twl4030_wdt_probe(struct platform_device *pdev)
 	twl4030_wdt_stop(wdt);
 
 	ret = watchdog_register_device(wdt);
-	if (ret)
+	if (ret) {
+		platform_set_drvdata(pdev, NULL);
 		return ret;
+	}
 
 	return 0;
 }
@@ -101,6 +103,7 @@ static int twl4030_wdt_remove(struct platform_device *pdev)
 	struct watchdog_device *wdt = platform_get_drvdata(pdev);
 
 	watchdog_unregister_device(wdt);
+	platform_set_drvdata(pdev, NULL);
 
 	return 0;
 }

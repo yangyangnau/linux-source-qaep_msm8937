@@ -21,6 +21,7 @@
 #include <linux/fs.h>
 #include <linux/errno.h>
 #include <linux/major.h>
+#include <linux/init.h>
 #include <linux/miscdevice.h>
 #include <linux/interrupt.h>
 #include <linux/ioport.h>
@@ -620,7 +621,7 @@ static int cpwd_probe(struct platform_device *op)
 			WD_BADMODEL);
 	}
 
-	platform_set_drvdata(op, p);
+	dev_set_drvdata(&op->dev, p);
 	cpwd_device = p;
 	err = 0;
 
@@ -641,7 +642,7 @@ out_free:
 
 static int cpwd_remove(struct platform_device *op)
 {
-	struct cpwd *p = platform_get_drvdata(op);
+	struct cpwd *p = dev_get_drvdata(&op->dev);
 	int i;
 
 	for (i = 0; i < WD_NUMDEVS; i++) {

@@ -17,6 +17,7 @@
 
 #include <linux/kernel.h>
 #include <linux/errno.h>
+#include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/tty.h>
 #include <linux/tty_driver.h>
@@ -834,6 +835,7 @@ static void digi_set_termios(struct tty_struct *tty,
 			arg |= DIGI_OUTPUT_FLOW_CONTROL_CTS;
 		} else {
 			arg &= ~DIGI_OUTPUT_FLOW_CONTROL_CTS;
+			tty->hw_stopped = 0;
 		}
 
 		buf[i++] = DIGI_CMD_SET_OUTPUT_FLOW_CONTROL;
@@ -1302,7 +1304,11 @@ static void digi_release(struct usb_serial *serial)
 
 static int digi_port_probe(struct usb_serial_port *port)
 {
-	return digi_port_init(port, port->port_number);
+	unsigned port_num;
+
+	port_num = port->number - port->serial->minor;
+
+	return digi_port_init(port, port_num);
 }
 
 static int digi_port_remove(struct usb_serial_port *port)
@@ -1499,11 +1505,15 @@ static int digi_read_oob_callback(struct urb *urb)
 			if (val & DIGI_READ_INPUT_SIGNALS_CTS) {
 				priv->dp_modem_signals |= TIOCM_CTS;
 				/* port must be open to use tty struct */
-				if (rts)
+				if (rts) {
+					tty->hw_stopped = 0;
 					tty_port_tty_wakeup(&port->port);
+				}
 			} else {
 				priv->dp_modem_signals &= ~TIOCM_CTS;
 				/* port must be open to use tty struct */
+				if (rts)
+					tty->hw_stopped = 1;
 			}
 			if (val & DIGI_READ_INPUT_SIGNALS_DSR)
 				priv->dp_modem_signals |= TIOCM_DSR;

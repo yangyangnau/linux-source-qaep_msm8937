@@ -395,6 +395,7 @@ static const struct nla_policy nl80211_policy[NL80211_ATTR_MAX+1] = {
 	[NL80211_ATTR_USER_PRIO] = { .type = NLA_U8 },
 	[NL80211_ATTR_ADMITTED_TIME] = { .type = NLA_U16 },
 	[NL80211_ATTR_SMPS_MODE] = { .type = NLA_U8 },
+	[NL80211_ATTR_PBSS] = { .type = NLA_FLAG },
 };
 
 /* policy for the key attributes */
@@ -3368,6 +3369,10 @@ static int nl80211_start_ap(struct sk_buff *skb, struct genl_info *info)
 		params.smps_mode = NL80211_SMPS_OFF;
 	}
 
+	params.pbss = nla_get_flag(info->attrs[NL80211_ATTR_PBSS]);
+	if (params.pbss && !rdev->wiphy.bands[IEEE80211_BAND_60GHZ])
+		return -EOPNOTSUPP;
+
 	wdev_lock(wdev);
 	err = rdev_start_ap(rdev, dev, &params);
 	if (!err) {
@@ -4407,10 +4412,12 @@ static int nl80211_del_station(struct sk_buff *skb, struct genl_info *info)
 {
 	struct cfg80211_registered_device *rdev = info->user_ptr[0];
 	struct net_device *dev = info->user_ptr[1];
-	u8 *mac_addr = NULL;
+	struct station_del_parameters params;
+
+	memset(&params, 0, sizeof(params));
 
 	if (info->attrs[NL80211_ATTR_MAC])
-		mac_addr = nla_data(info->attrs[NL80211_ATTR_MAC]);
+		params.mac = nla_data(info->attrs[NL80211_ATTR_MAC]);
 
 	if (dev->ieee80211_ptr->iftype != NL80211_IFTYPE_AP &&
 	    dev->ieee80211_ptr->iftype != NL80211_IFTYPE_AP_VLAN &&
@@ -4421,7 +4428,28 @@ static int nl80211_del_station(struct sk_buff *skb, struct genl_info *info)
 	if (!rdev->ops->del_station)
 		return -EOPNOTSUPP;
 
-	return rdev_del_station(rdev, dev, mac_addr);
+	if (info->attrs[NL80211_ATTR_MGMT_SUBTYPE]) {
+		params.subtype =
+			nla_get_u8(info->attrs[NL80211_ATTR_MGMT_SUBTYPE]);
+		if (params.subtype != IEEE80211_STYPE_DISASSOC >> 4 &&
+		    params.subtype != IEEE80211_STYPE_DEAUTH >> 4)
+			return -EINVAL;
+	} else {
+		/* Default to Deauthentication frame */
+		params.subtype = IEEE80211_STYPE_DEAUTH >> 4;
+	}
+
+	if (info->attrs[NL80211_ATTR_REASON_CODE]) {
+		params.reason_code =
+			nla_get_u16(info->attrs[NL80211_ATTR_REASON_CODE]);
+		if (params.reason_code == 0)
+			return -EINVAL; /* 0 is reserved */
+	} else {
+		/* Default to reason code 2 */
+		params.reason_code = WLAN_REASON_PREV_AUTH_NOT_VALID;
+	}
+
+	return rdev_del_station(rdev, dev, &params);
 }
 
 static int nl80211_send_mpath(struct sk_buff *msg, u32 portid, u32 seq,
@@ -5570,6 +5598,24 @@ static int nl80211_trigger_scan(struct sk_buff *skb, struct genl_info *info)
 	return err;
 }
 
+static int nl80211_abort_scan(struct sk_buff *skb, struct genl_info *info)
+{
+	struct cfg80211_registered_device *rdev = info->user_ptr[0];
+	struct wireless_dev *wdev = info->user_ptr[1];
+
+	if (!rdev->ops->abort_scan)
+		return -EOPNOTSUPP;
+
+	if (rdev->scan_msg)
+		return 0;
+
+	if (!rdev->scan_req)
+		return -ENOENT;
+
+	rdev_abort_scan(rdev, wdev);
+	return 0;
+}
+
 static int nl80211_start_sched_scan(struct sk_buff *skb,
 				    struct genl_info *info)
 {
@@ -5886,6 +5932,9 @@ static int nl80211_start_radar_detection(struct sk_buff *skb,
 	err = nl80211_parse_chandef(rdev, info, &chandef);
 	if (err)
 		return err;
+
+	if (rdev->wiphy.flags & WIPHY_FLAG_DFS_OFFLOAD)
+		return -EOPNOTSUPP;
 
 	if (netif_carrier_ok(dev))
 		return -EBUSY;
@@ -6962,8 +7011,8 @@ static int nl80211_set_mcast_rate(struct sk_buff *skb, struct genl_info *info)
 
 static struct sk_buff *
 __cfg80211_alloc_vendor_skb(struct cfg80211_registered_device *rdev,
-			    int approxlen, u32 portid, u32 seq,
-			    enum nl80211_commands cmd,
+			    struct wireless_dev *wdev, int approxlen,
+			    u32 portid, u32 seq, enum nl80211_commands cmd,
 			    enum nl80211_attrs attr,
 			    const struct nl80211_vendor_cmd_info *info,
 			    gfp_t gfp)
@@ -6994,6 +7043,16 @@ __cfg80211_alloc_vendor_skb(struct cfg80211_registered_device *rdev,
 			goto nla_put_failure;
 	}
 
+	if (wdev) {
+		if (nla_put_u64(skb, NL80211_ATTR_WDEV,
+				wdev_id(wdev)))
+			goto nla_put_failure;
+		if (wdev->netdev &&
+		    nla_put_u32(skb, NL80211_ATTR_IFINDEX,
+				wdev->netdev->ifindex))
+			goto nla_put_failure;
+	}
+
 	data = nla_nest_start(skb, attr);
 
 	((void **)skb->cb)[0] = rdev;
@@ -7008,6 +7067,7 @@ __cfg80211_alloc_vendor_skb(struct cfg80211_registered_device *rdev,
 }
 
 struct sk_buff *__cfg80211_alloc_event_skb(struct wiphy *wiphy,
+					   struct wireless_dev *wdev,
 					   enum nl80211_commands cmd,
 					   enum nl80211_attrs attr,
 					   int vendor_event_idx,
@@ -7033,7 +7093,7 @@ struct sk_buff *__cfg80211_alloc_event_skb(struct wiphy *wiphy,
 		return NULL;
 	}
 
-	return __cfg80211_alloc_vendor_skb(rdev, approxlen, 0, 0,
+	return __cfg80211_alloc_vendor_skb(rdev, wdev, approxlen, 0, 0,
 					   cmd, attr, info, gfp);
 }
 EXPORT_SYMBOL(__cfg80211_alloc_event_skb);
@@ -7317,6 +7377,12 @@ static int nl80211_connect(struct sk_buff *skb, struct genl_info *info)
 		    !(rdev->wiphy.features & NL80211_FEATURE_QUIET))
 			return -EINVAL;
 		connect.flags |= ASSOC_REQ_USE_RRM;
+	}
+
+	connect.pbss = nla_get_flag(info->attrs[NL80211_ATTR_PBSS]);
+	if (connect.pbss && !rdev->wiphy.bands[IEEE80211_BAND_60GHZ]) {
+		kzfree(connkeys);
+		return -EOPNOTSUPP;
 	}
 
 	wdev_lock(dev->ieee80211_ptr);
@@ -9364,7 +9430,7 @@ struct sk_buff *__cfg80211_alloc_reply_skb(struct wiphy *wiphy,
 	if (WARN_ON(!rdev->cur_cmd_info))
 		return NULL;
 
-	return __cfg80211_alloc_vendor_skb(rdev, approxlen,
+	return __cfg80211_alloc_vendor_skb(rdev, NULL, approxlen,
 					   rdev->cur_cmd_info->snd_portid,
 					   rdev->cur_cmd_info->snd_seq,
 					   cmd, attr, NULL, GFP_KERNEL);
@@ -9861,6 +9927,14 @@ static const struct genl_ops nl80211_ops[] = {
 	{
 		.cmd = NL80211_CMD_TRIGGER_SCAN,
 		.doit = nl80211_trigger_scan,
+		.policy = nl80211_policy,
+		.flags = GENL_ADMIN_PERM,
+		.internal_flags = NL80211_FLAG_NEED_WDEV_UP |
+				  NL80211_FLAG_NEED_RTNL,
+	},
+	{
+		.cmd = NL80211_CMD_ABORT_SCAN,
+		.doit = nl80211_abort_scan,
 		.policy = nl80211_policy,
 		.flags = GENL_ADMIN_PERM,
 		.internal_flags = NL80211_FLAG_NEED_WDEV_UP |
@@ -12111,6 +12185,16 @@ void nl80211_send_ap_stopped(struct wireless_dev *wdev)
  out:
 	nlmsg_free(msg);
 }
+
+void cfg80211_ap_stopped(struct net_device *netdev, gfp_t gfp)
+{
+	struct wireless_dev *wdev = netdev->ieee80211_ptr;
+	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wdev->wiphy);
+
+	nl80211_send_mlme_event(rdev, netdev, NULL, 0,
+				NL80211_CMD_STOP_AP, gfp, -1);
+}
+EXPORT_SYMBOL(cfg80211_ap_stopped);
 
 /* initialisation/exit functions */
 

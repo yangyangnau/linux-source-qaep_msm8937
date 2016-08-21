@@ -82,7 +82,7 @@ dma_addr_t xhci_trb_virt_to_dma(struct xhci_segment *seg,
 		return 0;
 	/* offset in TRBs */
 	segment_offset = trb - seg->trbs;
-	if (segment_offset >= TRBS_PER_SEGMENT)
+	if (segment_offset > TRBS_PER_SEGMENT)
 		return 0;
 	return seg->dma + (segment_offset * sizeof(*trb));
 }
@@ -3049,11 +3049,9 @@ static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	struct xhci_td *td;
 	struct scatterlist *sg;
 	int num_sgs;
-	int trb_buff_len, this_sg_len, running_total, ret;
+	int trb_buff_len, this_sg_len, running_total;
 	unsigned int total_packet_count;
-	bool zero_length_needed;
 	bool first_trb;
-	int last_trb_num;
 	u64 addr;
 	bool more_trbs_coming;
 
@@ -3069,27 +3067,13 @@ static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	total_packet_count = DIV_ROUND_UP(urb->transfer_buffer_length,
 			usb_endpoint_maxp(&urb->ep->desc));
 
-	ret = prepare_transfer(xhci, xhci->devs[slot_id],
+	trb_buff_len = prepare_transfer(xhci, xhci->devs[slot_id],
 			ep_index, urb->stream_id,
 			num_trbs, urb, 0, mem_flags);
-	if (ret < 0)
-		return ret;
+	if (trb_buff_len < 0)
+		return trb_buff_len;
 
 	urb_priv = urb->hcpriv;
-
-	/* Deal with URB_ZERO_PACKET - need one more td/trb */
-	zero_length_needed = urb->transfer_flags & URB_ZERO_PACKET &&
-		urb_priv->length == 2;
-	if (zero_length_needed) {
-		num_trbs++;
-		xhci_dbg(xhci, "Creating zero length td.\n");
-		ret = prepare_transfer(xhci, xhci->devs[slot_id],
-				ep_index, urb->stream_id,
-				1, urb, 1, mem_flags);
-		if (ret < 0)
-			return ret;
-	}
-
 	td = urb_priv->td[0];
 
 	/*
@@ -3119,7 +3103,6 @@ static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 		trb_buff_len = urb->transfer_buffer_length;
 
 	first_trb = true;
-	last_trb_num = zero_length_needed ? 2 : 1;
 	/* Queue the first TRB, even if it's zero-length */
 	do {
 		u32 field = 0;
@@ -3137,14 +3120,11 @@ static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 		/* Chain all the TRBs together; clear the chain bit in the last
 		 * TRB to indicate it's the last TRB in the chain.
 		 */
-		if (num_trbs > last_trb_num) {
+		if (num_trbs > 1) {
 			field |= TRB_CHAIN;
-		} else if (num_trbs == last_trb_num) {
+		} else {
+			/* FIXME - add check for ZERO_PACKET flag before this */
 			td->last_trb = ep_ring->enqueue;
-			field |= TRB_IOC;
-		} else if (zero_length_needed && num_trbs == 1) {
-			trb_buff_len = 0;
-			urb_priv->td[1]->last_trb = ep_ring->enqueue;
 			field |= TRB_IOC;
 		}
 
@@ -3207,7 +3187,7 @@ static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 		if (running_total + trb_buff_len > urb->transfer_buffer_length)
 			trb_buff_len =
 				urb->transfer_buffer_length - running_total;
-	} while (num_trbs > 0);
+	} while (running_total < urb->transfer_buffer_length);
 
 	check_trb_math(urb, num_trbs, running_total);
 	giveback_first_trb(xhci, slot_id, ep_index, urb->stream_id,
@@ -3225,9 +3205,7 @@ int xhci_queue_bulk_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	int num_trbs;
 	struct xhci_generic_trb *start_trb;
 	bool first_trb;
-	int last_trb_num;
 	bool more_trbs_coming;
-	bool zero_length_needed;
 	int start_cycle;
 	u32 field, length_field;
 
@@ -3258,6 +3236,7 @@ int xhci_queue_bulk_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 		num_trbs++;
 		running_total += TRB_MAX_BUFF_SIZE;
 	}
+	/* FIXME: this doesn't deal with URB_ZERO_PACKET - need one more */
 
 	ret = prepare_transfer(xhci, xhci->devs[slot_id],
 			ep_index, urb->stream_id,
@@ -3266,20 +3245,6 @@ int xhci_queue_bulk_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 		return ret;
 
 	urb_priv = urb->hcpriv;
-
-	/* Deal with URB_ZERO_PACKET - need one more td/trb */
-	zero_length_needed = urb->transfer_flags & URB_ZERO_PACKET &&
-		urb_priv->length == 2;
-	if (zero_length_needed) {
-		num_trbs++;
-		xhci_dbg(xhci, "Creating zero length td.\n");
-		ret = prepare_transfer(xhci, xhci->devs[slot_id],
-				ep_index, urb->stream_id,
-				1, urb, 1, mem_flags);
-		if (ret < 0)
-			return ret;
-	}
-
 	td = urb_priv->td[0];
 
 	/*
@@ -3301,7 +3266,7 @@ int xhci_queue_bulk_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 		trb_buff_len = urb->transfer_buffer_length;
 
 	first_trb = true;
-	last_trb_num = zero_length_needed ? 2 : 1;
+
 	/* Queue the first TRB, even if it's zero-length */
 	do {
 		u32 remainder = 0;
@@ -3318,14 +3283,11 @@ int xhci_queue_bulk_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 		/* Chain all the TRBs together; clear the chain bit in the last
 		 * TRB to indicate it's the last TRB in the chain.
 		 */
-		if (num_trbs > last_trb_num) {
+		if (num_trbs > 1) {
 			field |= TRB_CHAIN;
-		} else if (num_trbs == last_trb_num) {
+		} else {
+			/* FIXME - add check for ZERO_PACKET flag before this */
 			td->last_trb = ep_ring->enqueue;
-			field |= TRB_IOC;
-		} else if (zero_length_needed && num_trbs == 1) {
-			trb_buff_len = 0;
-			urb_priv->td[1]->last_trb = ep_ring->enqueue;
 			field |= TRB_IOC;
 		}
 
@@ -3364,7 +3326,7 @@ int xhci_queue_bulk_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 		trb_buff_len = urb->transfer_buffer_length - running_total;
 		if (trb_buff_len > TRB_MAX_BUFF_SIZE)
 			trb_buff_len = TRB_MAX_BUFF_SIZE;
-	} while (num_trbs > 0);
+	} while (running_total < urb->transfer_buffer_length);
 
 	check_trb_math(urb, num_trbs, running_total);
 	giveback_first_trb(xhci, slot_id, ep_index, urb->stream_id,
@@ -3431,8 +3393,8 @@ int xhci_queue_ctrl_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	if (start_cycle == 0)
 		field |= 0x1;
 
-	/* xHCI 1.0/1.1 6.4.1.2.1: Transfer Type field */
-	if (xhci->hci_version >= 0x100) {
+	/* xHCI 1.0 6.4.1.2.1: Transfer Type field */
+	if (xhci->hci_version == 0x100) {
 		if (urb->transfer_buffer_length > 0) {
 			if (setup->bRequestType & USB_DIR_IN)
 				field |= TRB_TX_TYPE(TRB_DATA_IN);
@@ -3486,6 +3448,150 @@ int xhci_queue_ctrl_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 
 	giveback_first_trb(xhci, slot_id, ep_index, 0,
 			start_cycle, start_trb);
+	return 0;
+}
+
+/*
+ * Variant of xhci_queue_ctrl_tx() used to implement EHSET
+ * SINGLE_STEP_SET_FEATURE test mode. It differs in that the control
+ * transfer is broken up so that the SETUP stage can happen and call
+ * the URB's completion handler before the DATA/STATUS stages are
+ * executed by the xHC hardware. This assumes the control transfer is a
+ * GetDescriptor, with a DATA stage in the IN direction, and an OUT
+ * STATUS stage.
+ *
+ * This function is called twice, usually with a 15-second delay in between.
+ * - with is_setup==true, the SETUP stage for the control request
+ *   (GetDescriptor) is queued in the TRB ring and sent to HW immediately
+ * - with is_setup==false, the DATA and STATUS TRBs are queued and exceuted
+ *
+ * Caller must have locked xhci->lock
+ */
+int xhci_submit_single_step_set_feature(struct usb_hcd *hcd, struct urb *urb,
+					int is_setup)
+{
+	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
+	struct xhci_ring *ep_ring;
+	int num_trbs;
+	int ret;
+	unsigned int slot_id, ep_index;
+	struct usb_ctrlrequest *setup;
+	struct xhci_generic_trb *start_trb;
+	int start_cycle;
+	u32 field, length_field;
+	struct urb_priv *urb_priv;
+	struct xhci_td *td;
+
+	ep_ring = xhci_urb_to_transfer_ring(xhci, urb);
+	if (!ep_ring)
+		return -EINVAL;
+
+	/* Need buffer for data stage */
+	if (urb->transfer_buffer_length <= 0)
+		return -EINVAL;
+
+	/*
+	 * Need to copy setup packet into setup TRB, so we can't use the setup
+	 * DMA address.
+	 */
+	if (!urb->setup_packet)
+		return -EINVAL;
+	setup = (struct usb_ctrlrequest *) urb->setup_packet;
+
+	slot_id = urb->dev->slot_id;
+	ep_index = xhci_get_endpoint_index(&urb->ep->desc);
+
+	urb_priv = kzalloc(sizeof(struct urb_priv) +
+				  sizeof(struct xhci_td *), GFP_ATOMIC);
+	if (!urb_priv)
+		return -ENOMEM;
+
+	td = urb_priv->td[0] = kzalloc(sizeof(struct xhci_td), GFP_ATOMIC);
+	if (!td) {
+		kfree(urb_priv);
+		return -ENOMEM;
+	}
+
+	urb_priv->length = 1;
+	urb_priv->td_cnt = 0;
+	urb->hcpriv = urb_priv;
+
+	num_trbs = is_setup ? 1 : 2;
+
+	ret = prepare_transfer(xhci, xhci->devs[slot_id],
+			ep_index, urb->stream_id,
+			num_trbs, urb, 0, GFP_ATOMIC);
+	if (ret < 0) {
+		kfree(td);
+		kfree(urb_priv);
+		return ret;
+	}
+
+	/*
+	 * Don't give the first TRB to the hardware (by toggling the cycle bit)
+	 * until we've finished creating all the other TRBs.  The ring's cycle
+	 * state may change as we enqueue the other TRBs, so save it too.
+	 */
+	start_trb = &ep_ring->enqueue->generic;
+	start_cycle = ep_ring->cycle_state;
+
+	if (is_setup) {
+		/* Queue only the setup TRB */
+		field = TRB_IDT | TRB_IOC | TRB_TYPE(TRB_SETUP);
+		if (start_cycle == 0)
+			field |= 0x1;
+
+		/* xHCI 1.0 6.4.1.2.1: Transfer Type field */
+		if (xhci->hci_version == 0x100) {
+			if (setup->bRequestType & USB_DIR_IN)
+				field |= TRB_TX_TYPE(TRB_DATA_IN);
+			else
+				field |= TRB_TX_TYPE(TRB_DATA_OUT);
+		}
+
+		/* Save the DMA address of the last TRB in the TD */
+		td->last_trb = ep_ring->enqueue;
+
+		queue_trb(xhci, ep_ring, false,
+			  setup->bRequestType | setup->bRequest << 8 |
+				le16_to_cpu(setup->wValue) << 16,
+			  le16_to_cpu(setup->wIndex) |
+				le16_to_cpu(setup->wLength) << 16,
+			  TRB_LEN(8) | TRB_INTR_TARGET(0),
+			  field);
+	} else {
+		/* Queue data TRB */
+		field = TRB_ISP | TRB_TYPE(TRB_DATA);
+		if (start_cycle == 0)
+			field |= 0x1;
+		if (setup->bRequestType & USB_DIR_IN)
+			field |= TRB_DIR_IN;
+
+		length_field = TRB_LEN(urb->transfer_buffer_length) |
+			xhci_td_remainder(urb->transfer_buffer_length) |
+			TRB_INTR_TARGET(0);
+		queue_trb(xhci, ep_ring, true,
+			  lower_32_bits(urb->transfer_dma),
+			  upper_32_bits(urb->transfer_dma),
+			  length_field,
+			  field);
+
+		/* Save the DMA address of the last TRB in the TD */
+		td->last_trb = ep_ring->enqueue;
+
+		/* Queue status TRB */
+		field = TRB_IOC | TRB_TYPE(TRB_STATUS);
+		if (!(setup->bRequestType & USB_DIR_IN))
+			field |= TRB_DIR_IN;
+
+		queue_trb(xhci, ep_ring, false,
+			  0,
+			  0,
+			  TRB_INTR_TARGET(0),
+			  field | ep_ring->cycle_state);
+	}
+
+	giveback_first_trb(xhci, slot_id, ep_index, 0, start_cycle, start_trb);
 	return 0;
 }
 
@@ -3830,8 +3936,10 @@ static int queue_command(struct xhci_hcd *xhci, struct xhci_command *cmd,
 {
 	int reserved_trbs = xhci->cmd_ring_reserved_trbs;
 	int ret;
-	if (xhci->xhc_state & XHCI_STATE_DYING)
+	if (xhci->xhc_state) {
+		xhci_dbg(xhci, "xHCI dying or halted, can't queue_command\n");
 		return -ESHUTDOWN;
+	}
 
 	if (!command_must_succeed)
 		reserved_trbs++;

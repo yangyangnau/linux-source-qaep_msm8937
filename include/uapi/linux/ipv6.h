@@ -29,7 +29,7 @@ struct ip6_mtuinfo {
 struct in6_ifreq {
 	struct in6_addr	ifr6_addr;
 	__u32		ifr6_prefixlen;
-	int		ifr6_ifindex; 
+	int		ifr6_ifindex;
 };
 
 #define IPV6_SRCRT_STRICT	0x01	/* Deprecated; will be removed */
@@ -55,7 +55,7 @@ struct ipv6_rt_hdr {
 struct ipv6_opt_hdr {
 	__u8 		nexthdr;
 	__u8 		hdrlen;
-	/* 
+	/*
 	 * TLV encoded option data follows.
 	 */
 } __attribute__((packed));	/* required for some archs */
@@ -160,10 +160,14 @@ enum {
 	DEVCONF_ACCEPT_DAD,
 	DEVCONF_FORCE_TLLAO,
 	DEVCONF_NDISC_NOTIFY,
+	DEVCONF_ACCEPT_RA_RT_TABLE,
 	DEVCONF_MLDV1_UNSOLICITED_REPORT_INTERVAL,
 	DEVCONF_MLDV2_UNSOLICITED_REPORT_INTERVAL,
 	DEVCONF_SUPPRESS_FRAG_NDISC,
 	DEVCONF_ACCEPT_RA_FROM_LOCAL,
+	DEVCONF_USE_OPTIMISTIC,
+	DEVCONF_ACCEPT_RA_PREFIX_ROUTE,
+	DEVCONF_USE_OIF_ADDRS_ONLY,
 	DEVCONF_MAX
 };
 

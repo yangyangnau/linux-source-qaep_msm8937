@@ -1,7 +1,7 @@
 /*
  * Device tree based initialization code for reserved memory.
  *
- * Copyright (c) 2013, The Linux Foundation. All Rights Reserved.
+ * Copyright (c) 2013, 2015 The Linux Foundation. All Rights Reserved.
  * Copyright (c) 2013,2014 Samsung Electronics Co., Ltd.
  *		http://www.samsung.com
  * Author: Marek Szyprowski <m.szyprowski@samsung.com>
@@ -20,9 +20,11 @@
 #include <linux/mm.h>
 #include <linux/sizes.h>
 #include <linux/of_reserved_mem.h>
+#include <linux/sort.h>
 
 #define MAX_RESERVED_REGIONS	16
 static struct reserved_mem reserved_mem[MAX_RESERVED_REGIONS];
+static struct reserved_mem sorted_reserved_mem[MAX_RESERVED_REGIONS] __initdata;
 static int reserved_mem_count;
 
 #if defined(CONFIG_HAVE_MEMBLOCK)
@@ -31,11 +33,13 @@ int __init __weak early_init_dt_alloc_reserved_memory_arch(phys_addr_t size,
 	phys_addr_t align, phys_addr_t start, phys_addr_t end, bool nomap,
 	phys_addr_t *res_base)
 {
+	phys_addr_t base;
 	/*
 	 * We use __memblock_alloc_base() because memblock_alloc_base()
 	 * panic()s on allocation failure.
 	 */
-	phys_addr_t base = __memblock_alloc_base(size, align, end);
+	end = !end ? MEMBLOCK_ALLOC_ANYWHERE : end;
+	base = __memblock_alloc_base(size, align, end);
 	if (!base)
 		return -ENOMEM;
 
@@ -142,7 +146,7 @@ static int __init __reserved_mem_alloc_size(unsigned long node,
 			ret = early_init_dt_alloc_reserved_memory_arch(size,
 					align, start, end, nomap, &base);
 			if (ret == 0) {
-				pr_debug("Reserved memory: allocated memory for '%s' node: base %pa, size %ld MiB\n",
+				pr_info("Reserved memory: allocated memory for '%s' node: base %pa, size %ld MiB\n",
 					uname, &base,
 					(unsigned long)size / SZ_1M);
 				break;
@@ -154,7 +158,7 @@ static int __init __reserved_mem_alloc_size(unsigned long node,
 		ret = early_init_dt_alloc_reserved_memory_arch(size, align,
 							0, 0, nomap, &base);
 		if (ret == 0)
-			pr_debug("Reserved memory: allocated memory for '%s' node: base %pa, size %ld MiB\n",
+			pr_info("Reserved memory: allocated memory for '%s' node: base %pa, size %ld MiB\n",
 				uname, &base, (unsigned long)size / SZ_1M);
 	}
 
@@ -197,12 +201,59 @@ static int __init __reserved_mem_init_node(struct reserved_mem *rmem)
 	return -ENOENT;
 }
 
+static int __init __rmem_cmp(const void *a, const void *b)
+{
+	const struct reserved_mem *ra = a, *rb = b;
+
+	if (ra->base < rb->base)
+		return -1;
+
+	if (ra->base > rb->base)
+		return 1;
+
+	return 0;
+}
+
+static void __init __rmem_check_for_overlap(void)
+{
+	int i;
+
+	if (reserved_mem_count < 2)
+		return;
+
+	memcpy(sorted_reserved_mem, reserved_mem, sizeof(sorted_reserved_mem));
+	sort(sorted_reserved_mem, reserved_mem_count,
+	     sizeof(sorted_reserved_mem[0]), __rmem_cmp, NULL);
+	for (i = 0; i < reserved_mem_count - 1; i++) {
+		struct reserved_mem *this, *next;
+
+		this = &sorted_reserved_mem[i];
+		next = &sorted_reserved_mem[i + 1];
+		if (!(this->base && next->base))
+			continue;
+		if (this->base + this->size > next->base) {
+			phys_addr_t this_end, next_end;
+
+			this_end = this->base + this->size;
+			next_end = next->base + next->size;
+			WARN(1, "Reserved mem: OVERLAP DETECTED!\n");
+			pr_err("%s (%pa--%pa) overlaps with %s (%pa--%pa)\n",
+			       this->name, &this->base, &this_end,
+			       next->name, &next->base, &next_end);
+		}
+	}
+}
+
 /**
  * fdt_init_reserved_mem - allocate and init all saved reserved memory regions
  */
 void __init fdt_init_reserved_mem(void)
 {
 	int i;
+
+	/* check for overlapping reserved regions */
+	__rmem_check_for_overlap();
+
 	for (i = 0; i < reserved_mem_count; i++) {
 		struct reserved_mem *rmem = &reserved_mem[i];
 		unsigned long node = rmem->fdt_node;

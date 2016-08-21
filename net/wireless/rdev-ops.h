@@ -6,12 +6,11 @@
 #include "core.h"
 #include "trace.h"
 
-static inline int rdev_suspend(struct cfg80211_registered_device *rdev,
-			       struct cfg80211_wowlan *wowlan)
+static inline int rdev_suspend(struct cfg80211_registered_device *rdev)
 {
 	int ret;
-	trace_rdev_suspend(&rdev->wiphy, wowlan);
-	ret = rdev->ops->suspend(&rdev->wiphy, wowlan);
+	trace_rdev_suspend(&rdev->wiphy, rdev->wiphy.wowlan_config);
+	ret = rdev->ops->suspend(&rdev->wiphy, rdev->wiphy.wowlan_config);
 	trace_rdev_return_int(&rdev->wiphy, ret);
 	return ret;
 }
@@ -178,11 +177,12 @@ static inline int rdev_add_station(struct cfg80211_registered_device *rdev,
 }
 
 static inline int rdev_del_station(struct cfg80211_registered_device *rdev,
-				   struct net_device *dev, u8 *mac)
+				   struct net_device *dev,
+				   struct station_del_parameters *params)
 {
 	int ret;
-	trace_rdev_del_station(&rdev->wiphy, dev, mac);
-	ret = rdev->ops->del_station(&rdev->wiphy, dev, mac);
+	trace_rdev_del_station(&rdev->wiphy, dev, params);
+	ret = rdev->ops->del_station(&rdev->wiphy, dev, params);
 	trace_rdev_return_int(&rdev->wiphy, ret);
 	return ret;
 }
@@ -377,6 +377,14 @@ static inline int rdev_scan(struct cfg80211_registered_device *rdev,
 	ret = rdev->ops->scan(&rdev->wiphy, request);
 	trace_rdev_return_int(&rdev->wiphy, ret);
 	return ret;
+}
+
+static inline void rdev_abort_scan(struct cfg80211_registered_device *rdev,
+				   struct wireless_dev *wdev)
+{
+	trace_rdev_abort_scan(&rdev->wiphy, wdev);
+	rdev->ops->abort_scan(&rdev->wiphy, wdev);
+	trace_rdev_return_void(&rdev->wiphy);
 }
 
 static inline int rdev_auth(struct cfg80211_registered_device *rdev,

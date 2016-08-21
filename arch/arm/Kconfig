@@ -1,8 +1,8 @@
 config ARM
 	bool
 	default y
-	select ARCH_BINFMT_ELF_RANDOMIZE_PIE
 	select ARCH_HAS_ATOMIC64_DEC_IF_POSITIVE
+	select ARCH_HAS_ELF_RANDOMIZE
 	select ARCH_HAS_TICK_BROADCAST if GENERIC_CLOCKEVENTS_BROADCAST
 	select ARCH_HAVE_CUSTOM_GPIO_H
 	select ARCH_MIGHT_HAVE_PC_PARPORT
@@ -96,6 +96,20 @@ config ARM_DMA_USE_IOMMU
 	bool
 	select ARM_HAS_SG_CHAIN
 	select NEED_SG_DMA_LENGTH
+
+config EARLY_IOREMAP
+       bool "Provide early_ioremap() support for kernel initialization"
+       depends on MMU
+       select GENERIC_EARLY_IOREMAP
+       help
+         Provide a mechanism for kernel initialisation code to temporarily
+         map, in a highmem-agnostic way, memory pages in before ioremap()
+         and friends are available (before paging_init() has run). It uses
+         the same virtual memory range as kmap so all early mappings must
+         be unmapped before paging_init() is called.
+
+config FIX_EARLYCON_MEM
+	def_bool EARLY_IOREMAP
 
 if ARM_DMA_USE_IOMMU
 
@@ -217,6 +231,9 @@ config NEED_RET_TO_USER
 config ARCH_MTD_XIP
 	bool
 
+config ARCH_WANT_KMAP_ATOMIC_FLUSH
+	bool
+
 config VECTORS_BASE
 	hex
 	default 0xffff0000 if MMU || CPU_HIGH_VECTOR
@@ -295,6 +312,33 @@ config MMU
 	help
 	  Select if you want MMU-based virtualised addressing space
 	  support by paged memory management. If unsure, say 'Y'.
+
+config ARCH_MMAP_RND_BITS_MIN
+	depends on MMU
+	int
+	default 8
+
+config ARCH_MMAP_RND_BITS_MAX
+	depends on MMU
+	int
+	default 14 if MMU && PAGE_OFFSET=0x40000000
+	default 15 if MMU && PAGE_OFFSET=0x80000000
+	default 16 if MMU
+	default 8
+
+config ARCH_MMAP_RND_BITS
+	depends on MMU
+	int "Number of bits to use for ASLR of mmap base address" if EXPERT
+	range ARCH_MMAP_RND_BITS_MIN ARCH_MMAP_RND_BITS_MAX
+	default ARCH_MMAP_RND_BITS_MIN
+	help
+	  This value can be used to select the number of bits to use to
+	  determine the random offset to the base address of vma regions
+	  resulting from mmap allocations. This value will be bounded
+	  by the architecture's minimum and maximum supported values.
+
+	  This value can be changed after boot using the
+	  /proc/sys/kernel/mmap_rnd_bits tunable
 
 #
 # The "ARM system type" choice list is ordered alphabetically by option
@@ -640,8 +684,19 @@ config ARCH_PXA
 config ARCH_MSM
 	bool "Qualcomm MSM (non-multiplatform)"
 	select ARCH_REQUIRE_GPIOLIB
-	select COMMON_CLK
+	select CLKDEV_LOOKUP
 	select GENERIC_CLOCKEVENTS
+	select GENERIC_ALLOCATOR
+	select HAVE_CLK
+	select HAVE_CLK_PREPARE
+	select ARCH_HAS_OPP
+	select SOC_BUS
+	select MULTI_IRQ_HANDLER
+	select PM_OPP
+	select SPARSE_IRQ
+	select USE_OF
+	select THERMAL_WRITABLE_TRIPS
+
 	help
 	  Support for Qualcomm MSM/QSD based systems.  This runs on the
 	  apps processor of the MSM/QSD and depends on a shared memory
@@ -1501,7 +1556,7 @@ config ARM_PSCI
 # selected platforms.
 config ARCH_NR_GPIO
 	int
-	default 1024 if ARCH_SHMOBILE || ARCH_TEGRA
+	default 1024 if ARCH_SHMOBILE || ARCH_TEGRA || ARCH_MSM
 	default 512 if ARCH_EXYNOS || ARCH_KEYSTONE || SOC_OMAP5 || \
 		SOC_DRA7XX || ARCH_S3C24XX || ARCH_S3C64XX || ARCH_S5PV210
 	default 416 if ARCH_SUNXI
@@ -1707,6 +1762,29 @@ config ARCH_WANT_GENERAL_HUGETLB
 
 source "mm/Kconfig"
 
+choice
+	prompt "Virtual Memory Reclaim"
+	default NO_VM_RECLAIM
+	help
+	  Select the method of reclaiming virtual memory
+
+config ENABLE_VMALLOC_SAVING
+	bool "Reclaim memory for each subsystem"
+	help
+	  Enable this config to reclaim the virtual space belonging
+	  to any subsystem which is expected to have a lifetime of
+	  the entire system. This feature allows lowmem to be non-
+	  contiguous.
+
+config NO_VM_RECLAIM
+	bool "Do not reclaim memory"
+	help
+	  Do not reclaim any memory. This might result in less lowmem
+	  and wasting virtual memory space which could otherwise be
+	  reclaimed by using any of the other two config options.
+
+endchoice
+
 config FORCE_MAX_ZONEORDER
 	int "Maximum zone order" if ARCH_SHMOBILE_LEGACY
 	range 11 64 if ARCH_SHMOBILE_LEGACY
@@ -1790,6 +1868,15 @@ config XEN
 	help
 	  Say Y if you want to run Linux in a Virtual Machine on Xen on ARM.
 
+config ARM_FLUSH_CONSOLE_ON_RESTART
+	bool "Force flush the console on restart"
+	help
+	  If the console is locked while the system is rebooted, the messages
+	  in the temporary logbuffer would not have propogated to all the
+	  console drivers. This option forces the console lock to be
+	  released if it failed to be acquired, which will cause all the
+	  pending messages to be flushed.
+
 endmenu
 
 menu "Boot options"
@@ -1819,6 +1906,21 @@ config DEPRECATED_PARAM_STRUCT
 	help
 	  This was deprecated in 2001 and announced to live on for 5 years.
 	  Some old boot loaders still use this way.
+
+config BUILD_ARM_APPENDED_DTB_IMAGE
+	bool "Build a concatenated zImage/dtb by default"
+	depends on OF
+	help
+	  Enabling this option will cause a concatenated zImage and list of
+	  DTBs to be built by default (instead of a standalone zImage.)
+	  The image will built in arch/arm/boot/zImage-dtb
+
+config BUILD_ARM_APPENDED_DTB_IMAGE_NAMES
+	string "Default dtb names"
+	depends on BUILD_ARM_APPENDED_DTB_IMAGE
+	help
+	  Space separated list of names of dtbs to append when
+	  building a concatenated zImage-dtb.
 
 # Compressed boot loader in ROM.  Yes, we really want to ask about
 # TEXT and BSS so we preserve their values in the config files.
@@ -2043,6 +2145,17 @@ config AUTO_ZRELADDR
 	  0xf8000000. This assumes the zImage being placed in the first 128MB
 	  from start of memory.
 
+config ARM_DECOMPRESSOR_LIMIT
+	hex "Limit the decompressor memory area"
+	default 0x10000000
+	help
+	  Allows overriding of the memory size that decompressor maps with
+	  read, write and execute permissions to avoid speculative prefetch.
+
+	  By default ARM_DECOMPRESSOR_LIMIT maps first 1GB of memory
+	  with read, write and execute permissions and reset of the memory
+	  as strongly ordered.
+
 endmenu
 
 menu "CPU Power Management"
@@ -2173,6 +2286,9 @@ source "arch/arm/Kconfig.debug"
 source "security/Kconfig"
 
 source "crypto/Kconfig"
+if CRYPTO
+source "arch/arm/crypto/Kconfig"
+endif
 
 source "lib/Kconfig"
 

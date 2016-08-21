@@ -223,7 +223,7 @@ static void ehci_adjust_port_wakeup_flags(struct ehci_hcd *ehci,
 	spin_unlock_irq(&ehci->lock);
 }
 
-static int ehci_bus_suspend (struct usb_hcd *hcd)
+int ehci_bus_suspend (struct usb_hcd *hcd)
 {
 	struct ehci_hcd		*ehci = hcd_to_ehci (hcd);
 	int			port;
@@ -370,10 +370,10 @@ static int ehci_bus_suspend (struct usb_hcd *hcd)
 	hrtimer_cancel(&ehci->hrtimer);
 	return 0;
 }
-
+EXPORT_SYMBOL(ehci_bus_suspend);
 
 /* caller has locked the root hub, and should reset/reinit on error */
-static int ehci_bus_resume (struct usb_hcd *hcd)
+int ehci_bus_resume (struct usb_hcd *hcd)
 {
 	struct ehci_hcd		*ehci = hcd_to_ehci (hcd);
 	u32			temp;
@@ -513,6 +513,7 @@ static int ehci_bus_resume (struct usb_hcd *hcd)
 	spin_unlock_irq(&ehci->lock);
 	return -ESHUTDOWN;
 }
+EXPORT_SYMBOL(ehci_bus_resume);
 
 #else
 
@@ -615,6 +616,10 @@ ehci_hub_status_data (struct usb_hcd *hcd, char *buf)
 	int		ports, i, retval = 1;
 	unsigned long	flags;
 	u32		ppcd = ~0;
+
+	/* hcd core tries to get status even during suspend, if so bail out. */
+	if (ehci->rh_state != EHCI_RH_RUNNING)
+		return 0;
 
 	/* init status to no-changes */
 	buf [0] = 0;
@@ -1220,6 +1225,12 @@ int ehci_hub_control(
 						+ msecs_to_jiffies (50);
 			}
 			ehci_writel(ehci, temp, status_reg);
+
+			if (ehci->reset_delay) {
+				spin_unlock_irqrestore(&ehci->lock, flags);
+				msleep(ehci->reset_delay);
+				spin_lock_irqsave(&ehci->lock, flags);
+			}
 			break;
 
 		/* For downstream facing ports (these):  one hub port is put
@@ -1245,7 +1256,7 @@ int ehci_hub_control(
 			spin_lock_irqsave(&ehci->lock, flags);
 
 			/* Put all enabled ports into suspend */
-			while (ports--) {
+			while (!ehci->no_testmode_suspend && ports--) {
 				u32 __iomem *sreg =
 						&ehci->regs->port_status[ports];
 

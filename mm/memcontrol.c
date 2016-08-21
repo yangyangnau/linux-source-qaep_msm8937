@@ -2261,11 +2261,11 @@ again:
  * @locked: value received from mem_cgroup_begin_page_stat()
  * @flags: value received from mem_cgroup_begin_page_stat()
  */
-void mem_cgroup_end_page_stat(struct mem_cgroup *memcg, bool locked,
-			      unsigned long flags)
+void mem_cgroup_end_page_stat(struct mem_cgroup *memcg, bool *locked,
+			      unsigned long *flags)
 {
-	if (memcg && locked)
-		move_unlock_mem_cgroup(memcg, &flags);
+	if (memcg && *locked)
+		move_unlock_mem_cgroup(memcg, flags);
 
 	rcu_read_unlock();
 }
@@ -4483,7 +4483,7 @@ static int mem_cgroup_swappiness_write(struct cgroup_subsys_state *css,
 {
 	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
 
-	if (val > 100)
+	if ((val > 200) || ((val > 100) && !css->parent))
 		return -EINVAL;
 
 	if (css->parent)
@@ -6001,6 +6001,12 @@ static int mem_cgroup_can_attach(struct cgroup_subsys_state *css,
 	return ret;
 }
 
+static int mem_cgroup_allow_attach(struct cgroup_subsys_state *css,
+				   struct cgroup_taskset *tset)
+{
+	return subsys_cgroup_allow_attach(css, tset);
+}
+
 static void mem_cgroup_cancel_attach(struct cgroup_subsys_state *css,
 				     struct cgroup_taskset *tset)
 {
@@ -6169,6 +6175,11 @@ static int mem_cgroup_can_attach(struct cgroup_subsys_state *css,
 {
 	return 0;
 }
+static int mem_cgroup_allow_attach(struct cgroup_subsys_state *css,
+				   struct cgroup_taskset *tset)
+{
+	return 0;
+}
 static void mem_cgroup_cancel_attach(struct cgroup_subsys_state *css,
 				     struct cgroup_taskset *tset)
 {
@@ -6204,6 +6215,7 @@ struct cgroup_subsys memory_cgrp_subsys = {
 	.can_attach = mem_cgroup_can_attach,
 	.cancel_attach = mem_cgroup_cancel_attach,
 	.attach = mem_cgroup_move_task,
+	.allow_attach = mem_cgroup_allow_attach,
 	.bind = mem_cgroup_bind,
 	.legacy_cftypes = mem_cgroup_files,
 	.early_init = 0,

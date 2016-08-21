@@ -1158,8 +1158,6 @@ static struct request *blk_old_get_request(struct request_queue *q, int rw,
 {
 	struct request *rq;
 
-	BUG_ON(rw != READ && rw != WRITE);
-
 	/* create ioc upfront */
 	create_io_context(gfp_mask, q->node);
 
@@ -1331,8 +1329,10 @@ EXPORT_SYMBOL_GPL(part_round_stats);
 #ifdef CONFIG_PM_RUNTIME
 static void blk_pm_put_request(struct request *rq)
 {
-	if (rq->q->dev && !(rq->cmd_flags & REQ_PM) && !--rq->q->nr_pending)
-		pm_runtime_mark_last_busy(rq->q->dev);
+	if (rq->q->dev && !(rq->cmd_flags & REQ_PM) && rq->q->nr_pending) {
+		if (!--rq->q->nr_pending)
+			pm_runtime_mark_last_busy(rq->q->dev);
+	}
 }
 #else
 static inline void blk_pm_put_request(struct request *rq) {}
@@ -1355,8 +1355,8 @@ void __blk_put_request(struct request_queue *q, struct request *req)
 
 	elv_completed_request(q, req);
 
-	/* this is a bio leak */
-	WARN_ON(req->bio != NULL);
+	/* this is a bio leak if the bio is not tagged with BIO_DONTFREE */
+	WARN_ON(req->bio && !bio_flagged(req->bio, BIO_DONTFREE));
 
 	/*
 	 * Request may not have originated from ll_rw_blk. if not,
@@ -1543,6 +1543,7 @@ void init_request_from_bio(struct request *req, struct bio *bio)
 	req->ioprio = bio_prio(bio);
 	blk_rq_bio_prep(req->q, req, bio);
 }
+EXPORT_SYMBOL(init_request_from_bio);
 
 void blk_queue_bio(struct request_queue *q, struct bio *bio)
 {
@@ -1564,7 +1565,8 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		return;
 	}
 
-	if (bio->bi_rw & (REQ_FLUSH | REQ_FUA)) {
+	if (bio->bi_rw & (REQ_FLUSH | REQ_FUA | REQ_POST_FLUSH_BARRIER |
+			  REQ_BARRIER)) {
 		spin_lock_irq(q->queue_lock);
 		where = ELEVATOR_INSERT_FLUSH;
 		goto get_rq;
@@ -1917,6 +1919,27 @@ void generic_make_request(struct bio *bio)
 }
 EXPORT_SYMBOL(generic_make_request);
 
+#ifdef CONFIG_BLK_DEV_IO_TRACE
+static inline struct task_struct *get_dirty_task(struct bio *bio)
+{
+	/*
+	 * Not all the pages in the bio are dirtied by the
+	 * same task but most likely it will be, since the
+	 * sectors accessed on the device must be adjacent.
+	 */
+	if (bio->bi_io_vec && bio->bi_io_vec->bv_page &&
+		bio->bi_io_vec->bv_page->tsk_dirty)
+			return bio->bi_io_vec->bv_page->tsk_dirty;
+	else
+		return current;
+}
+#else
+static inline struct task_struct *get_dirty_task(struct bio *bio)
+{
+	return current;
+}
+#endif
+
 /**
  * submit_bio - submit a bio to the block device layer for I/O
  * @rw: whether to %READ or %WRITE, or maybe to %READA (read ahead)
@@ -1952,8 +1975,11 @@ void submit_bio(int rw, struct bio *bio)
 
 		if (unlikely(block_dump)) {
 			char b[BDEVNAME_SIZE];
+			struct task_struct *tsk;
+
+			tsk = get_dirty_task(bio);
 			printk(KERN_DEBUG "%s(%d): %s block %Lu on %s (%u sectors)\n",
-			current->comm, task_pid_nr(current),
+				tsk->comm, task_pid_nr(tsk),
 				(rw & WRITE) ? "WRITE" : "READ",
 				(unsigned long long)bio->bi_iter.bi_sector,
 				bdevname(bio->bi_bdev, b),
@@ -2457,6 +2483,15 @@ bool blk_update_request(struct request *req, int error, unsigned int nr_bytes)
 	blk_account_io_completion(req, nr_bytes);
 
 	total_bytes = 0;
+
+	/*
+	 * Check for this if flagged, Req based dm needs to perform
+	 * post processing, hence dont end bios or request.DM
+	 * layer takes care.
+	 */
+	if (bio_flagged(req->bio, BIO_DONTFREE))
+		return false;
+
 	while (req->bio) {
 		struct bio *bio = req->bio;
 		unsigned bio_bytes = min(bio->bi_iter.bi_size, nr_bytes);

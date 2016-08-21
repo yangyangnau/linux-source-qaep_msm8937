@@ -47,6 +47,29 @@ struct cfg80211_conn {
 	bool auto_auth, prev_bssid_valid;
 };
 
+static bool cfg80211_is_all_countryie_ignore(void)
+{
+	struct cfg80211_registered_device *rdev;
+	struct wireless_dev *wdev;
+	bool is_all_countryie_ignore = true;
+
+	list_for_each_entry(rdev, &cfg80211_rdev_list, list) {
+		list_for_each_entry(wdev, &rdev->wdev_list, list) {
+			wdev_lock(wdev);
+			if (!(wdev->wiphy->regulatory_flags &
+				REGULATORY_COUNTRY_IE_IGNORE)) {
+				is_all_countryie_ignore = false;
+				wdev_unlock(wdev);
+				goto out;
+			}
+			wdev_unlock(wdev);
+		}
+	}
+
+out:
+	return is_all_countryie_ignore;
+}
+
 static void cfg80211_sme_free(struct wireless_dev *wdev)
 {
 	if (!wdev->conn)
@@ -248,19 +271,15 @@ static struct cfg80211_bss *cfg80211_get_conn_bss(struct wireless_dev *wdev)
 {
 	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wdev->wiphy);
 	struct cfg80211_bss *bss;
-	u16 capa = WLAN_CAPABILITY_ESS;
 
 	ASSERT_WDEV_LOCK(wdev);
-
-	if (wdev->conn->params.privacy)
-		capa |= WLAN_CAPABILITY_PRIVACY;
 
 	bss = cfg80211_get_bss(wdev->wiphy, wdev->conn->params.channel,
 			       wdev->conn->params.bssid,
 			       wdev->conn->params.ssid,
 			       wdev->conn->params.ssid_len,
-			       WLAN_CAPABILITY_ESS | WLAN_CAPABILITY_PRIVACY,
-			       capa);
+			       wdev->conn_bss_type,
+			       IEEE80211_PRIVACY(wdev->conn->params.privacy));
 	if (!bss)
 		return NULL;
 
@@ -560,7 +579,8 @@ static bool cfg80211_is_all_idle(void)
 static void disconnect_work(struct work_struct *work)
 {
 	rtnl_lock();
-	if (cfg80211_is_all_idle())
+	if (cfg80211_is_all_idle() &&
+	    !cfg80211_is_all_countryie_ignore())
 		regulatory_hint_disconnect();
 	rtnl_unlock();
 }
@@ -628,8 +648,8 @@ void __cfg80211_connect_result(struct net_device *dev, const u8 *bssid,
 		WARN_ON_ONCE(!wiphy_to_rdev(wdev->wiphy)->ops->connect);
 		bss = cfg80211_get_bss(wdev->wiphy, NULL, bssid,
 				       wdev->ssid, wdev->ssid_len,
-				       WLAN_CAPABILITY_ESS,
-				       WLAN_CAPABILITY_ESS);
+				       wdev->conn_bss_type,
+				       IEEE80211_PRIVACY_ANY);
 		if (bss)
 			cfg80211_hold_bss(bss_from_pub(bss));
 	}
@@ -786,8 +806,8 @@ void cfg80211_roamed(struct net_device *dev,
 	struct cfg80211_bss *bss;
 
 	bss = cfg80211_get_bss(wdev->wiphy, channel, bssid, wdev->ssid,
-			       wdev->ssid_len, WLAN_CAPABILITY_ESS,
-			       WLAN_CAPABILITY_ESS);
+			       wdev->ssid_len,
+			       wdev->conn_bss_type, IEEE80211_PRIVACY_ANY);
 	if (WARN_ON(!bss))
 		return;
 
@@ -955,6 +975,9 @@ int cfg80211_connect(struct cfg80211_registered_device *rdev,
 	wdev->connect_keys = connkeys;
 	memcpy(wdev->ssid, connect->ssid, connect->ssid_len);
 	wdev->ssid_len = connect->ssid_len;
+
+	wdev->conn_bss_type = connect->pbss ? IEEE80211_BSS_TYPE_PBSS :
+					      IEEE80211_BSS_TYPE_ESS;
 
 	if (!rdev->ops->connect)
 		err = cfg80211_sme_connect(wdev, connect, prev_bssid);

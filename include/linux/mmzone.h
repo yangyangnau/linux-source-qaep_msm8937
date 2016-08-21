@@ -39,8 +39,6 @@ enum {
 	MIGRATE_UNMOVABLE,
 	MIGRATE_RECLAIMABLE,
 	MIGRATE_MOVABLE,
-	MIGRATE_PCPTYPES,	/* the number of types on the pcp lists */
-	MIGRATE_RESERVE = MIGRATE_PCPTYPES,
 #ifdef CONFIG_CMA
 	/*
 	 * MIGRATE_CMA migration type is designed to mimic the way
@@ -57,16 +55,30 @@ enum {
 	 */
 	MIGRATE_CMA,
 #endif
+	MIGRATE_PCPTYPES, /* the number of types on the pcp lists */
+	MIGRATE_RESERVE = MIGRATE_PCPTYPES,
 #ifdef CONFIG_MEMORY_ISOLATION
 	MIGRATE_ISOLATE,	/* can't allocate from here */
 #endif
 	MIGRATE_TYPES
 };
 
+/*
+ * Returns a list which contains the migrate types on to which
+ * an allocation falls back when the free list for the migrate
+ * type mtype is depleted.
+ * The end of the list is delimited by the type MIGRATE_RESERVE.
+ */
+extern int *get_migratetype_fallbacks(int mtype);
+
 #ifdef CONFIG_CMA
+bool is_cma_pageblock(struct page *page);
 #  define is_migrate_cma(migratetype) unlikely((migratetype) == MIGRATE_CMA)
+#  define get_cma_migrate_type() MIGRATE_CMA
 #else
+#  define is_cma_pageblock(page) false
 #  define is_migrate_cma(migratetype) false
+#  define get_cma_migrate_type() MIGRATE_MOVABLE
 #endif
 
 #define for_each_migratetype_order(order, type) \
@@ -92,6 +104,7 @@ static inline int get_pfnblock_migratetype(struct page *page, unsigned long pfn)
 struct free_area {
 	struct list_head	free_list[MIGRATE_TYPES];
 	unsigned long		nr_free;
+	unsigned long		nr_free_cma;
 };
 
 struct pglist_data;
@@ -157,6 +170,7 @@ enum zone_stat_item {
 	WORKINGSET_NODERECLAIM,
 	NR_ANON_TRANSPARENT_HUGEPAGES,
 	NR_FREE_CMA_PAGES,
+	NR_SWAPCACHE,
 	NR_VM_ZONE_STAT_ITEMS };
 
 /*
@@ -358,6 +372,9 @@ struct zone {
 	 * considered dirtyable memory.
 	 */
 	unsigned long		dirty_balance_reserve;
+#ifdef CONFIG_CMA
+	bool			cma_alloc;
+#endif
 
 #ifndef CONFIG_SPARSEMEM
 	/*

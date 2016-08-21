@@ -31,6 +31,9 @@
 #include <linux/bitops.h>
 #include <linux/mutex.h>
 #include <linux/shmem_fs.h>
+#include <linux/ashmem.h>
+#include <asm/cacheflush.h>
+
 #include "ashmem.h"
 
 #define ASHMEM_NAME_PREFIX "dev/ashmem/"
@@ -51,11 +54,13 @@
  * Warning: Mappings do NOT pin this structure; It dies on close()
  */
 struct ashmem_area {
-	char name[ASHMEM_FULL_NAME_LEN];
-	struct list_head unpinned_list;
-	struct file *file;
-	size_t size;
-	unsigned long prot_mask;
+	char name[ASHMEM_FULL_NAME_LEN]; /* optional name in /proc/pid/maps */
+	struct list_head unpinned_list;	 /* list of all ashmem areas */
+	struct file *file;		 /* the shmem-based backing file */
+	size_t size;			 /* size of the mapping, in bytes */
+	unsigned long vm_start;		 /* Start address of vm_area
+					  * which maps this ashmem */
+	unsigned long prot_mask;	 /* allowed prot bits, as vm_flags */
 };
 
 /**
@@ -396,21 +401,14 @@ static int ashmem_mmap(struct file *file, struct vm_area_struct *vma)
 	}
 	get_file(asma->file);
 
-	/*
-	 * XXX - Reworked to use shmem_zero_setup() instead of
-	 * shmem_set_file while we're in staging. -jstultz
-	 */
-	if (vma->vm_flags & VM_SHARED) {
-		ret = shmem_zero_setup(vma);
-		if (ret) {
-			fput(asma->file);
-			goto out;
-		}
+	if (vma->vm_flags & VM_SHARED)
+		shmem_set_file(vma, asma->file);
+	else {
+		if (vma->vm_file)
+			fput(vma->vm_file);
+		vma->vm_file = asma->file;
 	}
-
-	if (vma->vm_file)
-		fput(vma->vm_file);
-	vma->vm_file = asma->file;
+	asma->vm_start = vma->vm_start;
 
 out:
 	mutex_unlock(&ashmem_mutex);
@@ -441,12 +439,14 @@ ashmem_shrink_scan(struct shrinker *shrink, struct shrink_control *sc)
 	if (!(sc->gfp_mask & __GFP_FS))
 		return SHRINK_STOP;
 
-	mutex_lock(&ashmem_mutex);
+	if (!mutex_trylock(&ashmem_mutex))
+		return -1;
+
 	list_for_each_entry_safe(range, next, &ashmem_lru_list, lru) {
 		loff_t start = range->pgstart * PAGE_SIZE;
 		loff_t end = (range->pgend + 1) * PAGE_SIZE;
 
-		do_fallocate(range->asma->file,
+		range->asma->file->f_op->fallocate(range->asma->file,
 				FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
 				start, end - start);
 		range->purged = ASHMEM_WAS_PURGED;
@@ -744,6 +744,37 @@ static int ashmem_pin_unpin(struct ashmem_area *asma, unsigned long cmd,
 	return ret;
 }
 
+static int ashmem_cache_op(struct ashmem_area *asma,
+	void (*cache_func)(const void *vstart, const void *vend))
+{
+	int ret = 0;
+	struct vm_area_struct *vma;
+	if (!asma->vm_start)
+		return -EINVAL;
+
+	down_read(&current->mm->mmap_sem);
+	vma = find_vma(current->mm, asma->vm_start);
+	if (!vma) {
+		ret = -EINVAL;
+		goto done;
+	}
+	if (vma->vm_file != asma->file) {
+		ret = -EINVAL;
+		goto done;
+	}
+	if ((asma->vm_start + asma->size) > vma->vm_end) {
+		ret = -EINVAL;
+		goto done;
+	}
+	cache_func((void *)asma->vm_start,
+			(void *)(asma->vm_start + asma->size));
+done:
+	up_read(&current->mm->mmap_sem);
+	if (ret)
+		asma->vm_start = 0;
+	return ret;
+}
+
 static long ashmem_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct ashmem_area *asma = file->private_data;
@@ -788,6 +819,15 @@ static long ashmem_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			nodes_setall(sc.nodes_to_scan);
 			ashmem_shrink_scan(&ashmem_shrinker, &sc);
 		}
+		break;
+	case ASHMEM_CACHE_FLUSH_RANGE:
+		ret = ashmem_cache_op(asma, &dmac_flush_range);
+		break;
+	case ASHMEM_CACHE_CLEAN_RANGE:
+		ret = ashmem_cache_op(asma, &dmac_clean_range);
+		break;
+	case ASHMEM_CACHE_INV_RANGE:
+		ret = ashmem_cache_op(asma, &dmac_inv_range);
 		break;
 	}
 

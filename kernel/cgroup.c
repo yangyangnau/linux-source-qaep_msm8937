@@ -1690,7 +1690,7 @@ static struct dentry *cgroup_mount(struct file_system_type *fs_type,
 {
 	struct super_block *pinned_sb = NULL;
 	struct cgroup_subsys *ss;
-	struct cgroup_root *root;
+	struct cgroup_root *root = NULL;
 	struct cgroup_sb_opts opts;
 	struct dentry *dentry;
 	int ret;
@@ -2327,6 +2327,44 @@ static int cgroup_attach_task(struct cgroup *dst_cgrp,
 	return ret;
 }
 
+int subsys_cgroup_allow_attach(struct cgroup_subsys_state *css, struct cgroup_taskset *tset)
+{
+	const struct cred *cred = current_cred(), *tcred;
+	struct task_struct *task;
+
+	if (capable(CAP_SYS_NICE))
+		return 0;
+
+	cgroup_taskset_for_each(task, tset) {
+		tcred = __task_cred(task);
+
+		if (current != task && !uid_eq(cred->euid, tcred->uid) &&
+		    !uid_eq(cred->euid, tcred->suid))
+			return -EACCES;
+	}
+
+	return 0;
+}
+
+static int cgroup_allow_attach(struct cgroup *cgrp, struct cgroup_taskset *tset)
+{
+	struct cgroup_subsys_state *css;
+	int i;
+	int ret;
+
+	for_each_css(css, i, cgrp) {
+		if (css->ss->allow_attach) {
+			ret = css->ss->allow_attach(css, tset);
+			if (ret)
+				return ret;
+		} else {
+			return -EACCES;
+		}
+	}
+
+	return 0;
+}
+
 /*
  * Find the task_struct of the task to attach by vpid and pass it along to the
  * function to attach either it or all tasks in its threadgroup. Will lock
@@ -2365,9 +2403,24 @@ retry_find_task:
 		if (!uid_eq(cred->euid, GLOBAL_ROOT_UID) &&
 		    !uid_eq(cred->euid, tcred->uid) &&
 		    !uid_eq(cred->euid, tcred->suid)) {
-			rcu_read_unlock();
-			ret = -EACCES;
-			goto out_unlock_cgroup;
+			/*
+			 * if the default permission check fails, give each
+			 * cgroup a chance to extend the permission check
+			 */
+			struct cgroup_taskset tset = {
+				.src_csets = LIST_HEAD_INIT(tset.src_csets),
+				.dst_csets = LIST_HEAD_INIT(tset.dst_csets),
+				.csets = &tset.src_csets,
+			};
+			struct css_set *cset;
+			cset = task_css_set(tsk);
+			list_add(&cset->mg_node, &tset.src_csets);
+			ret = cgroup_allow_attach(cgrp, &tset);
+			list_del_init(&cset->mg_node);
+			if (ret) {
+				rcu_read_unlock();
+				goto out_unlock_cgroup;
+			}
 		}
 	} else
 		tsk = current;
@@ -2451,6 +2504,58 @@ static ssize_t cgroup_tasks_write(struct kernfs_open_file *of,
 {
 	return __cgroup_procs_write(of, buf, nbytes, off, false);
 }
+
+#ifdef CONFIG_CGROUP_SCHED
+int cgroup_attach_task_to_root(struct task_struct *tsk, int wait)
+{
+	int ret = 0;
+	struct cgroup *cgrp;
+	struct cgroup *root_cgrp = NULL;
+
+	if (!mutex_trylock(&cgroup_mutex)) {
+		/*This can be a case of recursion, so bail out */
+		if (!wait)
+			return -EBUSY;
+		mutex_lock(&cgroup_mutex);
+	}
+
+	cgrp = task_cgroup(tsk, cpu_cgrp_id);
+
+	if (cgrp && cgrp->root)
+		root_cgrp = &cgrp->root->cgrp;
+
+	if (root_cgrp && cgrp != root_cgrp)
+		cgrp = root_cgrp;
+	else
+		goto out_unlock_cgroup;
+
+	if (cgroup_is_dead(cgrp)) {
+		ret = -ENODEV;
+		goto out_unlock_cgroup;
+	}
+
+	rcu_read_lock();
+
+	get_task_struct(tsk);
+	rcu_read_unlock();
+
+	threadgroup_lock(tsk);
+
+	ret = cgroup_attach_task(cgrp, tsk, false);
+
+	threadgroup_unlock(tsk);
+
+	put_task_struct(tsk);
+out_unlock_cgroup:
+	mutex_unlock(&cgroup_mutex);
+	return ret;
+}
+#else
+int cgroup_attach_task_to_root(struct task_struct *tsk, int wait)
+{
+	return 0;
+}
+#endif
 
 static ssize_t cgroup_procs_write(struct kernfs_open_file *of,
 				  char *buf, size_t nbytes, loff_t off)

@@ -8,6 +8,7 @@
 #include <linux/spinlock.h>
 #include <linux/rbtree.h>
 #include <linux/rwsem.h>
+#include <linux/stacktrace.h>
 #include <linux/completion.h>
 #include <linux/cpumask.h>
 #include <linux/page-debug-flags.h>
@@ -184,6 +185,9 @@ struct page {
 #ifdef CONFIG_WANT_PAGE_DEBUG_FLAGS
 	unsigned long debug_flags;	/* Use atomic bitops on this */
 #endif
+#ifdef CONFIG_BLK_DEV_IO_TRACE
+	struct task_struct *tsk_dirty;	/* task that sets this page dirty */
+#endif
 
 #ifdef CONFIG_KMEMCHECK
 	/*
@@ -195,6 +199,12 @@ struct page {
 
 #ifdef LAST_CPUPID_NOT_IN_PAGE_FLAGS
 	int _last_cpupid;
+#endif
+#ifdef CONFIG_PAGE_OWNER
+	int order;
+	gfp_t gfp_mask;
+	struct stack_trace trace;
+	unsigned long trace_entries[8];
 #endif
 }
 /*
@@ -274,6 +284,10 @@ struct vm_area_struct {
 	 * For areas with an address space and backing store,
 	 * linkage into the address_space->i_mmap interval tree, or
 	 * linkage of vma in the address_space->i_mmap_nonlinear list.
+	 *
+	 * For private anonymous mappings, a pointer to a null terminated string
+	 * in the user process containing the name given to the vma, or NULL
+	 * if unnamed.
 	 */
 	union {
 		struct {
@@ -281,6 +295,7 @@ struct vm_area_struct {
 			unsigned long rb_subtree_last;
 		} linear;
 		struct list_head nonlinear;
+		const char __user *anon_name;
 	} shared;
 
 	/*
@@ -454,6 +469,10 @@ struct mm_struct {
 	bool tlb_flush_pending;
 #endif
 	struct uprobes_state uprobes_state;
+#ifdef CONFIG_MSM_APP_SETTINGS
+	int app_setting;
+#endif
+
 };
 
 static inline void mm_init_cpumask(struct mm_struct *mm)
@@ -524,5 +543,14 @@ enum tlb_flush_reason {
 	TLB_LOCAL_MM_SHOOTDOWN,
 	NR_TLB_FLUSH_REASONS,
 };
+
+/* Return the name for an anonymous mapping or NULL for a file-backed mapping */
+static inline const char __user *vma_get_anon_name(struct vm_area_struct *vma)
+{
+	if (vma->vm_file)
+		return NULL;
+
+	return vma->shared.anon_name;
+}
 
 #endif /* _LINUX_MM_TYPES_H */

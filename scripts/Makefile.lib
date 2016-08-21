@@ -119,6 +119,22 @@ _c_flags += $(if $(patsubst n%,, \
 		$(CFLAGS_GCOV))
 endif
 
+#
+# Enable address sanitizer flags for kernel except some files or directories
+# we don't want to check (depends on variables KASAN_SANITIZE_obj.o, KASAN_SANITIZE)
+#
+ifeq ($(CONFIG_KASAN),y)
+_c_flags += $(if $(patsubst n%,, \
+		$(KASAN_SANITIZE_$(basetarget).o)$(KASAN_SANITIZE)$(CONFIG_KASAN_SANITIZE_ALL)), \
+		$(CFLAGS_KASAN))
+endif
+
+ifeq ($(CONFIG_UBSAN),y)
+_c_flags += $(if $(patsubst n%,, \
+		$(UBSAN_SANITIZE_$(basetarget).o)$(UBSAN_SANITIZE)$(CONFIG_UBSAN_SANITIZE_ALL)), \
+		$(CFLAGS_UBSAN))
+endif
+
 # If building the kernel in a separate objtree expand all occurrences
 # of -Idir to -I$(srctree)/dir except for absolute paths (starting with '/').
 
@@ -283,17 +299,11 @@ $(obj)/%.dtb: $(src)/%.dts FORCE
 
 dtc-tmp = $(subst $(comma),_,$(dot-target).dts.tmp)
 
-# Helper targets for Installing DTBs into the boot directory
-quiet_cmd_dtb_install =	INSTALL $<
-      cmd_dtb_install =	cp $< $(2)
-
-_dtbinst_pre_:
-	$(Q)if [ -d $(INSTALL_DTBS_PATH).old ]; then rm -rf $(INSTALL_DTBS_PATH).old; fi
-	$(Q)if [ -d $(INSTALL_DTBS_PATH) ]; then mv $(INSTALL_DTBS_PATH) $(INSTALL_DTBS_PATH).old; fi
-	$(Q)mkdir -p $(INSTALL_DTBS_PATH)
-
-%.dtb_dtbinst_: $(obj)/%.dtb _dtbinst_pre_
-	$(call cmd,dtb_install,$(INSTALL_DTBS_PATH))
+# cat
+# ---------------------------------------------------------------------------
+# Concatentate multiple files together
+quiet_cmd_cat = CAT     $@
+cmd_cat = (cat $(filter-out FORCE,$^) > $@) || (rm -f $@; false)
 
 # Bzip2
 # ---------------------------------------------------------------------------

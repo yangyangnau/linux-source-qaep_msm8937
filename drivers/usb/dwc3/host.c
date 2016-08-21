@@ -60,12 +60,7 @@ int dwc3_host_init(struct dwc3 *dwc)
 		goto err1;
 	}
 
-	ret = platform_device_add(xhci);
-	if (ret) {
-		dev_err(dwc->dev, "failed to register xHCI device\n");
-		goto err1;
-	}
-
+	/* Platform device gets added as part of state machine */
 	return 0;
 
 err1:
@@ -77,5 +72,6 @@ err0:
 
 void dwc3_host_exit(struct dwc3 *dwc)
 {
-	platform_device_unregister(dwc->xhci);
+	if (!dwc->is_drd)
+		platform_device_unregister(dwc->xhci);
 }

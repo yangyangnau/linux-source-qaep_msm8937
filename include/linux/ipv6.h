@@ -37,11 +37,13 @@ struct ipv6_devconf {
 	__s32		accept_ra_rt_info_max_plen;
 #endif
 #endif
+	__s32		accept_ra_rt_table;
 	__s32		proxy_ndp;
 	__s32		accept_source_route;
 	__s32		accept_ra_from_local;
 #ifdef CONFIG_IPV6_OPTIMISTIC_DAD
 	__s32		optimistic_dad;
+	__s32		use_optimistic;
 #endif
 #ifdef CONFIG_IPV6_MROUTE
 	__s32		mc_forwarding;
@@ -51,6 +53,8 @@ struct ipv6_devconf {
 	__s32		force_tllao;
 	__s32           ndisc_notify;
 	__s32		suppress_frag_ndisc;
+	__s32		accept_ra_prefix_route;
+	__s32		use_oif_addrs_only;
 	void		*sysctl;
 };
 
@@ -80,7 +84,7 @@ static inline struct ipv6hdr *ipipv6_hdr(const struct sk_buff *skb)
 	return (struct ipv6hdr *)skb_transport_header(skb);
 }
 
-/* 
+/*
    This structure contains results of exthdrs parsing
    as offsets from skb->nh.
  */
@@ -253,9 +257,9 @@ struct tcp6_timewait_sock {
 };
 
 #if IS_ENABLED(CONFIG_IPV6)
-static inline struct ipv6_pinfo * inet6_sk(const struct sock *__sk)
+static inline struct ipv6_pinfo *inet6_sk(const struct sock *__sk)
 {
-	return inet_sk(__sk)->pinet6;
+	return sk_fullsock(__sk) ? inet_sk(__sk)->pinet6 : NULL;
 }
 
 static inline struct raw6_sock *raw6_sk(const struct sock *sk)

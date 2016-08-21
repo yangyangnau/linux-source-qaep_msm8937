@@ -571,7 +571,7 @@ config MFD_SPMI_PMIC
 	tristate "Qualcomm SPMI PMICs"
 	depends on ARCH_QCOM || COMPILE_TEST
 	depends on OF
-	depends on SPMI
+	depends on SPMI || MSM_SPMI
 	select REGMAP_SPMI
 	help
 	  This enables support for the Qualcomm SPMI PMICs.
@@ -1317,6 +1317,42 @@ config MFD_STW481X
 	  Select this option to enable the STw481x chip driver used
 	  in various ST Microelectronics and ST-Ericsson embedded
 	  Nomadik series.
+
+config WCD9320_CODEC
+	tristate "WCD9320 Codec"
+	select SLIMBUS
+	select MFD_CORE
+	help
+	  Enables the WCD9xxx codec core driver. The core driver provides
+	  read/write capability to registers which are part of the
+	  WCD9320 core and gives the ability to use the WCD9320 codec.
+	  The WCD9320 codec support either I2C/I2S or Slimbus for
+	  control and data exchnage with master processor.
+
+config WCD9330_CODEC
+	tristate "WCD9330 Codec"
+	select SLIMBUS
+	select MFD_CORE
+	select REGMAP_ALLOW_WRITE_DEBUGFS
+	help
+	  Enables the WCD9xxx codec core driver. The core driver provides
+	  read/write capability to registers which are part of the
+	  WCD9330 core and gives the ability to use the WCD9330 codec.
+	  The WCD9330 codec support either I2C/I2S or Slimbus for
+	  control and data exchnage with master processor.
+
+config WCD9335_CODEC
+	tristate "WCD9335 Codec"
+	depends on SLIMBUS
+	select SOUNDWIRE_WCD_CTRL
+	select MFD_CORE
+	select REGMAP_ALLOW_WRITE_DEBUGFS
+	help
+	  Enables the WCD9xxx codec core driver. The core driver provides
+	  read/write capability to registers which are part of the
+	  WCD9335 core and gives the ability to use the WCD9335 codec.
+	  The WCD9335 codec support either I2C/I2S or Slimbus for
+	  control and data exchnage with master processor.
 
 menu "Multimedia Capabilities Port drivers"
 	depends on ARCH_SA1100

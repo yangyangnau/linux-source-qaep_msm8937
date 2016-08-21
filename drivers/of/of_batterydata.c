@@ -1,4 +1,5 @@
-/* Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2016 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,6 +20,7 @@
 #include <linux/types.h>
 #include <linux/batterydata-lib.h>
 #include <linux/power_supply.h>
+#include <linux/hardware_info.h>
 
 static int of_batterydata_read_lut(const struct device_node *np,
 			int max_cols, int max_rows, int *ncols, int *nrows,
@@ -276,10 +278,6 @@ static int of_batterydata_load_battery_data(struct device_node *node,
 			"max-voltage-uv", node, rc, true);
 	OF_PROP_READ(batt_data->cutoff_uv, "v-cutoff-uv", node, rc, true);
 	OF_PROP_READ(batt_data->iterm_ua, "chg-term-ua", node, rc, true);
-	OF_PROP_READ(batt_data->fastchg_current_ma,
-			"fastchg-current-ma", node, rc, true);
-	OF_PROP_READ(batt_data->fg_cc_cv_threshold_mv,
-			"fg-cc-cv-threshold-mv", node, rc, true);
 
 	batt_data->batt_id_kohm = best_id_kohm;
 
@@ -320,8 +318,7 @@ struct device_node *of_batterydata_get_best_profile(
 	const char *battery_type = NULL;
 	union power_supply_propval ret = {0, };
 	int delta = 0, best_delta = 0, best_id_kohm = 0, id_range_pct,
-		batt_id_kohm = 0, i = 0, rc = 0, limit = 0;
-	bool in_range = false;
+		batt_id_kohm = 0, i = 0, rc = 0;
 
 	psy = power_supply_get_by_name(psy_name);
 	if (!psy) {
@@ -336,19 +333,6 @@ struct device_node *of_batterydata_get_best_profile(
 	}
 
 	batt_id_kohm = ret.intval / 1000;
-
-	/* read battery id range percentage for best profile */
-	rc = of_property_read_u32(batterydata_container_node,
-			"qcom,batt-id-range-pct", &id_range_pct);
-
-	if (rc) {
-		if (rc == -EINVAL) {
-			id_range_pct = 0;
-		} else {
-			pr_err("failed to read battery id range\n");
-			return ERR_PTR(-ENXIO);
-		}
-	}
 
 	/*
 	 * Find the battery data with a battery id resistor closest to this one
@@ -370,15 +354,7 @@ struct device_node *of_batterydata_get_best_profile(
 				continue;
 			for (i = 0; i < batt_ids.num; i++) {
 				delta = abs(batt_ids.kohm[i] - batt_id_kohm);
-				limit = (batt_ids.kohm[i] * id_range_pct) / 100;
-				in_range = (delta <= limit);
-				/*
-				 * Check if the delta is the lowest one
-				 * and also if the limits are in range
-				 * before selecting the best node.
-				 */
-				if ((delta < best_delta || !best_node)
-					&& in_range) {
+				if (delta < best_delta || !best_node) {
 					best_node = node;
 					best_delta = delta;
 					best_id_kohm = batt_ids.kohm[i];
@@ -392,12 +368,22 @@ struct device_node *of_batterydata_get_best_profile(
 		return best_node;
 	}
 
-	/* check that profile id is in range of the measured batt_id */
-	if (abs(best_id_kohm - batt_id_kohm) >
-			((best_id_kohm * id_range_pct) / 100)) {
-		pr_err("out of range: profile id %d batt id %d pct %d",
-			best_id_kohm, batt_id_kohm, id_range_pct);
-		return NULL;
+	/* read battery id value for best profile */
+	rc = of_property_read_u32(batterydata_container_node,
+			"qcom,batt-id-range-pct", &id_range_pct);
+	if (!rc) {
+		/* check that profile id is in range of the measured batt_id */
+		if (abs(best_id_kohm - batt_id_kohm) >
+				((best_id_kohm * id_range_pct) / 100)) {
+			pr_err("out of range: profile id %d batt id %d pct %d",
+				best_id_kohm, batt_id_kohm, id_range_pct);
+			return NULL;
+		}
+	} else if (rc == -EINVAL) {
+		rc = 0;
+	} else {
+		pr_err("failed to read battery id range\n");
+		return ERR_PTR(-ENXIO);
 	}
 
 	rc = of_property_read_string(best_node, "qcom,battery-type",
@@ -409,6 +395,8 @@ struct device_node *of_batterydata_get_best_profile(
 
 	return best_node;
 }
+
+int battery_type_id = 0 ;
 
 int of_batterydata_read_data(struct device_node *batterydata_container_node,
 				struct bms_battery_data *batt_data,
@@ -457,10 +445,22 @@ int of_batterydata_read_data(struct device_node *batterydata_container_node,
 	}
 	rc = of_property_read_string(best_node, "qcom,battery-type",
 							&battery_type);
-	if (!rc)
+	if (!rc) {
 		pr_info("%s loaded\n", battery_type);
-	else
+
+		if (strcmp(battery_type, "wingtech-desai-4v4-4000mah") == 0)
+			 battery_type_id = 0 ;
+		else if (strcmp(battery_type, "wingtech-feimaotui-4v4-4000mah") == 0)
+			 battery_type_id = 1;
+		else if (strcmp(battery_type, "wingtech-guangyu-4v4-4000mah") == 0)
+			 battery_type_id = 2;
+		else if (strcmp(battery_type, "wingtech-xingwangda-4v4-4000mah") == 0)
+			 battery_type_id = 3;
+
+
+	} else {
 		pr_info("%s loaded\n", best_node->name);
+	}
 
 	return of_batterydata_load_battery_data(best_node,
 					best_id_kohm, batt_data);

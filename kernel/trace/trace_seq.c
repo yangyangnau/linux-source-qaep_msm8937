@@ -81,7 +81,7 @@ int trace_seq_printf(struct trace_seq *s, const char *fmt, ...)
 	va_list ap;
 	int ret;
 
-	if (s->full || !len || (s->len >= (PAGE_SIZE - 1)))
+	if (s->full || !len)
 		return 0;
 
 	va_start(ap, fmt);

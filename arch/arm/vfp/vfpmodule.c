@@ -446,7 +446,7 @@ static void vfp_enable(void *unused)
 }
 
 #ifdef CONFIG_CPU_PM
-int vfp_pm_suspend(void)
+static int vfp_pm_suspend(void)
 {
 	struct thread_info *ti = current_thread_info();
 	u32 fpexc = fmrx(FPEXC);
@@ -472,7 +472,7 @@ int vfp_pm_suspend(void)
 	return 0;
 }
 
-void vfp_pm_resume(void)
+static void vfp_pm_resume(void)
 {
 	/* ensure we have access to the vfp */
 	vfp_enable(NULL);

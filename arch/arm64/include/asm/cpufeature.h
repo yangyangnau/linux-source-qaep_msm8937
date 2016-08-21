@@ -25,11 +25,11 @@
 #define ARM64_WORKAROUND_DEVICE_LOAD_ACQUIRE	1
 #define ARM64_WORKAROUND_845719			2
 
-#define ARM64_NCAPS				3
+#define NCAPS					3
 
 #ifndef __ASSEMBLY__
 
-extern DECLARE_BITMAP(cpu_hwcaps, ARM64_NCAPS);
+extern DECLARE_BITMAP(cpu_hwcaps, NCAPS);
 
 static inline bool cpu_have_feature(unsigned int num)
 {
@@ -38,24 +38,21 @@ static inline bool cpu_have_feature(unsigned int num)
 
 static inline bool cpus_have_cap(unsigned int num)
 {
-	if (num >= ARM64_NCAPS)
+	if (num >= NCAPS)
 		return false;
 	return test_bit(num, cpu_hwcaps);
 }
 
 static inline void cpus_set_cap(unsigned int num)
 {
-	if (num >= ARM64_NCAPS)
+	if (num >= NCAPS)
 		pr_warn("Attempt to set an illegal CPU capability (%d >= %d)\n",
-			num, ARM64_NCAPS);
+			num, NCAPS);
 	else
 		__set_bit(num, cpu_hwcaps);
 }
 
 void check_local_cpu_errata(void);
-
-bool cpu_supports_mixed_endian_el0(void);
-bool system_supports_mixed_endian_el0(void);
 
 #endif /* __ASSEMBLY__ */
 

@@ -44,8 +44,6 @@ enum usb_otg_state {
 	OTG_STATE_B_IDLE,
 	OTG_STATE_B_SRP_INIT,
 	OTG_STATE_B_PERIPHERAL,
-	OTG_STATE_B_SUSPEND,
-	OTG_STATE_B_CHARGER,
 
 	/* extra dual-role default-b states */
 	OTG_STATE_B_WAIT_ACON,
@@ -125,15 +123,6 @@ struct usb_phy {
 			enum usb_device_speed speed);
 	int	(*notify_disconnect)(struct usb_phy *x,
 			enum usb_device_speed speed);
-
-	/* reset the PHY clocks */
-	int	(*reset)(struct usb_phy *x);
-
-	/* for notification of usb_phy_dbg_events */
-	void    (*dbg_event)(struct usb_phy *x,
-			char *event, int msg1, int msg2);
-	/* update DP/DM state */
-	int	(*change_dpdm)(struct usb_phy *x, int dpdm);
 };
 
 /**
@@ -208,15 +197,6 @@ usb_phy_vbus_off(struct usb_phy *x)
 	return x->set_vbus(x, false);
 }
 
-static inline int
-usb_phy_reset(struct usb_phy *x)
-{
-	if (x && x->reset)
-		return x->reset(x);
-
-	return 0;
-}
-
 /* for usb host and peripheral controller drivers */
 #if IS_ENABLED(CONFIG_USB_PHY)
 extern struct usb_phy *usb_get_phy(enum usb_phy_type type);
@@ -281,14 +261,6 @@ usb_phy_set_power(struct usb_phy *x, unsigned mA)
 	return 0;
 }
 
-static inline int
-usb_phy_change_dpdm(struct usb_phy *x, int dpdm)
-{
-	if (x && x->change_dpdm)
-		return x->change_dpdm(x, dpdm);
-	return 0;
-}
-
 /* Context: can sleep */
 static inline int
 usb_phy_set_suspend(struct usb_phy *x, int suspend)
@@ -324,14 +296,6 @@ usb_phy_notify_disconnect(struct usb_phy *x, enum usb_device_speed speed)
 		return x->notify_disconnect(x, speed);
 	else
 		return 0;
-}
-
-static inline void
-usb_phy_dbg_events(struct usb_phy *x,
-		char *event, int msg1, int msg2)
-{
-	if (x && x->dbg_event)
-		x->dbg_event(x, event, msg1, msg2);
 }
 
 /* notifiers */

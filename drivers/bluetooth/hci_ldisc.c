@@ -2,9 +2,9 @@
  *
  *  Bluetooth HCI UART driver
  *
+ *  Copyright (C) 2000-2001  Qualcomm Incorporated
  *  Copyright (C) 2002-2003  Maxim Krasnyansky <maxk@qualcomm.com>
  *  Copyright (C) 2004-2005  Marcel Holtmann <marcel@holtmann.org>
- *  Copyright (c) 2000-2001, 2010, Code Aurora Forum. All rights reserved.
  *
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -47,16 +47,6 @@
 #include "hci_uart.h"
 
 #define VERSION "2.2"
-
-static inline void hci_uart_proto_lock(struct hci_uart *hu)
-{
-	mutex_lock(&hu->proto_lock);
-}
-
-static inline void hci_uart_proto_unlock(struct hci_uart *hu)
-{
-	mutex_unlock(&hu->proto_lock);
-}
 
 static struct hci_uart_proto *hup[HCI_UART_MAX_PROTO];
 
@@ -118,15 +108,8 @@ static inline struct sk_buff *hci_uart_dequeue(struct hci_uart *hu)
 {
 	struct sk_buff *skb = hu->tx_skb;
 
-	if (!skb) {
-		hci_uart_proto_lock(hu);
-		if (!hu->proto) {
-			hci_uart_proto_unlock(hu);
-			return NULL;
-		}
+	if (!skb)
 		skb = hu->proto->dequeue(hu);
-		hci_uart_proto_unlock(hu);
-	}
 	else
 		hu->tx_skb = NULL;
 
@@ -153,8 +136,6 @@ static void hci_uart_write_work(struct work_struct *work)
 	struct tty_struct *tty = hu->tty;
 	struct hci_dev *hdev = hu->hdev;
 	struct sk_buff *skb;
-
-	BT_DBG("hu %p hdev %p tty %p", hu, hdev, tty);
 
 	/* REVISIT: should we cope with bad skbs or ->write() returning
 	 * and error value ?
@@ -315,7 +296,6 @@ static int hci_uart_tty_open(struct tty_struct *tty)
 	INIT_WORK(&hu->write_work, hci_uart_write_work);
 
 	spin_lock_init(&hu->rx_lock);
-	mutex_init(&hu->proto_lock);
 
 	/* Flush any pending characters in the driver and line discipline. */
 
@@ -348,24 +328,20 @@ static void hci_uart_tty_close(struct tty_struct *tty)
 		return;
 
 	hdev = hu->hdev;
-	if (hdev) {
+	if (hdev)
 		hci_uart_close(hdev);
-		if (test_bit(HCI_UART_REGISTERED, &hu->flags))
-			hci_unregister_dev(hdev);
-	}
-
-	if (test_and_clear_bit(HCI_UART_PROTO_SET, &hu->flags)) {
-		hci_uart_proto_lock(hu);
-		hu->proto->close(hu);
-		hu->proto = NULL;
-		hci_uart_proto_unlock(hu);
-	}
 
 	cancel_work_sync(&hu->write_work);
 
-	if (hdev)
-		hci_free_dev(hdev);
-	mutex_destroy(&hu->proto_lock);
+	if (test_and_clear_bit(HCI_UART_PROTO_SET, &hu->flags)) {
+		if (hdev) {
+			if (test_bit(HCI_UART_REGISTERED, &hu->flags))
+				hci_unregister_dev(hdev);
+			hci_free_dev(hdev);
+		}
+		hu->proto->close(hu);
+	}
+
 	kfree(hu);
 }
 
@@ -411,13 +387,10 @@ static void hci_uart_tty_receive(struct tty_struct *tty, const u8 *data, char *f
 {
 	struct hci_uart *hu = (void *)tty->disc_data;
 
-	if (!hu || tty != hu->tty || !data)
+	if (!hu || tty != hu->tty)
 		return;
 
 	if (!test_bit(HCI_UART_PROTO_SET, &hu->flags))
-		return;
-
-	if (!hu->proto)
 		return;
 
 	spin_lock(&hu->rx_lock);
@@ -653,9 +626,6 @@ static int __init hci_uart_init(void)
 #ifdef CONFIG_BT_HCIUART_3WIRE
 	h5_init();
 #endif
-#ifdef CONFIG_BT_HCIUART_IBS
-	ibs_init();
-#endif
 
 	return 0;
 }
@@ -678,9 +648,6 @@ static void __exit hci_uart_exit(void)
 #endif
 #ifdef CONFIG_BT_HCIUART_3WIRE
 	h5_deinit();
-#endif
-#ifdef CONFIG_BT_HCIUART_IBS
-	ibs_deinit();
 #endif
 
 	/* Release tty registration of line discipline */

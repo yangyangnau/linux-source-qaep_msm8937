@@ -22,10 +22,6 @@ struct timezone {
 	int	tz_dsttime;	/* type of dst correction */
 };
 
-#define FD_SET(fd,fdsetp)       __FD_SET(fd,fdsetp)
-#define FD_CLR(fd,fdsetp)       __FD_CLR(fd,fdsetp)
-#define FD_ISSET(fd,fdsetp)     __FD_ISSET(fd,fdsetp)
-#define FD_ZERO(fdsetp)         __FD_ZERO(fdsetp)
 
 /*
  * Names of the interval timers, and structure
@@ -60,7 +56,6 @@ struct itimerval {
 #define CLOCK_BOOTTIME_ALARM		9
 #define CLOCK_SGI_CYCLE			10	/* Hardware specific */
 #define CLOCK_TAI			11
-#define CLOCK_POWEROFF_ALARM		12
 
 #define MAX_CLOCKS			16
 #define CLOCKS_MASK			(CLOCK_REALTIME | CLOCK_MONOTONIC)

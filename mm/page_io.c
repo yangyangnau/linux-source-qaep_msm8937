@@ -22,11 +22,7 @@
 #include <linux/frontswap.h>
 #include <linux/aio.h>
 #include <linux/blkdev.h>
-#include <linux/ratelimit.h>
 #include <asm/pgtable.h>
-
-#define ERROR_LOG_RATE_MS 1000
-static unsigned long error_time;
 
 static struct bio *get_swap_bio(gfp_t gfp_flags,
 				struct page *page, bio_end_io_t end_io)
@@ -63,8 +59,7 @@ void end_swap_bio_write(struct bio *bio, int err)
 		 * Also clear PG_reclaim to avoid rotate_reclaimable_page()
 		 */
 		set_page_dirty(page);
-		if (printk_timed_ratelimit(&error_time, ERROR_LOG_RATE_MS))
-			pr_info("Write-error on swap-device (%u:%u:%llu)\n",
+		printk(KERN_ALERT "Write-error on swap-device (%u:%u:%Lu)\n",
 				imajor(bio->bi_bdev->bd_inode),
 				iminor(bio->bi_bdev->bd_inode),
 				(unsigned long long)bio->bi_iter.bi_sector);
@@ -82,8 +77,7 @@ void end_swap_bio_read(struct bio *bio, int err)
 	if (!uptodate) {
 		SetPageError(page);
 		ClearPageUptodate(page);
-		if (printk_timed_ratelimit(&error_time, ERROR_LOG_RATE_MS))
-			pr_info("Read-error on swap-device (%u:%u:%llu)\n",
+		printk(KERN_ALERT "Read-error on swap-device (%u:%u:%Lu)\n",
 				imajor(bio->bi_bdev->bd_inode),
 				iminor(bio->bi_bdev->bd_inode),
 				(unsigned long long)bio->bi_iter.bi_sector);

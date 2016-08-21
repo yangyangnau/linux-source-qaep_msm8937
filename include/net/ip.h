@@ -172,7 +172,6 @@ struct ip_reply_arg {
 				/* -1 if not needed */ 
 	int	    bound_dev_if;
 	u8  	    tos;
-	kuid_t	    uid;
 }; 
 
 #define IP_REPLY_ARG_NOSRCCHECK 1
@@ -232,8 +231,6 @@ static inline int inet_is_local_reserved_port(struct net *net, int port)
 	return 0;
 }
 #endif
-
-extern int sysctl_reserved_port_bind;
 
 /* From inetpeer.c */
 extern int inet_peer_threshold;

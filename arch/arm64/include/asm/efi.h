@@ -6,8 +6,10 @@
 
 #ifdef CONFIG_EFI
 extern void efi_init(void);
+extern void efi_idmap_init(void);
 #else
 #define efi_init()
+#define efi_idmap_init()
 #endif
 
 #define efi_call_virt(f, ...)						\

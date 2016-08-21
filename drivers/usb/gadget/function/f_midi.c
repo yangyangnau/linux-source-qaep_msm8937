@@ -67,11 +67,6 @@ struct gmidi_in_port {
 	uint8_t data[2];
 };
 
-struct midi_alsa_config {
-	int	card;
-	int	device;
-};
-
 struct f_midi {
 	struct usb_function	func;
 	struct usb_gadget	*gadget;
@@ -104,7 +99,7 @@ DECLARE_USB_MIDI_OUT_JACK_DESCRIPTOR(1);
 DECLARE_USB_MS_ENDPOINT_DESCRIPTOR(16);
 
 /* B.3.1  Standard AC Interface Descriptor */
-static struct usb_interface_descriptor ac_interface_desc /* __initdata */ = {
+static struct usb_interface_descriptor ac_interface_desc __initdata = {
 	.bLength =		USB_DT_INTERFACE_SIZE,
 	.bDescriptorType =	USB_DT_INTERFACE,
 	/* .bInterfaceNumber =	DYNAMIC */
@@ -115,7 +110,7 @@ static struct usb_interface_descriptor ac_interface_desc /* __initdata */ = {
 };
 
 /* B.3.2  Class-Specific AC Interface Descriptor */
-static struct uac1_ac_header_descriptor_1 ac_header_desc /* __initdata */ = {
+static struct uac1_ac_header_descriptor_1 ac_header_desc __initdata = {
 	.bLength =		UAC_DT_AC_HEADER_SIZE(1),
 	.bDescriptorType =	USB_DT_CS_INTERFACE,
 	.bDescriptorSubtype =	USB_MS_HEADER,
@@ -126,7 +121,7 @@ static struct uac1_ac_header_descriptor_1 ac_header_desc /* __initdata */ = {
 };
 
 /* B.4.1  Standard MS Interface Descriptor */
-static struct usb_interface_descriptor ms_interface_desc /* __initdata */ = {
+static struct usb_interface_descriptor ms_interface_desc __initdata = {
 	.bLength =		USB_DT_INTERFACE_SIZE,
 	.bDescriptorType =	USB_DT_INTERFACE,
 	/* .bInterfaceNumber =	DYNAMIC */
@@ -137,7 +132,7 @@ static struct usb_interface_descriptor ms_interface_desc /* __initdata */ = {
 };
 
 /* B.4.2  Class-Specific MS Interface Descriptor */
-static struct usb_ms_header_descriptor ms_header_desc /* __initdata */ = {
+static struct usb_ms_header_descriptor ms_header_desc __initdata = {
 	.bLength =		USB_DT_MS_HEADER_SIZE,
 	.bDescriptorType =	USB_DT_CS_INTERFACE,
 	.bDescriptorSubtype =	USB_MS_HEADER,
@@ -204,7 +199,7 @@ static inline struct usb_request *midi_alloc_ep_req(struct usb_ep *ep,
 	return alloc_ep_req(ep, length, length);
 }
 
-static void midi_free_ep_req(struct usb_ep *ep, struct usb_request *req)
+static void free_ep_req(struct usb_ep *ep, struct usb_request *req)
 {
 	kfree(req->buf);
 	usb_ep_free_request(ep, req);
@@ -275,7 +270,7 @@ f_midi_complete(struct usb_ep *ep, struct usb_request *req)
 		if (ep == midi->out_ep)
 			f_midi_handle_out_data(ep, req);
 
-		midi_free_ep_req(ep, req);
+		free_ep_req(ep, req);
 		return;
 
 	case -EOVERFLOW:	/* buffer overrun on read means that
@@ -537,17 +532,16 @@ static void f_midi_transmit_byte(struct usb_request *req,
 static void f_midi_transmit(struct f_midi *midi, struct usb_request *req)
 {
 	struct usb_ep *ep = midi->in_ep;
-	size_t extra_buf_alloc = midi->gadget->extra_buf_alloc;
 	int i;
 
 	if (!ep)
 		return;
 
 	if (!req)
-		req = midi_alloc_ep_req(ep, midi->buflen + extra_buf_alloc);
+		req = midi_alloc_ep_req(ep, midi->buflen);
 
 	if (!req) {
-		ERROR(midi, "gmidi_transmit: midi_alloc_ep_request failed\n");
+		ERROR(midi, "gmidi_transmit: alloc_ep_request failed\n");
 		return;
 	}
 	req->length = 0;
@@ -573,7 +567,7 @@ static void f_midi_transmit(struct f_midi *midi, struct usb_request *req)
 	if (req->length > 0)
 		usb_ep_queue(ep, req, GFP_ATOMIC);
 	else
-		midi_free_ep_req(ep, req);
+		free_ep_req(ep, req);
 }
 
 static void f_midi_in_tasklet(unsigned long data)
@@ -730,7 +724,7 @@ fail:
 
 /* MIDI function driver setup/binding */
 
-static int /* __init */
+static int __init
 f_midi_bind(struct usb_configuration *c, struct usb_function *f)
 {
 	struct usb_descriptor_header **midi_function;
@@ -920,21 +914,15 @@ fail:
  *
  * Returns zero on success, else negative errno.
  */
-int /* __init */ f_midi_bind_config(struct usb_configuration *c,
+int __init f_midi_bind_config(struct usb_configuration *c,
 			      int index, char *id,
 			      unsigned int in_ports,
 			      unsigned int out_ports,
 			      unsigned int buflen,
-			      unsigned int qlen,
-			      struct midi_alsa_config *config)
+			      unsigned int qlen)
 {
 	struct f_midi *midi;
 	int status, i;
-
-	if (config) {
-		config->card = -1;
-		config->device = -1;
-	}
 
 	/* sanity check */
 	if (in_ports > MAX_PORTS || out_ports > MAX_PORTS)
@@ -964,10 +952,6 @@ int /* __init */ f_midi_bind_config(struct usb_configuration *c,
 	tasklet_init(&midi->tasklet, f_midi_in_tasklet, (unsigned long) midi);
 
 	/* set up ALSA midi devices */
-	midi->id = kstrdup(id, GFP_KERNEL);
-	midi->index = index;
-	midi->buflen = buflen;
-	midi->qlen = qlen;
 	midi->in_ports = in_ports;
 	midi->out_ports = out_ports;
 	status = f_midi_register_card(midi);
@@ -981,15 +965,14 @@ int /* __init */ f_midi_bind_config(struct usb_configuration *c,
 	midi->func.set_alt     = f_midi_set_alt;
 	midi->func.disable     = f_midi_disable;
 
+	midi->id = kstrdup(id, GFP_KERNEL);
+	midi->index = index;
+	midi->buflen = buflen;
+	midi->qlen = qlen;
+
 	status = usb_add_function(c, &midi->func);
 	if (status)
 		goto setup_fail;
-
-
-	if (config) {
-		config->card = midi->rmidi->card->number;
-		config->device = midi->rmidi->device;
-	}
 
 	return 0;
 

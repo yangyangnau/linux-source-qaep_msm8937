@@ -3,7 +3,6 @@
  *
  * Copyright (C) 2001 Deep Blue Solutions Ltd.
  * Copyright (C) 2012 ARM Ltd.
- * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -25,40 +24,6 @@
 #include <asm/alternative-asm.h>
 
 #include "proc-macros.S"
-
- /*
- *     flush_dcache_louis()
- *
- *     Flush the D-cache up to the Level of Unification Inner Shareable
- *
- *     Corrupted registers: x0-x7, x9-x11
- */
-
-ENTRY(flush_dcache_louis)
-	dsb	sy		// ensure ordering with previous memory accesses
-	mrs	x0, clidr_el1	// read clidr
-	and	x3, x0, #(7 << 21)	// extract LoUIS from clidr
-	lsr	x3, x3, #20	// x3 = LoUIS * 2
-	cbz	x3, done	// if LoUIS is 0, then no need to clean
-	mov	x10, #0		// start clean at cache level 0
-	b	loop1		// start flushing cache levels
-done:
-	ret
-ENDPROC(flush_dcache_louis)
-
- /*
- *     flush_kern_cache_louis(void)
- *
- *     Flush the data cache up to Level of Unification Inner Shareable.
- *     Invalidate the I-cache to the point of unification.
- */
-ENTRY(flush_cache_louis)
-	mov	x12, lr
-	bl	flush_dcache_louis
-	mov	x0, #0
-	ic	ialluis				// I+BTB cache invalidate
-	ret x12
-ENDPROC(flush_cache_louis)
 
 /*
  *	__flush_dcache_all()
@@ -217,7 +182,7 @@ ENTRY(__inval_cache_range)
  *	- start   - virtual start address of region
  *	- end     - virtual end address of region
  */
-ENTRY(__dma_inv_range)
+__dma_inv_range:
 	dcache_line_size x2, x3
 	sub	x3, x2, #1
 	tst	x1, x3				// end cache line aligned?
@@ -243,7 +208,7 @@ ENDPROC(__dma_inv_range)
  *	- start   - virtual start address of region
  *	- end     - virtual end address of region
  */
-ENTRY(__dma_clean_range)
+__dma_clean_range:
 	dcache_line_size x2, x3
 	sub	x3, x2, #1
 	bic	x0, x0, x3

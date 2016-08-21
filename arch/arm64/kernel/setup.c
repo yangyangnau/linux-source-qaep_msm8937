@@ -44,7 +44,6 @@
 #include <linux/of_platform.h>
 #include <linux/efi.h>
 #include <linux/personality.h>
-#include <linux/dma-mapping.h>
 
 #include <asm/fixmap.h>
 #include <asm/cpu.h>
@@ -53,7 +52,6 @@
 #include <asm/cputable.h>
 #include <asm/cpufeature.h>
 #include <asm/cpu_ops.h>
-#include <asm/kasan.h>
 #include <asm/sections.h>
 #include <asm/setup.h>
 #include <asm/smp_plat.h>
@@ -70,9 +68,6 @@ EXPORT_SYMBOL(processor_id);
 unsigned long elf_hwcap __read_mostly;
 EXPORT_SYMBOL_GPL(elf_hwcap);
 
-char* (*arch_read_hardware_id)(void);
-EXPORT_SYMBOL(arch_read_hardware_id);
-
 #ifdef CONFIG_COMPAT
 #define COMPAT_ELF_HWCAP_DEFAULT	\
 				(COMPAT_HWCAP_HALF|COMPAT_HWCAP_THUMB|\
@@ -85,16 +80,9 @@ unsigned int compat_elf_hwcap __read_mostly = COMPAT_ELF_HWCAP_DEFAULT;
 unsigned int compat_elf_hwcap2 __read_mostly;
 #endif
 
-DECLARE_BITMAP(cpu_hwcaps, ARM64_NCAPS);
-
-unsigned int boot_reason;
-EXPORT_SYMBOL(boot_reason);
-
-unsigned int cold_boot;
-EXPORT_SYMBOL(cold_boot);
+DECLARE_BITMAP(cpu_hwcaps, NCAPS);
 
 static const char *cpu_name;
-static const char *machine_name;
 phys_addr_t __fdt_pointer __initdata;
 
 /*
@@ -326,12 +314,6 @@ static void __init setup_machine_fdt(phys_addr_t dt_phys)
 		while (true)
 			cpu_relax();
 	}
-
-	machine_name = of_flat_dt_get_machine_name();
-	if (machine_name) {
-		dump_stack_set_arch_desc("%s (DT)", machine_name);
-		pr_info("Machine: %s\n", machine_name);
-	}
 }
 
 /*
@@ -383,8 +365,6 @@ static void __init request_standard_resources(void)
 
 u64 __cpu_logical_map[NR_CPUS] = { [0 ... NR_CPUS-1] = INVALID_HWID };
 
-void __init __weak init_random_pool(void) { }
-
 void __init setup_arch(char **cmdline_p)
 {
 	setup_processor();
@@ -398,7 +378,6 @@ void __init setup_arch(char **cmdline_p)
 
 	*cmdline_p = boot_command_line;
 
-	early_fixmap_init();
 	early_ioremap_init();
 
 	parse_early_param();
@@ -413,11 +392,9 @@ void __init setup_arch(char **cmdline_p)
 	arm64_memblock_init();
 
 	paging_init();
-
-	kasan_init();
-
 	request_standard_resources();
 
+	efi_idmap_init();
 	early_ioremap_reset();
 
 	unflatten_device_tree();
@@ -438,7 +415,6 @@ void __init setup_arch(char **cmdline_p)
 	conswitchp = &dummy_con;
 #endif
 #endif
-	init_random_pool();
 }
 
 static int __init arm64_device_init(void)
@@ -460,7 +436,7 @@ static int __init topology_init(void)
 
 	return 0;
 }
-postcore_initcall(topology_init);
+subsys_initcall(topology_init);
 
 static const char *hwcap_str[] = {
 	"fp",
@@ -497,8 +473,7 @@ static const char *compat_hwcap_str[] = {
 	"idivt",
 	"vfpd32",
 	"lpae",
-	"evtstrm",
-	NULL
+	"evtstrm"
 };
 
 static const char *compat_hwcap2_str[] = {
@@ -515,9 +490,7 @@ static int c_show(struct seq_file *m, void *v)
 {
 	int i, j;
 
-	seq_printf(m, "Processor\t: %s rev %d (%s)\n",
-		cpu_name, read_cpuid_id() & 15, ELF_PLATFORM);
-	for_each_present_cpu(i) {
+	for_each_online_cpu(i) {
 		struct cpuinfo_arm64 *cpuinfo = &per_cpu(cpu_data, i);
 		u32 midr = cpuinfo->reg_midr;
 
@@ -562,11 +535,6 @@ static int c_show(struct seq_file *m, void *v)
 		seq_printf(m, "CPU revision\t: %d\n\n", MIDR_REVISION(midr));
 	}
 
-	if (!arch_read_hardware_id)
-		seq_printf(m, "Hardware\t: %s\n", machine_name);
-	else
-		seq_printf(m, "Hardware\t: %s\n", arch_read_hardware_id());
-
 	return 0;
 }
 
@@ -591,9 +559,3 @@ const struct seq_operations cpuinfo_op = {
 	.stop	= c_stop,
 	.show	= c_show
 };
-
-void arch_setup_pdev_archdata(struct platform_device *pdev)
-{
-	pdev->archdata.dma_mask = DMA_BIT_MASK(32);
-	pdev->dev.dma_mask = &pdev->archdata.dma_mask;
-}

@@ -188,8 +188,7 @@ tsk	.req	x28		// current thread_info
  * Interrupt handling.
  */
 	.macro	irq_handler
-	adrp	x1, handle_arch_irq
-	ldr	x1, [x1, #:lo12:handle_arch_irq]
+	ldr	x1, handle_arch_irq
 	mov	x0, sp
 	blr	x1
 	.endm
@@ -432,7 +431,7 @@ el0_sync_compat:
 	cmp	x24, #ESR_EL1_EC_IABT_EL0	// instruction abort in EL0
 	b.eq	el0_ia
 	cmp	x24, #ESR_EL1_EC_FP_ASIMD	// FP/ASIMD access
-	b.eq	el0_fpsimd_acc_compat
+	b.eq	el0_fpsimd_acc
 	cmp	x24, #ESR_EL1_EC_FP_EXC32	// FP/ASIMD exception
 	b.eq	el0_fpsimd_exc
 	cmp	x24, #ESR_EL1_EC_UNKNOWN	// unknown exception in EL0
@@ -476,8 +475,8 @@ el0_da:
 	bic	x0, x26, #(0xff << 56)
 	mov	x1, x25
 	mov	x2, sp
-	bl	do_mem_abort
-	b	ret_to_user
+	adr	lr, ret_to_user
+	b	do_mem_abort
 el0_ia:
 	/*
 	 * Instruction abort handling
@@ -489,8 +488,8 @@ el0_ia:
 	mov	x0, x26
 	orr	x1, x25, #1 << 24		// use reserved ISS bit for instruction aborts
 	mov	x2, sp
-	bl	do_mem_abort
-	b	ret_to_user
+	adr	lr, ret_to_user
+	b	do_mem_abort
 el0_fpsimd_acc:
 	/*
 	 * Floating Point or Advanced SIMD access
@@ -499,19 +498,8 @@ el0_fpsimd_acc:
 	ct_user_exit
 	mov	x0, x25
 	mov	x1, sp
-	bl	do_fpsimd_acc
-	b	ret_to_user
-el0_fpsimd_acc_compat:
-	/*
-	 * Floating Point or Advanced SIMD access
-	 */
-	enable_dbg
-	ct_user_exit
-	mov	x0, x25
-	mov	x1, sp
-	bl	do_fpsimd_acc_compat
-	b	ret_to_user
-
+	adr	lr, ret_to_user
+	b	do_fpsimd_acc
 el0_fpsimd_exc:
 	/*
 	 * Floating Point or Advanced SIMD exception
@@ -520,8 +508,8 @@ el0_fpsimd_exc:
 	ct_user_exit
 	mov	x0, x25
 	mov	x1, sp
-	bl	do_fpsimd_exc
-	b	ret_to_user
+	adr	lr, ret_to_user
+	b	do_fpsimd_exc
 el0_sp_pc:
 	/*
 	 * Stack or PC alignment exception handling
@@ -533,8 +521,8 @@ el0_sp_pc:
 	mov	x0, x26
 	mov	x1, x25
 	mov	x2, sp
-	bl	do_sp_pc_abort
-	b	ret_to_user
+	adr	lr, ret_to_user
+	b	do_sp_pc_abort
 el0_undef:
 	/*
 	 * Undefined instruction
@@ -543,8 +531,8 @@ el0_undef:
 	enable_dbg_and_irq
 	ct_user_exit
 	mov	x0, sp
-	bl	do_undefinstr
-	b	ret_to_user
+	adr	lr, ret_to_user
+	b	do_undefinstr
 el0_dbg:
 	/*
 	 * Debug exception handling
@@ -563,8 +551,8 @@ el0_inv:
 	mov	x0, sp
 	mov	x1, #BAD_SYNC
 	mrs	x2, esr_el1
-	bl	bad_mode
-	b	ret_to_user
+	adr	lr, ret_to_user
+	b	bad_mode
 ENDPROC(el0_sync)
 
 	.align	6
@@ -611,33 +599,6 @@ ENTRY(cpu_switch_to)
 	ldp	x27, x28, [x8], #16
 	ldp	x29, x9, [x8], #16
 	ldr	lr, [x8]
-#ifdef CONFIG_ARM64_REG_REBALANCE_ON_CTX_SW
-	orr	x13, x13, x13
-	orr	x14, x14, x14
-	orr	x15, x15, x15
-	orr	x16, x16, x16
-	orr	x17, x17, x17
-	orr	x18, x18, x18
-	orr	x19, x19, x19
-	orr	x20, x20, x20
-	orr	x21, x21, x21
-	mov	v0.16b, v0.16b
-	mov	v1.16b, v1.16b
-	mov	v2.16b, v2.16b
-	mov	v3.16b, v3.16b
-	mov	v4.16b, v4.16b
-	mov	v5.16b, v5.16b
-	mov	v6.16b, v6.16b
-	mov	v7.16b, v7.16b
-	mov	v8.16b, v8.16b
-	mov	v9.16b, v9.16b
-	mov	v10.16b, v10.16b
-	mov	v11.16b, v11.16b
-	mov	v12.16b, v12.16b
-	mov	v13.16b, v13.16b
-	mov	v14.16b, v14.16b
-	mov	v15.16b, v15.16b
-#endif
 	mov	sp, x9
 	ret
 ENDPROC(cpu_switch_to)
@@ -713,15 +674,14 @@ el0_svc_naked:					// compat entry point
 	ldr	x16, [tsk, #TI_FLAGS]		// check for syscall hooks
 	tst	x16, #_TIF_SYSCALL_WORK
 	b.ne	__sys_trace
+	adr	lr, ret_fast_syscall		// return address
 	cmp     scno, sc_nr                     // check upper syscall limit
 	b.hs	ni_sys
 	ldr	x16, [stbl, scno, lsl #3]	// address in the syscall table
-	blr	x16				// call sys_* routine
-	b	ret_fast_syscall
+	br	x16				// call sys_* routine
 ni_sys:
 	mov	x0, sp
-	bl	do_ni_syscall
-	b	ret_fast_syscall
+	b	do_ni_syscall
 ENDPROC(el0_svc)
 
 	/*
@@ -729,37 +689,25 @@ ENDPROC(el0_svc)
 	 * switches, and waiting for our parent to respond.
 	 */
 __sys_trace:
-	mov	w0, #-1				// set default errno for
-	cmp     scno, x0			// user-issued syscall(-1)
-	b.ne	1f
-	mov	x0, #-ENOSYS
-	str	x0, [sp, #S_X0]
-1:	mov	x0, sp
+	mov	x0, sp
 	bl	syscall_trace_enter
-	cmp	w0, #-1				// skip the syscall?
-	b.eq	__sys_trace_return_skipped
+	adr	lr, __sys_trace_return		// return address
 	uxtw	scno, w0			// syscall number (possibly new)
 	mov	x1, sp				// pointer to regs
 	cmp	scno, sc_nr			// check upper syscall limit
-	b.hs	__ni_sys_trace
+	b.hs	ni_sys
 	ldp	x0, x1, [sp]			// restore the syscall args
 	ldp	x2, x3, [sp, #S_X2]
 	ldp	x4, x5, [sp, #S_X4]
 	ldp	x6, x7, [sp, #S_X6]
 	ldr	x16, [stbl, scno, lsl #3]	// address in the syscall table
-	blr	x16				// call sys_* routine
+	br	x16				// call sys_* routine
 
 __sys_trace_return:
-	str	x0, [sp, #S_X0]			// save returned x0
-__sys_trace_return_skipped:
+	str	x0, [sp]			// save returned x0
 	mov	x0, sp
 	bl	syscall_trace_exit
 	b	ret_to_user
-
-__ni_sys_trace:
-	mov	x0, sp
-	bl	do_ni_syscall
-	b	__sys_trace_return
 
 /*
  * Special system call wrappers.
@@ -768,3 +716,6 @@ ENTRY(sys_rt_sigreturn_wrapper)
 	mov	x0, sp
 	b	sys_rt_sigreturn
 ENDPROC(sys_rt_sigreturn_wrapper)
+
+ENTRY(handle_arch_irq)
+	.quad	0

@@ -48,8 +48,5 @@ obj-$(CONFIG_SOC_CAMERA)		+= soc_camera/
 obj-$(CONFIG_VIDEO_RENESAS_VSP1)	+= vsp1/
 
 obj-y	+= omap/
-obj-y	+= msm/
 
 ccflags-y += -I$(srctree)/drivers/media/i2c
-
-obj-y += msm/

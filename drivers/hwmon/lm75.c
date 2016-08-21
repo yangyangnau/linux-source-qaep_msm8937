@@ -176,10 +176,6 @@ static struct attribute *lm75_attrs[] = {
 };
 ATTRIBUTE_GROUPS(lm75);
 
-static const struct thermal_zone_of_device_ops lm75_of_thermal_ops = {
-	.get_temp = lm75_read_temp,
-};
-
 /*-----------------------------------------------------------------------*/
 
 /* device probe and removal */
@@ -295,9 +291,10 @@ lm75_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	if (IS_ERR(data->hwmon_dev))
 		return PTR_ERR(data->hwmon_dev);
 
-	data->tz = thermal_zone_of_sensor_register(data->hwmon_dev, 0,
+	data->tz = thermal_zone_of_sensor_register(data->hwmon_dev,
+						   0,
 						   data->hwmon_dev,
-						   &lm75_of_thermal_ops);
+						   lm75_read_temp, NULL);
 	if (IS_ERR(data->tz))
 		data->tz = NULL;
 

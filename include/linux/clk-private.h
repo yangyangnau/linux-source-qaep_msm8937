@@ -13,9 +13,7 @@
 
 #include <linux/clk-provider.h>
 #include <linux/kref.h>
-#include <linux/ktime.h>
 #include <linux/list.h>
-#include <linux/rbtree.h>
 
 /*
  * WARNING: Do not include clk-private.h from any file that implements struct
@@ -29,14 +27,6 @@
 #ifdef CONFIG_COMMON_CLK
 
 struct module;
-
-#ifdef CONFIG_COMMON_CLK_FREQ_STATS_ACCOUNTING
-struct freq_stats {
-	ktime_t time_spent;
-	unsigned long rate;
-	struct rb_node node;
-};
-#endif /*CONFIG_COMMON_CLK_FREQ_STATS_ACCOUNTING*/
 
 struct clk {
 	const char		*name;
@@ -63,13 +53,6 @@ struct clk {
 	unsigned int		notifier_count;
 #ifdef CONFIG_DEBUG_FS
 	struct dentry		*dentry;
-#ifdef CONFIG_COMMON_CLK_FREQ_STATS_ACCOUNTING
-	struct rb_root freq_stats_table;
-	struct freq_stats *current_freq_stats;
-	ktime_t default_freq_time;
-	ktime_t start_time;
-#endif /* CONFIG_COMMON_CLK_FREQ_STATS_ACCOUNTING*/
-
 #endif
 	struct kref		ref;
 };

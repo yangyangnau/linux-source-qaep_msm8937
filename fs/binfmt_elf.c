@@ -31,7 +31,6 @@
 #include <linux/security.h>
 #include <linux/random.h>
 #include <linux/elf.h>
-#include <linux/elf-randomize.h>
 #include <linux/utsname.h>
 #include <linux/coredump.h>
 #include <linux/sched.h>
@@ -799,10 +798,21 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			 * default mmap base, as well as whatever program they
 			 * might try to exec.  This is because the brk will
 			 * follow the loader, and is not movable.  */
-			load_bias = ELF_ET_DYN_BASE - vaddr;
+#ifdef CONFIG_ARCH_BINFMT_ELF_RANDOMIZE_PIE
+			/* Memory randomization might have been switched off
+			 * in runtime via sysctl or explicit setting of
+			 * personality flags.
+			 * If that is the case, retain the original non-zero
+			 * load_bias value in order to establish proper
+			 * non-randomized mappings.
+			 */
 			if (current->flags & PF_RANDOMIZE)
-				load_bias += arch_mmap_rnd();
-			load_bias = ELF_PAGESTART(load_bias);
+				load_bias = 0;
+			else
+				load_bias = ELF_PAGESTART(ELF_ET_DYN_BASE - vaddr);
+#else
+			load_bias = ELF_PAGESTART(ELF_ET_DYN_BASE - vaddr);
+#endif
 			total_size = total_mapping_size(elf_phdata,
 							loc->elf_ex.e_phnum);
 			if (!total_size) {

@@ -22,7 +22,8 @@
 #include <linux/module.h>
 #include <linux/syscalls.h>
 #include <linux/uaccess.h>
-#include <linux/sw_sync.h>
+
+#include "sw_sync.h"
 
 static int sw_sync_cmp(u32 a, u32 b)
 {
@@ -49,7 +50,7 @@ static struct sync_pt *sw_sync_pt_dup(struct sync_pt *sync_pt)
 {
 	struct sw_sync_pt *pt = (struct sw_sync_pt *)sync_pt;
 	struct sw_sync_timeline *obj =
-		(struct sw_sync_timeline *)sync_pt->parent;
+		(struct sw_sync_timeline *)sync_pt_parent(sync_pt);
 
 	return (struct sync_pt *)sw_sync_pt_create(obj, pt->value);
 }
@@ -58,7 +59,7 @@ static int sw_sync_pt_has_signaled(struct sync_pt *sync_pt)
 {
 	struct sw_sync_pt *pt = (struct sw_sync_pt *)sync_pt;
 	struct sw_sync_timeline *obj =
-		(struct sw_sync_timeline *)sync_pt->parent;
+		(struct sw_sync_timeline *)sync_pt_parent(sync_pt);
 
 	return sw_sync_cmp(obj->value, pt->value) >= 0;
 }

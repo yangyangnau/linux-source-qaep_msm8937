@@ -27,16 +27,28 @@
 
 struct inet_timewait_death_row dccp_death_row = {
 	.sysctl_max_tw_buckets = NR_FILE * 2,
+	.period		= DCCP_TIMEWAIT_LEN / INET_TWDR_TWKILL_SLOTS,
+	.death_lock	= __SPIN_LOCK_UNLOCKED(dccp_death_row.death_lock),
 	.hashinfo	= &dccp_hashinfo,
+	.tw_timer	= TIMER_INITIALIZER(inet_twdr_hangman, 0,
+					    (unsigned long)&dccp_death_row),
+	.twkill_work	= __WORK_INITIALIZER(dccp_death_row.twkill_work,
+					     inet_twdr_twkill_work),
+/* Short-time timewait calendar */
+
+	.twcal_hand	= -1,
+	.twcal_timer	= TIMER_INITIALIZER(inet_twdr_twcal_tick, 0,
+					    (unsigned long)&dccp_death_row),
 };
 
 EXPORT_SYMBOL_GPL(dccp_death_row);
 
 void dccp_time_wait(struct sock *sk, int state, int timeo)
 {
-	struct inet_timewait_sock *tw;
+	struct inet_timewait_sock *tw = NULL;
 
-	tw = inet_twsk_alloc(sk, &dccp_death_row, state);
+	if (dccp_death_row.tw_count < dccp_death_row.sysctl_max_tw_buckets)
+		tw = inet_twsk_alloc(sk, state);
 
 	if (tw != NULL) {
 		const struct inet_connection_sock *icsk = inet_csk(sk);
@@ -59,7 +71,8 @@ void dccp_time_wait(struct sock *sk, int state, int timeo)
 		if (state == DCCP_TIME_WAIT)
 			timeo = DCCP_TIMEWAIT_LEN;
 
-		inet_twsk_schedule(tw, timeo);
+		inet_twsk_schedule(tw, &dccp_death_row, timeo,
+				   DCCP_TIMEWAIT_LEN);
 		inet_twsk_put(tw);
 	} else {
 		/* Sorry, if we're out of memory, just CLOSE this

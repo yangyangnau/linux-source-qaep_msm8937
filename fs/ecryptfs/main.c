@@ -156,42 +156,16 @@ int ecryptfs_get_lower_file(struct dentry *dentry, struct inode *inode)
 
 void ecryptfs_put_lower_file(struct inode *inode)
 {
-	int ret = 0;
 	struct ecryptfs_inode_info *inode_info;
-	bool clear_cache_needed = false;
 
 	inode_info = ecryptfs_inode_to_private(inode);
 	if (atomic_dec_and_mutex_lock(&inode_info->lower_file_count,
 				      &inode_info->lower_file_mutex)) {
-
-		if (get_events() && get_events()->is_hw_crypt_cb &&
-				get_events()->is_hw_crypt_cb())
-			clear_cache_needed = true;
-
-		if (clear_cache_needed) {
-			ret = vfs_fsync(inode_info->lower_file, false);
-
-			if (ret)
-				pr_err("failed to sync file ret = %d.\n", ret);
-		}
-
 		filemap_write_and_wait(inode->i_mapping);
 		fput(inode_info->lower_file);
 		inode_info->lower_file = NULL;
 		mutex_unlock(&inode_info->lower_file_mutex);
-
-		if (clear_cache_needed) {
-			truncate_inode_pages_fill_zero(inode->i_mapping, 0);
-			truncate_inode_pages_fill_zero(
-				ecryptfs_inode_to_lower(inode)->i_mapping, 0);
-		}
-
-		if (get_events() && get_events()->release_cb)
-			get_events()->release_cb(
-			ecryptfs_inode_to_lower(inode));
 	}
-
-
 }
 
 enum { ecryptfs_opt_sig, ecryptfs_opt_ecryptfs_sig,
@@ -292,7 +266,6 @@ static int ecryptfs_parse_options(struct ecryptfs_sb_info *sbi, char *options,
 	int cipher_key_bytes_set = 0;
 	int fn_cipher_key_bytes;
 	int fn_cipher_key_bytes_set = 0;
-	size_t salt_size = 0;
 	struct ecryptfs_mount_crypt_stat *mount_crypt_stat =
 		&sbi->mount_crypt_stat;
 	substring_t args[MAX_OPT_ARGS];
@@ -307,7 +280,6 @@ static int ecryptfs_parse_options(struct ecryptfs_sb_info *sbi, char *options,
 	char *cipher_key_bytes_src;
 	char *fn_cipher_key_bytes_src;
 	u8 cipher_code;
-	unsigned char final[2*ECRYPTFS_MAX_CIPHER_NAME_SIZE+1];
 
 	*check_ruid = 0;
 
@@ -337,14 +309,12 @@ static int ecryptfs_parse_options(struct ecryptfs_sb_info *sbi, char *options,
 		case ecryptfs_opt_ecryptfs_cipher:
 			cipher_name_src = args[0].from;
 			cipher_name_dst =
-				mount_crypt_stat->global_default_cipher_name;
-
-			ecryptfs_parse_full_cipher(cipher_name_src,
-				mount_crypt_stat->global_default_cipher_name,
-				mount_crypt_stat->global_default_cipher_mode);
-
+				mount_crypt_stat->
+				global_default_cipher_name;
+			strncpy(cipher_name_dst, cipher_name_src,
+				ECRYPTFS_MAX_CIPHER_NAME_SIZE);
+			cipher_name_dst[ECRYPTFS_MAX_CIPHER_NAME_SIZE] = '\0';
 			cipher_name_set = 1;
-
 			break;
 		case ecryptfs_opt_ecryptfs_key_bytes:
 			cipher_key_bytes_src = args[0].from;
@@ -441,50 +411,24 @@ static int ecryptfs_parse_options(struct ecryptfs_sb_info *sbi, char *options,
 		strcpy(mount_crypt_stat->global_default_cipher_name,
 		       ECRYPTFS_DEFAULT_CIPHER);
 	}
-
 	if ((mount_crypt_stat->flags & ECRYPTFS_GLOBAL_ENCRYPT_FILENAMES)
 	    && !fn_cipher_name_set)
 		strcpy(mount_crypt_stat->global_default_fn_cipher_name,
 		       mount_crypt_stat->global_default_cipher_name);
-
-	if (cipher_key_bytes_set) {
-
-		salt_size = ecryptfs_get_salt_size_for_cipher(
-				ecryptfs_get_full_cipher(
-				mount_crypt_stat->global_default_cipher_name,
-				mount_crypt_stat->global_default_cipher_mode,
-				final, sizeof(final)));
-
-		if (!ecryptfs_check_space_for_salt(
-			mount_crypt_stat->global_default_cipher_key_size,
-			salt_size)) {
-			ecryptfs_printk(
-				KERN_WARNING,
-				"eCryptfs internal error: no space for salt");
-		}
-	} else
+	if (!cipher_key_bytes_set)
 		mount_crypt_stat->global_default_cipher_key_size = 0;
-
 	if ((mount_crypt_stat->flags & ECRYPTFS_GLOBAL_ENCRYPT_FILENAMES)
 	    && !fn_cipher_key_bytes_set)
 		mount_crypt_stat->global_default_fn_cipher_key_bytes =
 			mount_crypt_stat->global_default_cipher_key_size;
 
 	cipher_code = ecryptfs_code_for_cipher_string(
-			ecryptfs_get_full_cipher(
-				mount_crypt_stat->global_default_cipher_name,
-				mount_crypt_stat->global_default_cipher_mode,
-				final, sizeof(final)),
+		mount_crypt_stat->global_default_cipher_name,
 		mount_crypt_stat->global_default_cipher_key_size);
 	if (!cipher_code) {
-		ecryptfs_printk(
-			KERN_ERR,
-			"eCryptfs doesn't support cipher: %s and key size %lu",
-			ecryptfs_get_full_cipher(
-				mount_crypt_stat->global_default_cipher_name,
-				mount_crypt_stat->global_default_cipher_mode,
-				final, sizeof(final)),
-			mount_crypt_stat->global_default_cipher_key_size);
+		ecryptfs_printk(KERN_ERR,
+				"eCryptfs doesn't support cipher: %s",
+				mount_crypt_stat->global_default_cipher_name);
 		rc = -EINVAL;
 		goto out;
 	}
@@ -544,7 +488,6 @@ static struct file_system_type ecryptfs_fs_type;
  * @dev_name: The path to mount over
  * @raw_data: The options passed into the kernel
  */
-
 static struct dentry *ecryptfs_mount(struct file_system_type *fs_type, int flags,
 			const char *dev_name, void *raw_data)
 {
@@ -613,11 +556,6 @@ static struct dentry *ecryptfs_mount(struct file_system_type *fs_type, int flags
 	}
 
 	ecryptfs_set_superblock_lower(s, path.dentry->d_sb);
-
-
-	if (get_events() && get_events()->is_hw_crypt_cb &&
-			get_events()->is_hw_crypt_cb())
-		drop_pagecache_sb(ecryptfs_superblock_to_lower(s), 0);
 
 	/**
 	 * Set the POSIX ACL flag based on whether they're enabled in the lower
@@ -957,7 +895,6 @@ static void __exit ecryptfs_exit(void)
 	do_sysfs_unregistration();
 	unregister_filesystem(&ecryptfs_fs_type);
 	ecryptfs_free_kmem_caches();
-	ecryptfs_free_events();
 }
 
 MODULE_AUTHOR("Michael A. Halcrow <mhalcrow@us.ibm.com>");

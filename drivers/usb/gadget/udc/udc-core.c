@@ -71,7 +71,7 @@ int usb_gadget_map_request(struct usb_gadget *gadget,
 		}
 
 		req->num_mapped_sgs = mapped;
-	} else if (!req->dma_pre_mapped) {
+	} else {
 		req->dma = dma_map_single(&gadget->dev, req->buf, req->length,
 				is_in ? DMA_TO_DEVICE : DMA_FROM_DEVICE);
 
@@ -96,16 +96,9 @@ void usb_gadget_unmap_request(struct usb_gadget *gadget,
 				is_in ? DMA_TO_DEVICE : DMA_FROM_DEVICE);
 
 		req->num_mapped_sgs = 0;
-	} else if (!req->dma_pre_mapped && req->dma != DMA_ERROR_CODE) {
-		/*
-		 * If the DMA address has not been mapped by a higher layer,
-		 * then unmap it here. Otherwise, the DMA address will be
-		 * unmapped by the upper layer (where the request was queued).
-		 */
+	} else {
 		dma_unmap_single(&gadget->dev, req->dma, req->length,
-			is_in ? DMA_TO_DEVICE : DMA_FROM_DEVICE);
-
-		req->dma = DMA_ERROR_CODE;
+				is_in ? DMA_TO_DEVICE : DMA_FROM_DEVICE);
 	}
 }
 EXPORT_SYMBOL_GPL(usb_gadget_unmap_request);
@@ -407,15 +400,7 @@ static int udc_bind_to_driver(struct usb_udc *udc, struct usb_gadget_driver *dri
 		driver->unbind(udc->gadget);
 		goto err1;
 	}
-	/*
-	 * HACK: The Android gadget driver disconnects the gadget
-	 * on bind and expects the gadget to stay disconnected until
-	 * it calls usb_gadget_connect when userspace is ready. Remove
-	 * the call to usb_gadget_connect bellow to avoid enabling the
-	 * pullup before userspace is ready.
-	 *
-	 * usb_gadget_connect(udc->gadget);
-	 */
+	usb_gadget_connect(udc->gadget);
 
 	kobject_uevent(&udc->dev.kobj, KOBJ_CHANGE);
 	return 0;
@@ -465,9 +450,8 @@ int usb_gadget_probe_driver(struct usb_gadget_driver *driver)
 
 	mutex_lock(&udc_lock);
 	list_for_each_entry(udc, &udc_list, list) {
-		/* Match according to usb_core_id */
-		if (!udc->driver && udc->gadget
-		    && udc->gadget->usb_core_id == driver->usb_core_id)
+		/* For now we take the first one */
+		if (!udc->driver)
 			goto found;
 	}
 
@@ -503,7 +487,6 @@ int usb_gadget_unregister_driver(struct usb_gadget_driver *driver)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(usb_gadget_unregister_driver);
-
 
 /* ------------------------------------------------------------------------- */
 

@@ -800,8 +800,7 @@ static int acpi_thermal_cooling_device_cb(struct thermal_zone_device *thermal,
 				result =
 					thermal_zone_bind_cooling_device
 					(thermal, trip, cdev,
-					 THERMAL_NO_LIMIT, THERMAL_NO_LIMIT,
-					 THERMAL_WEIGHT_DEFAULT);
+					 THERMAL_NO_LIMIT, THERMAL_NO_LIMIT);
 			else
 				result =
 					thermal_zone_unbind_cooling_device
@@ -825,8 +824,7 @@ static int acpi_thermal_cooling_device_cb(struct thermal_zone_device *thermal,
 			if (bind)
 				result = thermal_zone_bind_cooling_device
 					(thermal, trip, cdev,
-					 THERMAL_NO_LIMIT, THERMAL_NO_LIMIT,
-					 THERMAL_WEIGHT_DEFAULT);
+					 THERMAL_NO_LIMIT, THERMAL_NO_LIMIT);
 			else
 				result = thermal_zone_unbind_cooling_device
 					(thermal, trip, cdev);
@@ -843,8 +841,7 @@ static int acpi_thermal_cooling_device_cb(struct thermal_zone_device *thermal,
 				result = thermal_zone_bind_cooling_device
 						(thermal, THERMAL_TRIPS_NONE,
 						 cdev, THERMAL_NO_LIMIT,
-						 THERMAL_NO_LIMIT,
-						 THERMAL_WEIGHT_DEFAULT);
+						 THERMAL_NO_LIMIT);
 			else
 				result = thermal_zone_unbind_cooling_device
 						(thermal, THERMAL_TRIPS_NONE,

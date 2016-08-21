@@ -416,45 +416,6 @@ int mmc_spi_set_crc(struct mmc_host *host, int use_crc)
 }
 
 /**
- *	mmc_prepare_switch - helper; prepare to modify EXT_CSD register
- *	@card: the MMC card associated with the data transfer
- *	@set: cmd set values
- *	@index: EXT_CSD register index
- *	@value: value to program into EXT_CSD register
- *	@tout_ms: timeout (ms) for operation performed by register write,
- *                   timeout of zero implies maximum possible timeout
- *	@use_busy_signal: use the busy signal as response type
- *
- *	Helper to prepare to modify EXT_CSD register for selected card.
- */
-
-static inline void mmc_prepare_switch(struct mmc_command *cmd, u8 index,
-				      u8 value, u8 set, unsigned int tout_ms,
-				      bool use_busy_signal)
-{
-	cmd->opcode = MMC_SWITCH;
-	cmd->arg = (MMC_SWITCH_MODE_WRITE_BYTE << 24) |
-		  (index << 16) |
-		  (value << 8) |
-		  set;
-	cmd->flags = MMC_CMD_AC;
-	cmd->busy_timeout = tout_ms;
-	if (use_busy_signal)
-		cmd->flags |= MMC_RSP_SPI_R1B | MMC_RSP_R1B;
-	else
-		cmd->flags |= MMC_RSP_SPI_R1 | MMC_RSP_R1;
-}
-
-int __mmc_switch_cmdq_mode(struct mmc_command *cmd, u8 set, u8 index, u8 value,
-			   unsigned int timeout_ms, bool use_busy_signal,
-			   bool ignore_timeout)
-{
-	mmc_prepare_switch(cmd, index, value, set, timeout_ms, use_busy_signal);
-	return 0;
-}
-EXPORT_SYMBOL(__mmc_switch_cmdq_mode);
-
-/**
  *	__mmc_switch - modify EXT_CSD register
  *	@card: the MMC card associated with the data transfer
  *	@set: cmd set values
@@ -478,7 +439,6 @@ int __mmc_switch(struct mmc_card *card, u8 set, u8 index, u8 value,
 	unsigned long timeout;
 	u32 status = 0;
 	bool use_r1b_resp = use_busy_signal;
-	int retries = 5;
 
 	/*
 	 * If the cmd timeout and the max_busy_timeout of the host are both
@@ -490,8 +450,12 @@ int __mmc_switch(struct mmc_card *card, u8 set, u8 index, u8 value,
 		(timeout_ms > host->max_busy_timeout))
 		use_r1b_resp = false;
 
-	mmc_prepare_switch(&cmd, index, value, set, timeout_ms,
-			   use_r1b_resp);
+	cmd.opcode = MMC_SWITCH;
+	cmd.arg = (MMC_SWITCH_MODE_WRITE_BYTE << 24) |
+		  (index << 16) |
+		  (value << 8) |
+		  set;
+	cmd.flags = MMC_CMD_AC;
 	if (use_r1b_resp) {
 		cmd.flags |= MMC_RSP_SPI_R1B | MMC_RSP_R1B;
 		/*
@@ -505,8 +469,6 @@ int __mmc_switch(struct mmc_card *card, u8 set, u8 index, u8 value,
 
 	if (index == EXT_CSD_SANITIZE_START)
 		cmd.sanitize_busy = true;
-	else if (index == EXT_CSD_BKOPS_START)
-		cmd.bkops_busy = true;
 
 	err = mmc_wait_for_cmd(host, &cmd, MMC_CMD_RETRIES);
 	if (err)
@@ -552,15 +514,9 @@ int __mmc_switch(struct mmc_card *card, u8 set, u8 index, u8 value,
 
 		/* Timeout if the device never leaves the program state. */
 		if (time_after(jiffies, timeout)) {
-			pr_err("%s: Card stuck in programming state! %s, timeout:%ums, retries:%d\n",
-				mmc_hostname(host), __func__,
-				timeout_ms, retries);
-			if (retries)
-				timeout = jiffies +
-						msecs_to_jiffies(timeout_ms);
-			else
-				return -ETIMEDOUT;
-			retries--;
+			pr_err("%s: Card stuck in programming state! %s\n",
+				mmc_hostname(host), __func__);
+			return -ETIMEDOUT;
 		}
 	} while (R1_CURRENT_STATE(status) == R1_STATE_PRG);
 
@@ -643,10 +599,7 @@ mmc_send_bus_test(struct mmc_card *card, struct mmc_host *host, u8 opcode,
 
 	data.sg = &sg;
 	data.sg_len = 1;
-	data.timeout_ns = 1000000;
-	data.timeout_clks = 0;
 	mmc_set_data_timeout(&data, card);
-
 	sg_init_one(&sg, data_buf, len);
 	mmc_wait_for_req(host, &mrq);
 	err = 0;
@@ -695,7 +648,7 @@ int mmc_send_hpi_cmd(struct mmc_card *card, u32 *status)
 	unsigned int opcode;
 	int err;
 
-	if (!card->ext_csd.hpi_en) {
+	if (!card->ext_csd.hpi) {
 		pr_warn("%s: Card didn't support HPI command\n",
 			mmc_hostname(card->host));
 		return -EINVAL;
@@ -712,7 +665,7 @@ int mmc_send_hpi_cmd(struct mmc_card *card, u32 *status)
 
 	err = mmc_wait_for_cmd(card->host, &cmd, 0);
 	if (err) {
-		pr_debug("%s: error %d interrupting operation. "
+		pr_warn("%s: error %d interrupting operation. "
 			"HPI command response %#x\n", mmc_hostname(card->host),
 			err, cmd.resp[0]);
 		return err;
@@ -722,26 +675,3 @@ int mmc_send_hpi_cmd(struct mmc_card *card, u32 *status)
 
 	return 0;
 }
-
-int mmc_can_ext_csd(struct mmc_card *card)
-{
-	return (card && card->csd.mmca_vsn > CSD_SPEC_VER_3);
-}
-
-int mmc_discard_queue(struct mmc_host *host, u32 tasks)
-{
-	struct mmc_command cmd = {0};
-
-	cmd.opcode = MMC_CMDQ_TASK_MGMT;
-	if (tasks) {
-		cmd.arg = DISCARD_TASK;
-		cmd.arg |= (tasks << 16);
-	} else {
-		cmd.arg = DISCARD_QUEUE;
-	}
-
-	cmd.flags = MMC_RSP_R1B | MMC_CMD_AC;
-
-	return mmc_wait_for_cmd(host, &cmd, 0);
-}
-EXPORT_SYMBOL(mmc_discard_queue);

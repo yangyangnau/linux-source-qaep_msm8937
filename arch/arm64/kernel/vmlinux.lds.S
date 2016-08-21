@@ -8,18 +8,11 @@
 #include <asm/thread_info.h>
 #include <asm/memory.h>
 #include <asm/page.h>
-#include <asm/pgtable.h>
-#include <asm/cache.h>
 
 #include "image.h"
 
-#if (!defined(CONFIG_DEBUG_SPINLOCK)) || defined(CONFIG_GENERIC_BUG)
-#define ARM_EXIT_KEEP(x)	x
-#define ARM_EXIT_DISCARD(x)
-#else
 #define ARM_EXIT_KEEP(x)
 #define ARM_EXIT_DISCARD(x)	x
-#endif
 
 OUTPUT_ARCH(aarch64)
 ENTRY(_text)
@@ -38,14 +31,6 @@ jiffies = jiffies_64;
 	VMLINUX_SYMBOL(__hyp_text_start) = .;		\
 	*(.hyp.text)					\
 	VMLINUX_SYMBOL(__hyp_text_end) = .;
-
-#ifdef CONFIG_DEBUG_ALIGN_RODATA
-#define ALIGN_DEBUG_RO			. = ALIGN(1<<SECTION_SHIFT);
-#define ALIGN_DEBUG_RO_MIN(min)		ALIGN_DEBUG_RO
-#else
-#define ALIGN_DEBUG_RO
-#define ALIGN_DEBUG_RO_MIN(min)		. = ALIGN(min);
-#endif
 
 SECTIONS
 {
@@ -69,7 +54,6 @@ SECTIONS
 		_text = .;
 		HEAD_TEXT
 	}
-	ALIGN_DEBUG_RO
 	.text : {			/* Real text segment		*/
 		_stext = .;		/* Text and read-only data	*/
 			__exception_text_start = .;
@@ -86,22 +70,19 @@ SECTIONS
 		*(.got)			/* Global offset table		*/
 	}
 
-	ALIGN_DEBUG_RO
 	RO_DATA(PAGE_SIZE)
 	EXCEPTION_TABLE(8)
 	NOTES
-	ALIGN_DEBUG_RO
 	_etext = .;			/* End of text and rodata section */
 
-	ALIGN_DEBUG_RO_MIN(PAGE_SIZE)
+	. = ALIGN(PAGE_SIZE);
 	__init_begin = .;
 
 	INIT_TEXT_SECTION(8)
 	.exit.text : {
 		ARM_EXIT_KEEP(EXIT_TEXT)
 	}
-
-	ALIGN_DEBUG_RO_MIN(16)
+	. = ALIGN(16);
 	.init.data : {
 		INIT_DATA
 		INIT_SETUP(16)
@@ -114,7 +95,7 @@ SECTIONS
 		ARM_EXIT_KEEP(EXIT_DATA)
 	}
 
-	PERCPU_SECTION(L1_CACHE_BYTES)
+	PERCPU_SECTION(64)
 
 	. = ALIGN(PAGE_SIZE);
 	__init_end = .;
@@ -132,7 +113,7 @@ SECTIONS
 	. = ALIGN(PAGE_SIZE);
 	_data = .;
 	_sdata = .;
-	RW_DATA_SECTION(L1_CACHE_BYTES, PAGE_SIZE, THREAD_SIZE)
+	RW_DATA_SECTION(64, PAGE_SIZE, THREAD_SIZE)
 	_edata = .;
 
 	BSS_SECTION(0, 0, 0)

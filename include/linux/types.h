@@ -177,7 +177,7 @@ typedef struct {
 	int counter;
 } atomic_t;
 
-#if defined(CONFIG_64BIT) && !defined(CONFIG_GENERIC_ATOMIC64)
+#ifdef CONFIG_64BIT
 typedef struct {
 	long counter;
 } atomic64_t;

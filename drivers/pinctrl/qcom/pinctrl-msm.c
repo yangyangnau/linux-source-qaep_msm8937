@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2013, Sony Mobile Communications AB.
- * Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -28,7 +28,7 @@
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
 #include <linux/reboot.h>
-#include <linux/irqchip/msm-mpm-irq.h>
+
 #include "../core.h"
 #include "../pinconf.h"
 #include "pinctrl-msm.h"
@@ -36,7 +36,6 @@
 
 #define MAX_NR_GPIO 300
 #define PS_HOLD_OFFSET 0x820
-#define TLMM_EBI2_EMMC_GPIO_CFG 0x111000
 
 /**
  * struct msm_pinctrl - state for a pinctrl-msm device
@@ -44,7 +43,6 @@
  * @pctrl:          pinctrl handle.
  * @chip:           gpiochip handle.
  * @restart_nb:     restart notifier block.
- * @irq_chip_extn:  MPM extension of TLMM irqchip.
  * @irq:            parent irq for the TLMM irq_chip.
  * @lock:           Spinlock to protect register resources as well
  *                  as msm_pinctrl data structures.
@@ -59,7 +57,6 @@ struct msm_pinctrl {
 	struct pinctrl_dev *pctrl;
 	struct gpio_chip chip;
 	struct notifier_block restart_nb;
-	struct irq_chip *irq_chip_extn;
 	int irq;
 
 	spinlock_t lock;
@@ -196,7 +193,6 @@ static int msm_config_reg(struct msm_pinctrl *pctrl,
 		*mask = 7;
 		break;
 	case PIN_CONFIG_OUTPUT:
-	case PIN_CONFIG_INPUT_ENABLE:
 		*bit = g->oe_bit;
 		*mask = 1;
 		break;
@@ -280,12 +276,6 @@ static int msm_config_group_get(struct pinctrl_dev *pctldev,
 		val = readl(pctrl->regs + g->io_reg);
 		arg = !!(val & BIT(g->in_bit));
 		break;
-	case PIN_CONFIG_INPUT_ENABLE:
-		/* Pin is output */
-		if (arg)
-			return -EINVAL;
-		arg = 1;
-		break;
 	default:
 		dev_err(pctrl->dev, "Unsupported config parameter: %x\n",
 			param);
@@ -357,10 +347,6 @@ static int msm_config_group_set(struct pinctrl_dev *pctldev,
 
 			/* enable output */
 			arg = 1;
-			break;
-		case PIN_CONFIG_INPUT_ENABLE:
-			/* disable output */
-			arg = 0;
 			break;
 		default:
 			dev_err(pctrl->dev, "Unsupported config parameter: %x\n",
@@ -616,8 +602,6 @@ static void msm_gpio_irq_mask(struct irq_data *d)
 	clear_bit(d->hwirq, pctrl->enabled_irqs);
 
 	spin_unlock_irqrestore(&pctrl->lock, flags);
-	if (pctrl->irq_chip_extn->irq_mask)
-		pctrl->irq_chip_extn->irq_mask(d);
 }
 
 static void msm_gpio_irq_unmask(struct irq_data *d)
@@ -643,8 +627,6 @@ static void msm_gpio_irq_unmask(struct irq_data *d)
 	set_bit(d->hwirq, pctrl->enabled_irqs);
 
 	spin_unlock_irqrestore(&pctrl->lock, flags);
-	if (pctrl->irq_chip_extn->irq_unmask)
-		pctrl->irq_chip_extn->irq_unmask(d);
 }
 
 static void msm_gpio_irq_ack(struct irq_data *d)
@@ -763,8 +745,6 @@ static int msm_gpio_irq_set_type(struct irq_data *d, unsigned int type)
 	else if (type & (IRQ_TYPE_EDGE_FALLING | IRQ_TYPE_EDGE_RISING))
 		__irq_set_handler_locked(d->irq, handle_edge_irq);
 
-	if (pctrl->irq_chip_extn->irq_set_type)
-		pctrl->irq_chip_extn->irq_set_type(d, type);
 	return 0;
 }
 
@@ -780,8 +760,6 @@ static int msm_gpio_irq_set_wake(struct irq_data *d, unsigned int on)
 
 	spin_unlock_irqrestore(&pctrl->lock, flags);
 
-	if (pctrl->irq_chip_extn->irq_set_wake)
-		pctrl->irq_chip_extn->irq_set_wake(d, on);
 	return 0;
 }
 
@@ -828,22 +806,6 @@ static void msm_gpio_irq_handler(unsigned int irq, struct irq_desc *desc)
 	chained_irq_exit(chip, desc);
 }
 
-/*
- * Add MPM extensions for the irqchip.
- * Enable the MPM driver to enable/disable
- * suspend/resume based on gpio interrupts
- */
-
-struct irq_chip mpm_pinctrl_extn = {
-	.irq_eoi	= NULL,
-	.irq_mask	= NULL,
-	.irq_unmask	= NULL,
-	.irq_retrigger	= NULL,
-	.irq_set_type	= NULL,
-	.irq_set_wake	= NULL,
-	.irq_disable	= NULL,
-};
-
 static int msm_gpio_init(struct msm_pinctrl *pctrl)
 {
 	struct gpio_chip *chip;
@@ -887,7 +849,6 @@ static int msm_gpio_init(struct msm_pinctrl *pctrl)
 
 	gpiochip_set_chained_irqchip(chip, &msm_gpio_irq_chip, pctrl->irq,
 				     msm_gpio_irq_handler);
-	of_mpm_init();
 
 	return 0;
 }
@@ -918,23 +879,12 @@ static void msm_pinctrl_setup_pm_reset(struct msm_pinctrl *pctrl)
 		}
 }
 
-static void msm_pinctrl_ebi2_emmc_enable(struct msm_pinctrl *pctrl,
-					unsigned int tlmm_emmc_boot_select)
-{
-	u32 val;
-
-	val = readl_relaxed(pctrl->regs + TLMM_EBI2_EMMC_GPIO_CFG);
-	val |= BIT(tlmm_emmc_boot_select);
-	writel_relaxed(val, pctrl->regs + TLMM_EBI2_EMMC_GPIO_CFG);
-}
-
 int msm_pinctrl_probe(struct platform_device *pdev,
 		      const struct msm_pinctrl_soc_data *soc_data)
 {
 	struct msm_pinctrl *pctrl;
 	struct resource *res;
 	int ret;
-	u32 tlmm_emmc_boot_select;
 
 	pctrl = devm_kzalloc(&pdev->dev, sizeof(*pctrl), GFP_KERNEL);
 	if (!pctrl) {
@@ -953,11 +903,6 @@ int msm_pinctrl_probe(struct platform_device *pdev,
 		return PTR_ERR(pctrl->regs);
 
 	msm_pinctrl_setup_pm_reset(pctrl);
-	if (!of_property_read_u32(pctrl->dev->of_node,
-					"qcom,tlmm-emmc-boot-select",
-						&tlmm_emmc_boot_select)) {
-		msm_pinctrl_ebi2_emmc_enable(pctrl, tlmm_emmc_boot_select);
-	}
 
 	pctrl->irq = platform_get_irq(pdev, 0);
 	if (pctrl->irq < 0) {
@@ -979,7 +924,7 @@ int msm_pinctrl_probe(struct platform_device *pdev,
 		pinctrl_unregister(pctrl->pctrl);
 		return ret;
 	}
-	pctrl->irq_chip_extn = &mpm_pinctrl_extn;
+
 	platform_set_drvdata(pdev, pctrl);
 
 	dev_dbg(&pdev->dev, "Probed Qualcomm pinctrl driver\n");
@@ -1000,3 +945,4 @@ int msm_pinctrl_remove(struct platform_device *pdev)
 	return 0;
 }
 EXPORT_SYMBOL(msm_pinctrl_remove);
+

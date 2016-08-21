@@ -1029,8 +1029,6 @@ M:	Bryan Huntsman <bryanh@codeaurora.org>
 L:	linux-arm-msm@vger.kernel.org
 F:	arch/arm/mach-msm/
 F:	drivers/video/msm/
-F:	drivers/mmc/host/msm_sdcc.c
-F:	drivers/mmc/host/msm_sdcc.h
 F:	drivers/tty/serial/msm_serial.h
 F:	drivers/tty/serial/msm_serial.c
 F:	drivers/*/pm8???-*
@@ -3535,6 +3533,14 @@ T:	git git://git.kernel.org/pub/scm/linux/kernel/git/arnd/asm-generic.git
 S:	Maintained
 F:	include/asm-generic
 F:	include/uapi/asm-generic
+
+GENERIC PHY FRAMEWORK
+M:	Kishon Vijay Abraham I <kishon@ti.com>
+L:	linux-kernel@vger.kernel.org
+T:	git git://git.kernel.org/pub/scm/linux/kernel/git/kishon/linux-phy.git
+S:	Supported
+F:	drivers/phy/
+F:	include/linux/phy/
 
 GENERIC UIO DRIVER FOR PCI DEVICES
 M:	"Michael S. Tsirkin" <mst@redhat.com>
@@ -6698,7 +6704,7 @@ M:	"Paul E. McKenney" <paulmck@linux.vnet.ibm.com>
 S:	Supported
 T:	git git://git.kernel.org/pub/scm/linux/kernel/git/paulmck/linux-rcu.git
 F:	Documentation/RCU/torture.txt
-F:	kernel/rcutorture.c
+F:	kernel/rcu/torture.c
 
 RDC R-321X SoC
 M:	Florian Fainelli <florian@openwrt.org>
@@ -6725,8 +6731,9 @@ T:	git git://git.kernel.org/pub/scm/linux/kernel/git/paulmck/linux-rcu.git
 F:	Documentation/RCU/
 X:	Documentation/RCU/torture.txt
 F:	include/linux/rcu*
-F:	kernel/rcu*
-X:	kernel/rcutorture.c
+X:	include/linux/srcu.h
+F:	kernel/rcu/
+X:	kernel/rcu/torture.c
 
 REAL TIME CLOCK (RTC) SUBSYSTEM
 M:	Alessandro Zummo <a.zummo@towertech.it>
@@ -7395,8 +7402,8 @@ M:	"Paul E. McKenney" <paulmck@linux.vnet.ibm.com>
 W:	http://www.rdrop.com/users/paulmck/RCU/
 S:	Supported
 T:	git git://git.kernel.org/pub/scm/linux/kernel/git/paulmck/linux-rcu.git
-F:	include/linux/srcu*
-F:	kernel/srcu*
+F:	include/linux/srcu.h
+F:	kernel/rcu/srcu.c
 
 SMACK SECURITY MODULE
 M:	Casey Schaufler <casey@schaufler-ca.com>
@@ -9188,6 +9195,13 @@ F:	Documentation/networking/z8530drv.txt
 F:	drivers/net/hamradio/*scc.c
 F:	drivers/net/hamradio/z8530.h
 
+ZBUD COMPRESSED PAGE ALLOCATOR
+M:	Seth Jennings <sjenning@linux.vnet.ibm.com>
+L:	linux-mm@kvack.org
+S:	Maintained
+F:	mm/zbud.c
+F:	include/linux/zbud.h
+
 ZD1211RW WIRELESS DRIVER
 M:	Daniel Drake <dsd@gentoo.org>
 M:	Ulrich Kunitz <kune@deine-taler.de>
@@ -9209,6 +9223,12 @@ ZS DECSTATION Z85C30 SERIAL DRIVER
 M:	"Maciej W. Rozycki" <macro@linux-mips.org>
 S:	Maintained
 F:	drivers/tty/serial/zs.*
+
+ZSWAP COMPRESSED SWAP CACHING
+M:	Seth Jennings <sjenning@linux.vnet.ibm.com>
+L:	linux-mm@kvack.org
+S:	Maintained
+F:	mm/zswap.c
 
 THE REST
 M:	Linus Torvalds <torvalds@linux-foundation.org>
